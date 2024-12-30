@@ -534,7 +534,8 @@ def should_include_content(content_type, content_types):
 def main():
     # Configuración inicial
     if 'search_cache' not in st.session_state:
-        st.session_state.search_cache = PersistentCache()
+        os.makedirs('data', exist_ok=True)
+        st.session_state.search_cache = PersistentCache(db_path='data/cache.db')
         
     # Cargar configuración
     config = sidebar_config()
@@ -611,7 +612,7 @@ def main():
                 config['search_engine_id'],
                 google_query
             )
-            
+    
             if not success:
                 st.error(f"Error al realizar la búsqueda: {results}")
                 return
@@ -623,8 +624,8 @@ def main():
             # Guardar en caché
             st.session_state.search_cache.add_search(
                 google_query,
-                query_info,
-                results
+                results,  # resultados de la búsqueda
+                query_info  # información de la query
             )
             
             # Crear pestañas para diferentes análisis
@@ -845,7 +846,7 @@ def main():
                 else:
                     st.warning("No se encontraron suficientes datos para realizar el análisis del Hype Cycle")
     
-    # Mostrar búsquedas recientes
+    # En la sección de búsquedas recientes del main()
     with st.expander("📜 Búsquedas Recientes", expanded=False):
         recent_searches = st.session_state.search_cache.get_recent_searches()
         if recent_searches:
@@ -857,16 +858,242 @@ def main():
                     
                     if st.button("Cargar esta búsqueda", key=f"load_search_{idx}"):
                         cached_data = st.session_state.search_cache.get_search(search['query'])
-                        if cached_data and 'results' in cached_data and 'query_info' in cached_data:
+                        if cached_data:
+                            # Crear pestañas
                             tab1, tab2 = st.tabs(["📊 Análisis General", "📈 Análisis Hype Cycle"])
                             
                             with tab1:
+                                # Realizar búsqueda específica de noticias para Hype Cycle
+                                news_analyzer = NewsAnalyzer()
+                                news_success, news_results = news_analyzer.perform_news_search(
+                                    config['api_key'],
+                                    config['search_engine_id'],
+                                    search['query']
+                                )
+                                
+                                # Mostrar análisis general
                                 show_analysis_results(
                                     cached_data['results'],
                                     cached_data['query_info'],
-                                    cached_data['query_info'].get('topics', []),
-                                    cached_data['query_info'].get('content_types', {})
+                                    cached_data['query_info']['topics'],
+                                    cached_data['query_info']['content_types']
                                 )
+                            
+                            # Tab2 - Hype Cycle
+                            with tab2:
+                                st.write("### 📈 Análisis del Hype Cycle de Gartner")
+                                if news_success and news_results:
+                                    hype_data = news_analyzer.analyze_hype_cycle(news_results)
+                                    # Explicación del Hype Cycle
+                                    with st.expander("ℹ️ ¿Qué es el Hype Cycle?", expanded=True):
+                                        st.markdown("""
+                                        El **Hype Cycle de Gartner** es una representación gráfica de la madurez y adopción de tecnologías específicas. 
+                                        Se compone de cinco fases principales:
+                                        
+                                        1. **Innovation Trigger (Disparador de Innovación)**
+                                        - Primera aparición pública de la tecnología
+                                        - Alto nivel de especulación
+                                        - Poca implementación práctica
+                                        
+                                        2. **Peak of Inflated Expectations (Pico de Expectativas Infladas)**
+                                        - Máxima publicidad y expectativas
+                                        - Muchas historias de éxito y fracaso
+                                        - Alto interés mediático
+                                        
+                                        3. **Trough of Disillusionment (Valle de la Desilusión)**
+                                        - Disminución del interés
+                                        - Fracasos y desafíos documentados
+                                        - Menor cobertura mediática
+                                        
+                                        4. **Slope of Enlightenment (Pendiente de la Iluminación)**
+                                        - Comprensión más realista
+                                        - Beneficios reales documentados
+                                        - Mejores prácticas establecidas
+                                        
+                                        5. **Plateau of Productivity (Meseta de la Productividad)**
+                                        - Adopción generalizada
+                                        - Relevancia y rol claramente establecidos
+                                        - Tecnología madura y estable
+                                        """)
+                                    
+                                    if news_success and news_results:
+                                        # Análisis del Hype Cycle
+                                        hype_data = news_analyzer.analyze_hype_cycle(news_results)
+                                        
+                                        # Fase actual con explicación detallada
+                                        st.write("#### 🎯 Fase Actual")
+                                        current_phase = hype_data['phase']
+                                        
+                                        # Descripción específica según la fase
+                                        phase_descriptions = {
+                                            "Innovation Trigger": """
+                                                La tecnología está en su fase inicial de innovación. Se caracteriza por:
+                                                - Alto nivel de interés y especulación
+                                                - Pocos casos de implementación real
+                                                - Gran potencial percibido
+                                            """,
+                                            "Peak of Inflated Expectations": """
+                                                La tecnología está en su punto máximo de expectativas. Se observa:
+                                                - Máxima cobertura mediática
+                                                - Altas expectativas de mercado
+                                                - Posible sobreestimación de capacidades
+                                            """,
+                                            "Trough of Disillusionment": """
+                                                La tecnología está atravesando una fase de desilusión. Caracterizada por:
+                                                - Disminución del interés inicial
+                                                - Identificación de limitaciones reales
+                                                - Reevaluación de expectativas
+                                            """,
+                                            "Slope of Enlightenment": """
+                                                La tecnología está madurando hacia una comprensión realista. Se observa:
+                                                - Casos de uso bien definidos
+                                                - Beneficios comprobados
+                                                - Adopción más estratégica
+                                            """,
+                                            "Plateau of Productivity": """
+                                                La tecnología ha alcanzado un nivel de madurez estable. Caracterizada por:
+                                                - Adopción generalizada
+                                                - Beneficios claramente demostrados
+                                                - Implementación sistemática
+                                            """
+                                        }
+                                        
+                                        col1, col2 = st.columns([1, 2])
+                                        with col1:
+                                            st.success(f"**Fase Actual:** {current_phase}")
+                                        with col2:
+                                            st.info(phase_descriptions[current_phase])
+                                        
+                                        # Gráfico del Hype Cycle
+                                        st.write("#### 📊 Visualización del Hype Cycle")
+                                        fig = news_analyzer.plot_hype_cycle(hype_data)
+                                        st.plotly_chart(fig, use_container_width=True)
+                                        
+                                        # Métricas clave
+                                        st.write("#### 📈 Métricas de Análisis")
+                                        col1, col2, col3 = st.columns(3)
+                                        
+                                        yearly_stats = hype_data['yearly_stats']
+                                        with col1:
+                                            total_mentions = yearly_stats['mention_count'].sum()
+                                            st.metric("Total de Menciones", total_mentions)
+                                        with col2:
+                                            avg_sentiment = yearly_stats['sentiment_mean'].mean()
+                                            sentiment_label = "Positivo" if avg_sentiment > 0 else "Negativo"
+                                            st.metric("Sentimiento Promedio", f"{avg_sentiment:.2f} ({sentiment_label})")
+                                        with col3:
+                                            trend = yearly_stats['mention_count'].pct_change().mean()
+                                            trend_label = "Creciente" if trend > 0 else "Decreciente"
+                                            st.metric("Tendencia", f"{trend_label} ({trend:.1%})")
+                                        
+                                        # Análisis de puntos de inflexión
+                                        st.write("#### 📊 Análisis de Puntos de Inflexión")
+                                        inflection_points = news_analyzer.analyze_gartner_points(yearly_stats)
+                                        fig_inflection = news_analyzer.plot_gartner_analysis(yearly_stats, inflection_points)
+                                        st.plotly_chart(fig_inflection, use_container_width=True)
+                                        
+                                        # Mostrar detalles de los puntos de inflexión
+                                        st.write("#### 📋 Detalles de los Puntos de Inflexión")
+                                        for phase, point in inflection_points.items():
+                                            if point:
+                                                with st.expander(f"💡 {phase.replace('_', ' ').title()}"):
+                                                    st.write(f"**Año:** {point['year']}")
+                                                    st.write(f"**Menciones:** {point['mentions']}")
+                                                    st.write(f"**Sentimiento:** {point['sentiment']:.2f}")
+                                                    
+                                                    # Agregar explicación según la fase
+                                                    if phase == 'innovation_trigger':
+                                                        st.info("Primera aparición significativa en medios")
+                                                    elif phase == 'peak':
+                                                        st.info("Punto de máxima atención mediática")
+                                                    elif phase == 'trough':
+                                                        st.info("Punto de menor interés post-pico")
+                                        
+                                        # Análisis temporal detallado
+                                        st.write("#### 📅 Análisis Temporal")
+                                        col1, col2 = st.columns(2)
+                                        
+                                        with col1:
+                                            mentions_fig = px.bar(
+                                                yearly_stats,
+                                                x='year',
+                                                y='mention_count',
+                                                title="Evolución de Menciones por Año"
+                                            )
+                                            mentions_fig.update_layout(
+                                                xaxis_title="Año",
+                                                yaxis_title="Número de Menciones",
+                                                showlegend=True
+                                            )
+                                            st.plotly_chart(mentions_fig, use_container_width=True)
+                                        
+                                        with col2:
+                                            sentiment_fig = px.line(
+                                                yearly_stats,
+                                                x='year',
+                                                y='sentiment_mean',
+                                                title="Evolución del Sentimiento"
+                                            )
+                                            sentiment_fig.update_layout(
+                                                xaxis_title="Año",
+                                                yaxis_title="Sentimiento Promedio",
+                                                showlegend=True
+                                            )
+                                            st.plotly_chart(sentiment_fig, use_container_width=True)
+                                        
+                                        # Evidencia de noticias
+                                        st.write("#### 📰 Evidencia en Medios")
+                                        st.write("Noticias más relevantes que respaldan el análisis:")
+                                        
+                                        for result in hype_data['results'][:5]:
+                                            with st.expander(f"📄 {result['title']}", expanded=False):
+                                                st.markdown(f"**Resumen:** {result['text']}")
+                                                col1, col2 = st.columns([3, 1])
+                                                with col1:
+                                                    st.markdown(f"🔗 [Leer noticia completa]({result['link']})")
+                                                    st.write(f"📅 Año: {result['year']}")
+                                                with col2:
+                                                    sentiment = result['sentiment']
+                                                    sentiment_color = 'green' if sentiment > 0 else 'red'
+                                                    st.markdown(f"💭 Sentimiento: <span style='color:{sentiment_color}'>{sentiment:.2f}</span>", 
+                                                            unsafe_allow_html=True)
+                                        
+                                        # Conclusiones y recomendaciones
+                                        st.write("#### 🎯 Conclusiones y Recomendaciones")
+                                        conclusions = {
+                                            "Innovation Trigger": """
+                                                - **Oportunidad:** Momento ideal para investigación y desarrollo
+                                                - **Riesgo:** Alto nivel de incertidumbre
+                                                - **Recomendación:** Monitorear avances y casos de uso pioneros
+                                            """,
+                                            "Peak of Inflated Expectations": """
+                                                - **Oportunidad:** Alta visibilidad y interés del mercado
+                                                - **Riesgo:** Posibles expectativas irrealistas
+                                                - **Recomendación:** Evaluar casos de uso específicos y ROI
+                                            """,
+                                            "Trough of Disillusionment": """
+                                                - **Oportunidad:** Evaluación realista de beneficios
+                                                - **Riesgo:** Pérdida de interés y apoyo
+                                                - **Recomendación:** Focalizarse en casos de uso probados
+                                            """,
+                                            "Slope of Enlightenment": """
+                                                - **Oportunidad:** Implementación con beneficios claros
+                                                - **Riesgo:** Competencia creciente
+                                                - **Recomendación:** Desarrollar estrategias de adopción
+                                            """,
+                                            "Plateau of Productivity": """
+                                                - **Oportunidad:** Tecnología probada y estable
+                                                - **Riesgo:** Commoditización
+                                                - **Recomendación:** Optimizar implementación y costos
+                                            """
+                                        }
+                                        st.markdown(conclusions[current_phase])
+                                        
+                                    else:
+                                        st.warning("No se encontraron suficientes datos para realizar el análisis del Hype Cycle")
+
+                                else:
+                                    st.warning("No se encontraron suficientes datos para realizar el análisis del Hype Cycle")
                     st.divider()
         else:
             st.info("No hay búsquedas recientes")

@@ -22,14 +22,11 @@ import os
 
 class PersistentCache:
     def __init__(self, db_path='data/cache.db'):
-        # Asegurarse de que el directorio data existe
         os.makedirs('data', exist_ok=True)
-        
         self.db_path = db_path
         self.init_db()
 
     def init_db(self):
-        """Inicializa la base de datos"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -43,35 +40,43 @@ class PersistentCache:
             ''')
             conn.commit()
 
+    def serialize_data(self, data):
+        """Convierte los datos a formato JSON manteniendo la estructura"""
+        if isinstance(data, (list, dict)):
+            return json.dumps(data, default=str)
+        return json.dumps([])
+
+    def deserialize_data(self, data_str, default=None):
+        """Convierte JSON a diccionarios/listas de Python"""
+        try:
+            return json.loads(data_str)
+        except:
+            return default if default is not None else []
+
     def add_search(self, query, results, query_info):
-        """Agrega una búsqueda al caché"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # Convertir resultados y query_info a JSON
-            results_json = json.dumps(results)
-            query_info_json = json.dumps(query_info)
+            # Serializar datos asegurando estructura correcta
+            results_json = self.serialize_data(results)
+            query_info_json = self.serialize_data(query_info)
             
-            # Verificar si la búsqueda ya existe
             cursor.execute('SELECT id FROM searches WHERE query = ?', (query,))
             existing = cursor.fetchone()
             
             if existing:
-                # Actualizar búsqueda existente
                 cursor.execute('''
                     UPDATE searches 
                     SET results = ?, query_info = ?, timestamp = CURRENT_TIMESTAMP
                     WHERE query = ?
                 ''', (results_json, query_info_json, query))
             else:
-                # Mantener solo las últimas 3 búsquedas
                 cursor.execute('SELECT COUNT(*) FROM searches')
                 count = cursor.fetchone()[0]
                 
                 if count >= 3:
                     cursor.execute('DELETE FROM searches WHERE id IN (SELECT id FROM searches ORDER BY timestamp ASC LIMIT 1)')
                 
-                # Insertar nueva búsqueda
                 cursor.execute('''
                     INSERT INTO searches (query, results, query_info)
                     VALUES (?, ?, ?)
@@ -80,7 +85,6 @@ class PersistentCache:
             conn.commit()
 
     def get_search(self, query):
-        """Obtiene una búsqueda del caché"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -92,14 +96,13 @@ class PersistentCache:
             result = cursor.fetchone()
             if result:
                 return {
-                    'results': json.loads(result[0]),
-                    'query_info': json.loads(result[1]),
+                    'results': self.deserialize_data(result[0], []),
+                    'query_info': self.deserialize_data(result[1], {}),
                     'timestamp': result[2]
                 }
             return None
 
     def get_recent_searches(self):
-        """Retorna las búsquedas recientes en orden"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -110,14 +113,15 @@ class PersistentCache:
             
             searches = []
             for row in cursor.fetchall():
+                results = self.deserialize_data(row[1], [])
                 searches.append({
                     'query': row[0],
-                    'result_count': len(json.loads(row[1])),
+                    'result_count': len(results),
                     'timestamp': row[2]
                 })
             
             return searches
-            
+
 class QueryBuilder:
     @staticmethod
     def build_google_query(topics, min_year=None, include_patents=True):
