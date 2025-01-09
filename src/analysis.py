@@ -70,8 +70,47 @@ class ResultAnalyzer:
         }
 
     def extract_year(self, text):
-        years = re.findall(r'\b20\d{2}\b', text)
-        return int(min(years)) if years else None
+        """
+        Extrae el año con validación estricta y límite superior en 2025
+        """
+        MAX_VALID_YEAR = 2025  # Límite superior estricto
+        MIN_VALID_YEAR = 2010  # No consideramos artículos muy antiguos
+        
+        def is_valid_year(year):
+            try:
+                year_num = int(year)
+                return MIN_VALID_YEAR <= year_num <= MAX_VALID_YEAR
+            except ValueError:
+                return False
+        
+        # Limpiar el texto de números que no son años
+        cleaned_text = text.lower()
+        cleaned_text = re.sub(r'\d+\s*(?:kb|mb|gb|kib|mib|gib|bytes?)', '', cleaned_text)
+        cleaned_text = re.sub(r'(?:page|p\.)\s*\d+|\d+\s*(?:pages?|p\.)', '', cleaned_text)
+        
+        # Buscar fechas explícitas primero
+        date_patterns = [
+            r'published.*?in\s*(20\d{2})',
+            r'publication\s*date:?\s*(20\d{2})',
+            r'©\s*(20\d{2})',
+            r'\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(20\d{2})'
+        ]
+        
+        for pattern in date_patterns:
+            matches = re.findall(pattern, cleaned_text)
+            for match in matches:
+                if is_valid_year(match):
+                    return int(match)
+        
+        # Buscar en el título con validación estricta
+        title = text.split('\n')[0].lower()
+        title_match = re.search(r'\b(20\d{2})\b', title)
+        if title_match and is_valid_year(title_match.group(1)):
+            return int(title_match.group(1))
+        
+        # Si no encontramos un año válido, retornar el año actual
+        current_year = datetime.now().year
+        return min(current_year, MAX_VALID_YEAR)
 
     def extract_country(self, text):
         countries = ['USA', 'United States', 'UK', 'China', 'Japan', 'Germany', 'France']
@@ -693,70 +732,72 @@ class NewsAnalyzer:
             return "Fuente desconocida"
 
     def show_hype_cycle_news_table(self, st, news_results):
-        """Muestra una tabla interactiva con los detalles de las noticias"""
-        st.write("### 📰 Noticias Analizadas para el Hype Cycle")
-        
-        # Inicializar valores en session_state si no existen
-        if "year_filter" not in st.session_state:
-            st.session_state.year_filter = []
-        if "country_filter" not in st.session_state:
-            st.session_state.country_filter = []
-        if "sentiment_filter" not in st.session_state:
-            st.session_state.sentiment_filter = "Todos"
+        # Calcular estadísticas por país
+        country_stats = {}
+        for result in news_results:
+            country = result.get('country')
+            if country:
+                if country not in country_stats:
+                    country_stats[country] = {'count': 0, 'sentiment': 0}
+                country_stats[country]['count'] += 1
+                country_stats[country]['sentiment'] += result.get('sentiment', 0)
 
-        # Agregar filtros con session_state
-        col1, col2, col3 = st.columns(3)
+        # Calcular promedios de sentimiento
+        for country in country_stats:
+            country_stats[country]['avg_sentiment'] = country_stats[country]['sentiment'] / country_stats[country]['count']
+
+        # Crear mapa base
+        m = folium.Map(location=[20, 0], zoom_start=2, tiles='CartoDB positron')
+        
+        # Coordenadas de países principales
+        country_coords = {
+            'USA': [37.0902, -95.7129],
+            'UK': [55.3781, -3.4360],
+            'China': [35.8617, 104.1954],
+            'Japan': [36.2048, 138.2529],
+            'Germany': [51.1657, 10.4515],
+            'India': [20.5937, 78.9629],
+            'Brazil': [-14.2350, -51.9253],
+            'Spain': [40.4637, -3.7492]
+        }
+
+        # Añadir marcadores al mapa
+        for country, stats in country_stats.items():
+            if country in country_coords:
+                color = 'green' if stats['avg_sentiment'] > 0 else 'red'
+                radius = stats['count'] * 5  # Tamaño basado en número de menciones
+                
+                folium.CircleMarker(
+                    location=country_coords[country],
+                    radius=radius,
+                    color=color,
+                    fill=True,
+                    popup=f"{country}: {stats['count']} menciones"
+                ).add_to(m)
+
+        # Mostrar mapa y ranking
+        st.write("### 🌍 Distribución Global de la Tecnología")
+        col1, col2 = st.columns([2, 1])
+        
         with col1:
-            years = sorted(set(r.get('year') for r in news_results if r.get('year')))
-            st.session_state.year_filter = st.multiselect(
-                "Filtrar por año",
-                options=years,
-                default=st.session_state.year_filter
-            )
-        with col2:
-            countries = sorted(set(r.get('country') for r in news_results if r.get('country')))
-            countries = [c for c in countries if c and c.strip()]
-            st.session_state.country_filter = st.multiselect(
-                "Filtrar por país",
-                options=countries,
-                default=st.session_state.country_filter
-            )
-        with col3:
-            st.session_state.sentiment_filter = st.select_slider(
-                "Filtrar por sentimiento",
-                options=['Todos', 'Solo positivos', 'Solo negativos'],
-                value=st.session_state.sentiment_filter
-            )
-
-        # Aplicar filtros
-        filtered_results = news_results
-        if st.session_state.year_filter:
-            filtered_results = [r for r in filtered_results if r.get('year') in st.session_state.year_filter]
-        if st.session_state.country_filter:
-            filtered_results = [r for r in filtered_results if r.get('country') in st.session_state.country_filter]
-        if st.session_state.sentiment_filter != 'Todos':
-            filtered_results = [r for r in filtered_results if 
-                (st.session_state.sentiment_filter == 'Solo positivos' and r.get('sentiment', 0) > 0) or
-                (st.session_state.sentiment_filter == 'Solo negativos' and r.get('sentiment', 0) < 0)]
+            folium_static(m)
         
-        # Mostrar resultados
-        for idx, result in enumerate(filtered_results, 1):
-            with st.expander(f"📄 {idx}. {result['title']}", expanded=False):
-                col1, col2 = st.columns([2,1])
-                with col1:
-                    st.markdown("**Resumen:**")
-                    st.write(result['summary'])
-                    st.markdown(f"**Palabras clave:** {', '.join(result['keywords'])}")
-                    st.markdown(f"🔗 [Ver noticia completa]({result['link']})")
-                with col2:
-                    st.markdown("**Detalles:**")
-                    st.markdown(f"📅 **Año:** {result['year']}")
-                    st.markdown(f"🌍 **País:** {result.get('country', 'No especificado')}")
-                    st.markdown(f"📰 **Fuente:** {result['source']}")
-                    if result['authors']:
-                        st.markdown(f"✍️ **Autores:** {', '.join(result['authors'])}")
-                    
-                    sentiment = result['sentiment']
-                    sentiment_color = 'green' if sentiment > 0 else 'red'
-                    st.markdown(f"💭 **Sentimiento:** <span style='color:{sentiment_color}'>{sentiment:.2f}</span>", 
-                            unsafe_allow_html=True)
+        with col2:
+            st.write("#### 🏆 Ranking de Países")
+            ranking = pd.DataFrame([
+                {'País': k, 'Menciones': v['count'], 'Sentimiento': v['avg_sentiment']} 
+                for k, v in country_stats.items()
+            ])
+            ranking = ranking.sort_values('Menciones', ascending=False)
+            st.dataframe(ranking)
+
+        # Mostrar lista de noticias
+        st.write("### 📰 Artículos Analizados")
+        for i, result in enumerate(news_results, 1):
+            with st.expander(f"📄 {i}. {result['title']}", expanded=False):
+                st.write(result.get('summary', 'No hay resumen disponible'))
+                st.write(f"🔗 [Ver noticia completa]({result['link']})")
+                st.write(f"📅 Año: {result['year']}")
+                st.write(f"🌍 País: {result.get('country', 'No especificado')}")
+                sentiment = result.get('sentiment', 0)
+                st.write(f"💭 Sentimiento: {'Positivo' if sentiment > 0 else 'Negativo'} ({sentiment:.2f})")
