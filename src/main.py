@@ -551,9 +551,9 @@ def sidebar_config():
         
         min_year = st.number_input(
             "Año mínimo",
-            min_value=2000,
-            max_value=2024,
-            value=2019,
+            min_value=1970,
+            max_value=2025,
+            value=2014,
             help="Año desde el cual buscar resultados"
         )
         
@@ -715,11 +715,26 @@ def main():
     
     # Botón de búsqueda
     if st.button("🔍 Analizar Tendencias", type="primary"):
+
+        # Limpiar estados anteriores
+        if 'filtered_results' in st.session_state:
+            del st.session_state.filtered_results
+        if 'search_results' in st.session_state:
+            del st.session_state.search_results
+        if 'search_query' in st.session_state:
+            del st.session_state.search_query
+        if 'pdf_generated' in st.session_state:
+            del st.session_state.pdf_generated
+
         if not any(topics):
             st.error("Por favor, ingresa al menos un tema para buscar")
             return
             
         with st.spinner("🔄 Analizando tendencias tecnológicas..."):
+            # Inicializar variables para Hype Cycle
+            hype_data = None
+            hype_figures = {}
+            
             # Construir queries
             query_builder = QueryBuilder()
             google_query = query_builder.build_google_query(
@@ -750,64 +765,52 @@ def main():
                 max_results=config['max_results']
             )
             
-            # Realizar búsqueda específica de noticias para Hype Cycle
-            news_analyzer = NewsAnalyzer()
-            news_success, news_results = news_analyzer.perform_news_search(
-                config['api_key'],
-                config['search_engine_id'],
-                google_query
-            )
-    
-            if not success:
-                st.error(f"Error al realizar la búsqueda: {results}")
-                return
-            
-            if not results:
-                st.warning("No se encontraron resultados para tu búsqueda")
-                return
-            
-            # Después de realizar las búsquedas y antes de crear las pestañas
-            if news_success and news_results:
-                hype_data = news_analyzer.analyze_hype_cycle(news_results)
-                hype_figures = {}
-                
-                # Crear las figuras del Hype Cycle
-                hype_figures['Hype Cycle'] = news_analyzer.plot_hype_cycle(hype_data) 
-                
-                # Crear figuras de análisis temporal
-                yearly_stats = hype_data['yearly_stats']
+            if success and results:
+                # Realizar búsqueda específica para Hype Cycle
+                news_analyzer = NewsAnalyzer()
+                news_success, news_results = news_analyzer.perform_news_search(
+                    config['api_key'],
+                    config['search_engine_id'],
+                    google_query
+                )
 
-                inflection_points = news_analyzer.analyze_gartner_points(yearly_stats)
-                
-                hype_figures['Análisis de Puntos de Inflexión'] = news_analyzer.plot_gartner_analysis(yearly_stats, inflection_points)
-                
-                # Figura de menciones
-                mentions_fig = px.bar(
-                    yearly_stats,
-                    x='year',
-                    y='mention_count',
-                    title="Evolución de Menciones por Año"
-                )
-                mentions_fig.update_layout(
-                    xaxis_title="Año",
-                    yaxis_title="Número de Menciones",
-                    showlegend=True
-                )
-                hype_figures['Menciones por Año'] = mentions_fig
-                
-                # Figura de sentimiento
-                sentiment_fig = px.line(
-                    yearly_stats,
-                    x='year',
-                    y='sentiment_mean',
-                    title="Evolución del Sentimiento"
-                )
-                sentiment_fig.update_layout(
-                    xaxis_title="Año",
-                    yaxis_title="Sentimiento Promedio",
-                    showlegend=True
-                )
-                hype_figures['Evolución del Sentimiento'] = sentiment_fig
+                if news_success and news_results:
+                    # Analizar Hype Cycle y crear gráficos
+                    hype_data = news_analyzer.analyze_hype_cycle(news_results)
+                    
+                    # Gráfico principal del Hype Cycle
+                    hype_figures['Hype Cycle'] = news_analyzer.plot_hype_cycle(hype_data, topics)
+                    
+                    # Gráficos de análisis temporal
+                    yearly_stats = hype_data['yearly_stats']
+                    
+                    # Gráfico de menciones
+                    mentions_fig = px.bar(
+                        yearly_stats,
+                        x='year',
+                        y='mention_count',
+                        title="Evolución de Menciones por Año"
+                    )
+                    mentions_fig.update_layout(
+                        xaxis_title="Año",
+                        yaxis_title="Número de Menciones",
+                        showlegend=True
+                    )
+                    hype_figures['Menciones por Año'] = mentions_fig
+                    
+                    # Gráfico de sentimiento
+                    sentiment_fig = px.line(
+                        yearly_stats,
+                        x='year',
+                        y='sentiment_mean',
+                        title="Evolución del Sentimiento"
+                    )
+                    sentiment_fig.update_layout(
+                        xaxis_title="Año",
+                        yaxis_title="Sentimiento Promedio",
+                        showlegend=True
+                    )
+                    hype_figures['Evolución del Sentimiento'] = sentiment_fig
 
             # Crear pestañas
             tab1, tab2 = st.tabs(["📊 Análisis General", "📈 Análisis Hype Cycle"])
@@ -908,7 +911,7 @@ def main():
                     
                     # Gráfico del Hype Cycle
                     st.write("#### 📊 Visualización del Hype Cycle")
-                    fig = news_analyzer.plot_hype_cycle(hype_data)
+                    fig = news_analyzer.plot_hype_cycle(hype_data, topics)
                     st.plotly_chart(fig, use_container_width=True)
                     
                     # Métricas clave
@@ -983,23 +986,56 @@ def main():
                         )
                         st.plotly_chart(sentiment_fig, use_container_width=True)
                     
-                    # Evidencia de noticias
-                    st.write("#### 📰 Evidencia en Medios")
-                    st.write("Noticias más relevantes que respaldan el análisis:")
                     
-                    for result in hype_data['results'][:5]:
-                        with st.expander(f"📄 {result['title']}", expanded=False):
-                            st.markdown(f"**Resumen:** {result['text']}")
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.markdown(f"🔗 [Leer noticia completa]({result['link']})")
-                                st.write(f"📅 Año: {result['year']}")
-                            with col2:
-                                sentiment = result['sentiment']
-                                sentiment_color = 'green' if sentiment > 0 else 'red'
-                                st.markdown(f"💭 Sentimiento: <span style='color:{sentiment_color}'>{sentiment:.2f}</span>", 
-                                          unsafe_allow_html=True)
-                    
+                    # En la sección del Hype Cycle del main.py, después de mostrar el gráfico principal:
+
+                    # ... [código existente del Hype Cycle] ...
+
+                    # Agregar la nueva sección de noticias
+                    st.write("---")  # Separador visual
+
+                    # Mostrar estadísticas de las noticias analizadas
+                    total_news = len(hype_data['results'])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total de Noticias Analizadas", total_news)
+                    with col2:
+                        sentiments = [r.get('sentiment', 0) for r in hype_data['results']]
+                        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+                        st.metric("Sentimiento Promedio", f"{avg_sentiment:.2f}")
+
+                    # Mostrar la tabla detallada de noticias
+                    news_analyzer.show_hype_cycle_news_table(st, hype_data['results'])
+
+                    # Agregar opción de descarga de datos
+                    if st.button("📥 Descargar datos de noticias (CSV)"):
+                        # Preparar datos para CSV
+                        news_data = []
+                        for r in hype_data['results']:
+                            news_data.append({
+                                'Título': r['title'],
+                                'Año': r['year'],
+
+                                'Fuente': r['source'],
+                                'Autores': '; '.join(r['authors']),
+                                'Palabras Clave': ', '.join(r['keywords']),
+                                'Sentimiento': r['sentiment'],
+                                'Enlace': r['link'],
+                                'Resumen': r['summary']
+                            })
+                        
+                        # Convertir a DataFrame y a CSV
+                        df = pd.DataFrame(news_data)
+                        csv = df.to_csv(index=False)
+                        
+                        # Crear botón de descarga
+                        st.download_button(
+                            label="Confirmar descarga CSV",
+                            data=csv,
+                            file_name=f"noticias_hype_cycle_{datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+
                     # Conclusiones y recomendaciones
                     st.write("#### 🎯 Conclusiones y Recomendaciones")
                     conclusions = {

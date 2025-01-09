@@ -59,7 +59,10 @@ class ResultAnalyzer:
             'now', 'look', 'only', 'come', 'its', 'over', 'think', 'also',
             'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first',
             'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these',
-            'give', 'day', 'most', 'us', 'was', 'is', 'are', 'were', 'been'
+            'give', 'day', 'most', 'us', 'was', 'is', 'are', 'were', 'been',
+            'based', 'using', 'since', 'more', 'has', 'been', 'such', 'may',
+            'very', 'both', 'each', 'between', 'under', 'same', 'through',
+            'until'
         }
 
     def extract_year(self, text):
@@ -284,32 +287,78 @@ class NewsAnalyzer:
         return fig
 
     def perform_news_search(self, api_key, search_engine_id, query):
-        """Realiza búsqueda específica en noticias"""
+        """Realiza búsqueda específica en noticias usando sitios de noticias relevantes"""
         try:
             service = build("customsearch", "v1", developerKey=api_key)
             all_results = []
             
-            # Modificar query para noticias
-            news_query = f"{query} site:news.google.com"
+            # En lugar de restringir a sitios específicos, usaremos términos que indiquen contenido noticioso
+            news_terms = [
+                'news', 
+                'press release',
+                'announced',
+                'launches',
+                'reveals'
+            ]
             
-            for start_index in range(1, 91, 10):
+            # Modificar query para encontrar contenido tipo noticia
+            news_query = f'{query} ({" OR ".join(news_terms)})'
+            
+            # También podemos agregar palabras clave relacionadas con noticias
+            news_keywords = ['news', 'article', 'press release', 'announcement']
+            news_query += f' AND ({" OR ".join(news_keywords)})'
+            
+            for start_index in range(1, 91, 10):  # Hasta 90 resultados
                 result = service.cse().list(
                     q=news_query,
                     cx=search_engine_id,
                     num=10,
                     start=start_index,
-                    sort='date'  # Ordenar por fecha
+                    sort='date',  # Ordenar por fecha
+                    dateRestrict='y5'  # Restringir a los últimos 5 años
                 ).execute()
                 
                 items = result.get('items', [])
                 if not items:
                     break
                     
-                all_results.extend(items)
+                # Filtrar y procesar resultados
+                for item in items:
+                    # Verificar si es realmente una noticia (puedes agregar más criterios)
+                    if self._is_news_content(item):
+                        all_results.append(item)
             
             return True, all_results
         except Exception as e:
             return False, str(e)
+
+    def _is_news_content(self, item):
+        """Helper method para verificar si un resultado es realmente una noticia"""
+        # Obtener texto combinado para análisis
+        text = f"{item.get('title', '')} {item.get('snippet', '')}"
+        text = text.lower()
+        
+        # Palabras clave que indican contenido de noticias
+        news_indicators = [
+            'announced', 'reported', 'launched', 'released',
+            'unveiled', 'introduced', 'published', 'news',
+            'article', 'press release', 'coverage'
+        ]
+        
+        # Verificar si contiene indicadores de noticias
+        has_news_indicators = any(indicator in text for indicator in news_indicators)
+        
+        # Verificar la URL
+        url = item.get('link', '').lower()
+        is_news_site = any(
+            site in url for site in [
+                'news', 'article', 'blog', 'press', 
+                'techcrunch', 'wired', 'verge', 'zdnet',
+                'reuters', 'bloomberg'
+            ]
+        )
+        
+        return has_news_indicators or is_news_site
 
     
 
@@ -388,24 +437,56 @@ class NewsAnalyzer:
             'results': analyzed_results
         }
 
-    def plot_hype_cycle(self, hype_data):
-        """Genera visualización del Hype Cycle con mejor diseño"""
+    def plot_hype_cycle(self, hype_data, topics):
+        """
+        Genera visualización del Hype Cycle con temas posicionados
+        """
         fig = go.Figure()
         
-        # Crear curva del Hype Cycle con forma más pronunciada
+        # Crear curva del Hype Cycle
         x = np.linspace(0, 100, 1000)
-        # Modificar la ecuación para una curva más similar a la imagen
         y = 60 * np.exp(-((x-20)/10)**2) - 20 * np.exp(-((x-60)/40)**2) + 40 * np.exp(-((x-90)/15)**2)
         
-        # Añadir la curva principal con un azul más suave
+        # Añadir la curva principal
         fig.add_trace(go.Scatter(
             x=x, y=y,
             mode='lines',
             name='Curva del Hype Cycle',
             line=dict(color='rgb(65, 105, 225)', width=3)
         ))
-        
-        # Definir posiciones de las fases
+
+        # Posicionar los temas en la curva
+        if isinstance(topics, list) and topics:
+            sentiment = hype_data['sentiment_trend'].mean()
+            mentions_trend = hype_data['yearly_stats']['mention_count'].pct_change().mean()
+            
+            # Determinar posición en x basada en métricas
+            if mentions_trend > 0.5 and sentiment > 0:
+                x_pos = 15  # Innovation Trigger
+            elif sentiment > 0.3:
+                x_pos = 30  # Peak of Expectations
+            elif sentiment < 0:
+                x_pos = 60  # Trough of Disillusionment
+            elif sentiment > 0 and mentions_trend > 0:
+                x_pos = 75  # Slope of Enlightenment
+            else:
+                x_pos = 90  # Plateau of Productivity
+
+            # Añadir cada tema a la curva
+            for topic in topics:
+                if topic.strip():  # Solo procesar temas no vacíos
+                    y_pos = 60 * np.exp(-((x_pos-20)/10)**2) - 20 * np.exp(-((x_pos-60)/40)**2) + 40 * np.exp(-((x_pos-90)/15)**2)
+                    fig.add_trace(go.Scatter(
+                        x=[x_pos],
+                        y=[y_pos],
+                        mode='markers+text',
+                        marker=dict(size=10, color='red'),
+                        text=[topic],
+                        textposition='top center',
+                        name=topic
+                    ))
+
+        # Marcar las fases
         phases = {
             "Innovation Trigger": 15,
             "Peak of Inflated Expectations": 30,
@@ -414,65 +495,208 @@ class NewsAnalyzer:
             "Plateau of Productivity": 90
         }
         
-        # Marcar todas las fases
         for phase, x_pos in phases.items():
             y_pos = 60 * np.exp(-((x_pos-20)/10)**2) - 20 * np.exp(-((x_pos-60)/40)**2) + 40 * np.exp(-((x_pos-90)/15)**2)
-            
-            # Resaltar la fase actual
-            if phase == hype_data['phase']:
-                marker_color = 'red'
-                marker_size = 15
-                text_pos = 'top center'
-            else:
-                marker_color = 'black'  # Puntos en negro
-                marker_size = 8
-                text_pos = 'middle right'
-            
             fig.add_trace(go.Scatter(
                 x=[x_pos],
                 y=[y_pos],
-                mode='markers+text',
-                marker=dict(size=marker_size, color=marker_color),
+                mode='text',
                 text=[phase],
-                textposition=text_pos,
-                textfont=dict(color='black', size=12),  # Texto en negro
+                textposition='bottom center',
+                textfont=dict(color='black', size=10),
                 showlegend=False
             ))
         
-        # Personalizar diseño del gráfico
+        # Personalizar diseño
         fig.update_layout(
-            title={
-                'text': "Posición en el Hype Cycle de Gartner",
-                'y':0.95,
-                'x':0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': dict(size=20)
-            },
-            xaxis_title="Madurez de la Tecnología",
-            yaxis_title="Expectativas",
-            height=700,  # Hacer el gráfico más alto
-            width=1000,  # Y más ancho
-            showlegend=False,
+            title="Posición de Temas en el Hype Cycle",
+            height=700,
+            width=1000,
+            showlegend=True,
             plot_bgcolor='white',
-            xaxis=dict(
-                showgrid=True,
-                gridwidth=1,
-                gridcolor='LightGray',
-                zeroline=False
-            ),
-            yaxis=dict(
-                showgrid=True,
-                gridwidth=1,
-                gridcolor='LightGray',
-                zeroline=False
-            ),
-            margin=dict(l=50, r=50, t=100, b=50)
+            xaxis=dict(showticklabels=False, title="Madurez de la Tecnología"),
+            yaxis=dict(showticklabels=False, title="Expectativas")
         )
         
-        # Eliminar los números de los ejes
-        fig.update_xaxes(showticklabels=False)
-        fig.update_yaxes(showticklabels=False)
-        
         return fig
+    
+    def extract_news_details(self, text):
+        """Extrae detalles adicionales del texto de la noticia"""
+        # Eliminada la detección de países
+        
+        # Extraer autores
+        author_patterns = [
+            r'by\s+([\w\s]+)(?=\s+for|\.|\n)',
+            r'author[s]?:?\s+([\w\s]+)(?=\s+for|\.|\n)',
+            r'written\s+by\s+([\w\s]+)(?=\s+for|\.|\n)'
+        ]
+        
+        authors = []
+        for pattern in author_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                authors.extend([author.strip() for author in matches])
+        
+        # Extraer palabras clave
+        # Eliminar palabras comunes y símbolos
+        words = re.findall(r'\b\w+\b', text.lower())
+        stopwords = set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'])
+        keywords = [word for word in words if word not in stopwords and len(word) > 3]
+        # Obtener las palabras más frecuentes
+        keyword_freq = Counter(keywords).most_common(5)
+        
+        return {
+            'authors': list(set(authors)),  # Eliminar duplicados
+            'keywords': [kw for kw, _ in keyword_freq]
+        }
 
+    def analyze_hype_cycle(self, news_results):
+        """Versión mejorada del análisis del Hype Cycle con más detalles"""
+        analyzed_results = []
+        
+        for item in news_results:
+            try:
+                text = f"{item.get('title', '')} {item.get('snippet', '')}"
+                year_match = re.search(r'(\d{4})', text)
+                
+                if not year_match:
+                    continue
+                    
+                year = year_match.group(1)
+                sentiment = self.sentiment_analyzer.polarity_scores(text)
+                
+                # Extraer detalles adicionales
+                details = self.extract_news_details(text)
+                
+                # Crear resumen más corto si el snippet es muy largo
+                snippet = item.get('snippet', '')
+                summary = snippet[:200] + '...' if len(snippet) > 200 else snippet
+                
+                analyzed_results.append({
+                    'year': year,
+                    'sentiment': sentiment['compound'],
+                    'title': item.get('title', 'Sin título'),
+                    'summary': summary,
+                    'link': item.get('link', '#'),
+                    'country': details['country'],
+                    'authors': details['authors'],
+                    'keywords': details['keywords'],
+                    'source': self.extract_source_name(item.get('link', '')),
+                    'date_analyzed': datetime.now().strftime('%Y-%m-%d')
+                })
+                
+            except Exception as e:
+                print(f"Error procesando noticia: {str(e)}")
+                continue
+        
+        # Ordenar por año y sentimiento
+        analyzed_results.sort(key=lambda x: (x['year'], x['sentiment']), reverse=True)
+        
+        # Análisis del Hype Cycle
+        if not analyzed_results:
+            return {
+                'phase': "No hay suficientes datos",
+                'yearly_stats': pd.DataFrame(),
+                'sentiment_trend': pd.Series(),
+                'results': []
+            }
+
+        # Convertir a DataFrame para análisis
+        df = pd.DataFrame(analyzed_results)
+        
+        # Agrupar por año
+        yearly_stats = df.groupby('year').agg({
+            'sentiment': ['mean', 'count']
+        }).reset_index()
+        
+        yearly_stats.columns = ['year', 'sentiment_mean', 'mention_count']
+        
+        # Determinar fase del Hype Cycle
+        latest_stats = yearly_stats.iloc[-1]
+        avg_sentiment = latest_stats['sentiment_mean']
+        mention_trend = yearly_stats['mention_count'].pct_change().mean()
+        
+        # Lógica para determinar la fase
+        if mention_trend > 0.5 and avg_sentiment > 0:
+            phase = "Innovation Trigger"
+        elif avg_sentiment > 0.3 and mention_trend > 0:
+            phase = "Peak of Inflated Expectations"
+        elif avg_sentiment < 0 or mention_trend < -0.2:
+            phase = "Trough of Disillusionment"
+        elif avg_sentiment > 0 and mention_trend > 0:
+            phase = "Slope of Enlightenment"
+        else:
+            phase = "Plateau of Productivity"
+        
+        return {
+            'phase': phase,
+            'yearly_stats': yearly_stats,
+            'sentiment_trend': yearly_stats['sentiment_mean'],
+            'results': analyzed_results  # Ahora contiene más detalles
+        }
+
+    def extract_source_name(self, url):
+        """Extrae el nombre de la fuente de la URL"""
+        try:
+            domain = re.search(r'https?://(?:www\.)?([^/]+)', url).group(1)
+            # Limpiar el dominio para obtener un nombre más legible
+            source_name = domain.split('.')[0].title()
+            return source_name
+        except:
+            return "Fuente desconocida"
+
+    def show_hype_cycle_news_table(st, news_results):
+        """Muestra una tabla interactiva con los detalles de las noticias"""
+        st.write("### 📰 Noticias Analizadas para el Hype Cycle")
+        
+        # Agregar filtros
+        col1, col2 = st.columns(2)
+        with col1:
+            years = sorted(set(r.get('year') for r in news_results if r.get('year')))
+            year_filter = st.multiselect(
+                "Filtrar por año",
+                options=years,
+                default=[]
+            )
+        with col2:
+            sentiment_filter = st.select_slider(
+                "Filtrar por sentimiento",
+                options=['Todos', 'Solo positivos', 'Solo negativos']
+            )
+        
+        # Aplicar filtros
+        filtered_results = news_results
+        if year_filter:
+            filtered_results = [r for r in filtered_results if r.get('year') in year_filter]
+        if country_filter:
+            filtered_results = [r for r in filtered_results if r.get('country') in country_filter]
+        if sentiment_filter != 'Todos':
+            filtered_results = [r for r in filtered_results if 
+                (sentiment_filter == 'Solo positivos' and r.get('sentiment', 0) > 0) or
+                (sentiment_filter == 'Solo negativos' and r.get('sentiment', 0) < 0)]
+        
+        # Mostrar resultados
+        for idx, result in enumerate(filtered_results, 1):
+            with st.expander(f"📄 {idx}. {result['title']}", expanded=False):
+                col1, col2 = st.columns([2,1])
+                
+                with col1:
+                    st.markdown("**Resumen:**")
+                    st.write(result['summary'])
+                    st.markdown(f"**Palabras clave:** {', '.join(result['keywords'])}")
+                    st.markdown(f"🔗 [Ver noticia completa]({result['link']})")
+                
+                with col2:
+                    st.markdown("**Detalles:**")
+                    st.markdown(f"📅 **Año:** {result['year']}")
+                    st.markdown(f"🌍 **País:** {result.get('country', 'No especificado')}")
+                    st.markdown(f"📰 **Fuente:** {result['source']}")
+                    if result['authors']:
+                        st.markdown(f"✍️ **Autores:** {', '.join(result['authors'])}")
+                    
+                    # Mostrar sentimiento con color
+                    sentiment = result['sentiment']
+                    sentiment_color = 'green' if sentiment > 0 else 'red'
+                    st.markdown(f"💭 **Sentimiento:** <span style='color:{sentiment_color}'>{sentiment:.2f}</span>", 
+                            unsafe_allow_html=True)
+        
