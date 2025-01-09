@@ -14,11 +14,15 @@ import numpy as np
 import plotly.graph_objects as go
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from googleapiclient.discovery import build
-
-import sqlite3
+import pydeck as pdk
 import json
+import geopandas as gpd
 from datetime import datetime
-import os
+from geopy.geocoders import Nominatim
+import folium
+from folium.plugins import HeatMap
+from streamlit_folium import folium_static 
+
 
 
 class QueryBuilder:
@@ -522,7 +526,49 @@ class NewsAnalyzer:
     
     def extract_news_details(self, text):
         """Extrae detalles adicionales del texto de la noticia"""
-        # Eliminada la detección de países
+        # Extraer país
+        countries = {
+            'USA': ['united states', 'usa', 'u.s.', 'USA'],
+            'UK': ['united kingdom', 'uk', 'britain'],
+            'China': ['china', 'chinese'],
+            'Japan': ['japan', 'japanese'],
+            'India': ['india', 'indian'],
+            'Canada': ['canada', 'canadian'],
+            'Australia': ['australia', 'australian'],
+            'Malaysia': ['malaysia', 'malaysian'],
+            'Colombia': ['colombia', 'colombian'],
+            'Mexico': ['mexico', 'mexican'],
+            'Brazil': ['brazil', 'brazilian'],
+            'Argentina': ['argentina', 'argentinian'],
+            'Chile': ['chile', 'chilean'],
+            'Peru': ['peru', 'peruvian'],
+            'Spain': ['spain', 'spanish'],
+            'France': ['france', 'french'],
+            'Germany': ['germany', 'german'],
+            'Italy': ['italy', 'italian'],
+            'Russia': ['russia', 'russian'],
+            'South Africa': ['south africa', 'south african'],
+            'Nigeria': ['nigeria', 'nigerian'],
+            'Egypt': ['egypt', 'egyptian'],
+            'Saudi Arabia': ['saudi arabia', 'saudi', 'arabia'],
+            'UAE': ['united arab emirates', 'uae', 'emirates'],
+            'Netherlands': ['netherlands', 'dutch'],
+            'Switzerland': ['switzerland', 'swiss'],
+            'Sweden': ['sweden', 'swedish'],
+            'Belgium': ['belgium', 'belgian'],
+            'Norway': ['norway', 'norwegian'],
+            'Denmark': ['denmark', 'danish'],
+            'Finland': ['finland', 'finnish'],
+            'New Zealand': ['new zealand', 'kiwi']
+            # Agregar más países según sea necesario
+        }
+        
+        detected_country = None
+        text_lower = text.lower()
+        for country, patterns in countries.items():
+            if any(pattern in text_lower for pattern in patterns):
+                detected_country = country
+                break
         
         # Extraer autores
         author_patterns = [
@@ -546,6 +592,7 @@ class NewsAnalyzer:
         keyword_freq = Counter(keywords).most_common(5)
         
         return {
+            'country': detected_country,
             'authors': list(set(authors)),  # Eliminar duplicados
             'keywords': [kw for kw, _ in keyword_freq]
         }
@@ -645,47 +692,62 @@ class NewsAnalyzer:
         except:
             return "Fuente desconocida"
 
-    def show_hype_cycle_news_table(st, news_results):
+    def show_hype_cycle_news_table(self, st, news_results):
         """Muestra una tabla interactiva con los detalles de las noticias"""
         st.write("### 📰 Noticias Analizadas para el Hype Cycle")
         
-        # Agregar filtros
-        col1, col2 = st.columns(2)
+        # Inicializar valores en session_state si no existen
+        if "year_filter" not in st.session_state:
+            st.session_state.year_filter = []
+        if "country_filter" not in st.session_state:
+            st.session_state.country_filter = []
+        if "sentiment_filter" not in st.session_state:
+            st.session_state.sentiment_filter = "Todos"
+
+        # Agregar filtros con session_state
+        col1, col2, col3 = st.columns(3)
         with col1:
             years = sorted(set(r.get('year') for r in news_results if r.get('year')))
-            year_filter = st.multiselect(
+            st.session_state.year_filter = st.multiselect(
                 "Filtrar por año",
                 options=years,
-                default=[]
+                default=st.session_state.year_filter
             )
         with col2:
-            sentiment_filter = st.select_slider(
-                "Filtrar por sentimiento",
-                options=['Todos', 'Solo positivos', 'Solo negativos']
+            countries = sorted(set(r.get('country') for r in news_results if r.get('country')))
+            countries = [c for c in countries if c and c.strip()]
+            st.session_state.country_filter = st.multiselect(
+                "Filtrar por país",
+                options=countries,
+                default=st.session_state.country_filter
             )
-        
+        with col3:
+            st.session_state.sentiment_filter = st.select_slider(
+                "Filtrar por sentimiento",
+                options=['Todos', 'Solo positivos', 'Solo negativos'],
+                value=st.session_state.sentiment_filter
+            )
+
         # Aplicar filtros
         filtered_results = news_results
-        if year_filter:
-            filtered_results = [r for r in filtered_results if r.get('year') in year_filter]
-        if country_filter:
-            filtered_results = [r for r in filtered_results if r.get('country') in country_filter]
-        if sentiment_filter != 'Todos':
+        if st.session_state.year_filter:
+            filtered_results = [r for r in filtered_results if r.get('year') in st.session_state.year_filter]
+        if st.session_state.country_filter:
+            filtered_results = [r for r in filtered_results if r.get('country') in st.session_state.country_filter]
+        if st.session_state.sentiment_filter != 'Todos':
             filtered_results = [r for r in filtered_results if 
-                (sentiment_filter == 'Solo positivos' and r.get('sentiment', 0) > 0) or
-                (sentiment_filter == 'Solo negativos' and r.get('sentiment', 0) < 0)]
+                (st.session_state.sentiment_filter == 'Solo positivos' and r.get('sentiment', 0) > 0) or
+                (st.session_state.sentiment_filter == 'Solo negativos' and r.get('sentiment', 0) < 0)]
         
         # Mostrar resultados
         for idx, result in enumerate(filtered_results, 1):
             with st.expander(f"📄 {idx}. {result['title']}", expanded=False):
                 col1, col2 = st.columns([2,1])
-                
                 with col1:
                     st.markdown("**Resumen:**")
                     st.write(result['summary'])
                     st.markdown(f"**Palabras clave:** {', '.join(result['keywords'])}")
                     st.markdown(f"🔗 [Ver noticia completa]({result['link']})")
-                
                 with col2:
                     st.markdown("**Detalles:**")
                     st.markdown(f"📅 **Año:** {result['year']}")
@@ -694,9 +756,7 @@ class NewsAnalyzer:
                     if result['authors']:
                         st.markdown(f"✍️ **Autores:** {', '.join(result['authors'])}")
                     
-                    # Mostrar sentimiento con color
                     sentiment = result['sentiment']
                     sentiment_color = 'green' if sentiment > 0 else 'red'
                     st.markdown(f"💭 **Sentimiento:** <span style='color:{sentiment_color}'>{sentiment:.2f}</span>", 
                             unsafe_allow_html=True)
-        

@@ -996,10 +996,16 @@ def main():
 
                     # Mostrar estadísticas de las noticias analizadas
                     total_news = len(hype_data['results'])
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Total de Noticias Analizadas", total_news)
                     with col2:
+                        # Usar .get() para manejar casos donde no existe 'country'
+                        unique_countries = set(r.get('country') for r in hype_data['results'])
+                        # Remover None y strings vacíos
+                        unique_countries = {c for c in unique_countries if c and c.strip()}
+                        st.metric("Países Representados", len(unique_countries))
+                    with col3:
                         sentiments = [r.get('sentiment', 0) for r in hype_data['results']]
                         avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
                         st.metric("Sentimiento Promedio", f"{avg_sentiment:.2f}")
@@ -1015,7 +1021,7 @@ def main():
                             news_data.append({
                                 'Título': r['title'],
                                 'Año': r['year'],
-
+                                'País': r['country'],
                                 'Fuente': r['source'],
                                 'Autores': '; '.join(r['authors']),
                                 'Palabras Clave': ', '.join(r['keywords']),
