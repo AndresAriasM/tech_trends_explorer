@@ -14,11 +14,8 @@ import numpy as np
 import plotly.graph_objects as go
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from googleapiclient.discovery import build
-import pydeck as pdk
 import json
-import geopandas as gpd
 from datetime import datetime
-from geopy.geocoders import Nominatim
 import folium
 from folium.plugins import HeatMap
 from streamlit_folium import folium_static 
@@ -73,8 +70,8 @@ class ResultAnalyzer:
         """
         Extrae el año con validación estricta y límite superior en 2025
         """
-        MAX_VALID_YEAR = 2025  # Límite superior estricto
-        MIN_VALID_YEAR = 2010  # No consideramos artículos muy antiguos
+        MAX_VALID_YEAR = 2025  
+        MIN_VALID_YEAR = 1970  
         
         def is_valid_year(year):
             try:
@@ -375,53 +372,50 @@ class NewsAnalyzer:
         except Exception as e:
             return False, str(e)
 
-    def _is_news_content(self, item):
-        """Helper method para verificar si un resultado es realmente una noticia"""
-        # Obtener texto combinado para análisis
-        text = f"{item.get('title', '')} {item.get('snippet', '')}"
-        text = text.lower()
-        
-        # Palabras clave que indican contenido de noticias
-        news_indicators = [
-            'announced', 'reported', 'launched', 'released',
-            'unveiled', 'introduced', 'published', 'news',
-            'article', 'press release', 'coverage'
-        ]
-        
-        # Verificar si contiene indicadores de noticias
-        has_news_indicators = any(indicator in text for indicator in news_indicators)
-        
-        # Verificar la URL
-        url = item.get('link', '').lower()
-        is_news_site = any(
-            site in url for site in [
-                'news', 'article', 'blog', 'press', 
-                'techcrunch', 'wired', 'verge', 'zdnet',
-                'reuters', 'bloomberg'
-            ]
-        )
-        
-        return has_news_indicators or is_news_site
-
     
-
     def analyze_hype_cycle(self, news_results):
         """Analiza resultados para determinar posición en Hype Cycle"""
         analyzed_results = []
-        
+        current_year = datetime.now().year
+        MIN_YEAR = 1970
+            
         for item in news_results:
             try:
-                # Extraer fecha del snippet o título
                 text = f"{item.get('title', '')} {item.get('snippet', '')}"
-                # Buscar patrones de fecha en el texto
-                date_pattern = r'(\d{4})'
-                year_match = re.search(date_pattern, text)
                 
-                if year_match:
-                    year = year_match.group(1)
-                else:
-                    continue  # Saltar si no hay año
+                # Limpiar el texto de números que no son años
+                cleaned_text = text.lower()
+                cleaned_text = re.sub(r'\d+\s*(?:kb|mb|gb|kib|mib|gib|bytes?)', '', cleaned_text)
+                cleaned_text = re.sub(r'(?:page|p\.)\s*\d+|\d+\s*(?:pages?|p\.)', '', cleaned_text)
                 
+                # Primero buscar en patrones de fecha explícitos
+                found_year = None
+                date_patterns = [
+                    r'published.*?in\s*(20\d{2})',
+                    r'publication\s*date:?\s*(20\d{2})',
+                    r'©\s*(20\d{2})',
+                    r'\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(20\d{2})'
+                ]
+                
+                for pattern in date_patterns:
+                    if match := re.search(pattern, cleaned_text):
+                        year = int(match.group(1))
+                        if MIN_YEAR <= year <= current_year:
+                            found_year = year
+                            break
+                
+                # Si no encontramos en patrones explícitos, buscar en el título
+                if not found_year:
+                    title = item.get('title', '').lower()
+                    title_match = re.search(r'\b(20\d{2})\b', title)
+                    if title_match:
+                        year = int(title_match.group(1))
+                        if MIN_YEAR <= year <= current_year:
+                            found_year = year
+                
+                # Si no encontramos un año válido, usar el año actual
+                year = found_year or current_year
+                    
                 # Analizar sentimiento
                 sentiment = self.sentiment_analyzer.polarity_scores(text)
                 
@@ -433,11 +427,11 @@ class NewsAnalyzer:
                     'title': item.get('title', 'Sin título'),
                     'link': item.get('link', '#')
                 })
-                
+                    
             except Exception as e:
                 print(f"Error procesando noticia: {str(e)}")
                 continue
-        
+            
         if not analyzed_results:
             return {
                 'phase': "No hay suficientes datos",
@@ -445,7 +439,7 @@ class NewsAnalyzer:
                 'sentiment_trend': pd.Series(),
                 'results': []
             }
-        
+            
         # Convertir a DataFrame
         df = pd.DataFrame(analyzed_results)
         
@@ -479,6 +473,34 @@ class NewsAnalyzer:
             'sentiment_trend': yearly_stats['sentiment_mean'],
             'results': analyzed_results
         }
+
+    def _is_news_content(self, item):
+        """Helper method para verificar si un resultado es realmente una noticia"""
+        # Obtener texto combinado para análisis
+        text = f"{item.get('title', '')} {item.get('snippet', '')}"
+        text = text.lower()
+        
+        # Palabras clave que indican contenido de noticias
+        news_indicators = [
+            'announced', 'reported', 'launched', 'released',
+            'unveiled', 'introduced', 'published', 'news',
+            'article', 'press release', 'coverage'
+        ]
+        
+        # Verificar si contiene indicadores de noticias
+        has_news_indicators = any(indicator in text for indicator in news_indicators)
+        
+        # Verificar la URL
+        url = item.get('link', '').lower()
+        is_news_site = any(
+            site in url for site in [
+                'news', 'article', 'blog', 'press', 
+                'techcrunch', 'wired', 'verge', 'zdnet',
+                'reuters', 'bloomberg'
+            ]
+        )
+        
+        return has_news_indicators or is_news_site
 
     def plot_hype_cycle(self, hype_data, topics):
         """
@@ -636,90 +658,7 @@ class NewsAnalyzer:
             'keywords': [kw for kw, _ in keyword_freq]
         }
 
-    def analyze_hype_cycle(self, news_results):
-        """Versión mejorada del análisis del Hype Cycle con más detalles"""
-        analyzed_results = []
-        
-        for item in news_results:
-            try:
-                text = f"{item.get('title', '')} {item.get('snippet', '')}"
-                year_match = re.search(r'(\d{4})', text)
-                
-                if not year_match:
-                    continue
-                    
-                year = year_match.group(1)
-                sentiment = self.sentiment_analyzer.polarity_scores(text)
-                
-                # Extraer detalles adicionales
-                details = self.extract_news_details(text)
-                
-                # Crear resumen más corto si el snippet es muy largo
-                snippet = item.get('snippet', '')
-                summary = snippet[:200] + '...' if len(snippet) > 200 else snippet
-                
-                analyzed_results.append({
-                    'year': year,
-                    'sentiment': sentiment['compound'],
-                    'title': item.get('title', 'Sin título'),
-                    'summary': summary,
-                    'link': item.get('link', '#'),
-                    'country': details['country'],
-                    'authors': details['authors'],
-                    'keywords': details['keywords'],
-                    'source': self.extract_source_name(item.get('link', '')),
-                    'date_analyzed': datetime.now().strftime('%Y-%m-%d')
-                })
-                
-            except Exception as e:
-                print(f"Error procesando noticia: {str(e)}")
-                continue
-        
-        # Ordenar por año y sentimiento
-        analyzed_results.sort(key=lambda x: (x['year'], x['sentiment']), reverse=True)
-        
-        # Análisis del Hype Cycle
-        if not analyzed_results:
-            return {
-                'phase': "No hay suficientes datos",
-                'yearly_stats': pd.DataFrame(),
-                'sentiment_trend': pd.Series(),
-                'results': []
-            }
-
-        # Convertir a DataFrame para análisis
-        df = pd.DataFrame(analyzed_results)
-        
-        # Agrupar por año
-        yearly_stats = df.groupby('year').agg({
-            'sentiment': ['mean', 'count']
-        }).reset_index()
-        
-        yearly_stats.columns = ['year', 'sentiment_mean', 'mention_count']
-        
-        # Determinar fase del Hype Cycle
-        latest_stats = yearly_stats.iloc[-1]
-        avg_sentiment = latest_stats['sentiment_mean']
-        mention_trend = yearly_stats['mention_count'].pct_change().mean()
-        
-        # Lógica para determinar la fase
-        if mention_trend > 0.5 and avg_sentiment > 0:
-            phase = "Innovation Trigger"
-        elif avg_sentiment > 0.3 and mention_trend > 0:
-            phase = "Peak of Inflated Expectations"
-        elif avg_sentiment < 0 or mention_trend < -0.2:
-            phase = "Trough of Disillusionment"
-        elif avg_sentiment > 0 and mention_trend > 0:
-            phase = "Slope of Enlightenment"
-        else:
-            phase = "Plateau of Productivity"
-        
-        return {
-            'phase': phase,
-            'yearly_stats': yearly_stats,
-            'sentiment_trend': yearly_stats['sentiment_mean'],
-            'results': analyzed_results  # Ahora contiene más detalles
-        }
+    
 
     def extract_source_name(self, url):
         """Extrae el nombre de la fuente de la URL"""
@@ -731,7 +670,9 @@ class NewsAnalyzer:
         except:
             return "Fuente desconocida"
 
+    
     def show_hype_cycle_news_table(self, st, news_results):
+        """Muestra una tabla interactiva con el mapa y los detalles de las noticias"""
         # Calcular estadísticas por país
         country_stats = {}
         for result in news_results:
@@ -784,12 +725,27 @@ class NewsAnalyzer:
         
         with col2:
             st.write("#### 🏆 Ranking de Países")
-            ranking = pd.DataFrame([
-                {'País': k, 'Menciones': v['count'], 'Sentimiento': v['avg_sentiment']} 
-                for k, v in country_stats.items()
-            ])
-            ranking = ranking.sort_values('Menciones', ascending=False)
-            st.dataframe(ranking)
+            # Crear DataFrame para ranking
+            data = []
+            for country, stats in country_stats.items():
+                data.append({
+                    "País": country,
+                    "Menciones": int(stats['count']),
+                    "Sentimiento": round(stats['avg_sentiment'], 2)
+                })
+            
+            ranking = pd.DataFrame(data)
+            if not ranking.empty:
+                ranking = ranking.sort_values(by="Menciones", ascending=False)
+                st.dataframe(
+                    ranking,
+                    hide_index=True,
+                    column_config={
+                        "País": "País",
+                        "Menciones": st.column_config.NumberColumn("Menciones", format="%d"),
+                        "Sentimiento": st.column_config.NumberColumn("Sentimiento", format="%.2f")
+                    }
+                )
 
         # Mostrar lista de noticias
         st.write("### 📰 Artículos Analizados")

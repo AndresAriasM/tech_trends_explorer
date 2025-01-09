@@ -9,8 +9,4 @@ vaderSentiment>=3.3.2
 numpy>=1.21.0
 reportlab>=4.0.4
 kaleido>=0.2.1
-pydeck==0.9.1
-geopy==2.4.1
-geopandas==0.9.0
-fiona==1.8.21
 streamlit-folium==0.24.0
