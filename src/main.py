@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import base64
 import io
+import json
 from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -55,10 +56,64 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def manage_topics():
+    """Maneja la adición y eliminación de topics"""
+    if 'topics_data' not in st.session_state:
+        st.session_state.topics_data = [{'id': 0, 'value': ''}]
+    
+    topics = []
+    topics_to_remove = []
+
+    # Crear columnas para cada topic con su botón de eliminación
+    for topic in st.session_state.topics_data:
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            value = st.text_input(
+                f"Tema {topic['id'] + 1}",
+                value=topic.get('value', ''),
+                key=f"topic_{topic['id']}",
+                placeholder="Ej: Artificial Intelligence, Blockchain, IoT..."
+            )
+            topics.append(value)
+            # Actualizar el valor en session_state
+            topic['value'] = value
+        
+        # No mostrar botón de eliminar si solo queda un topic
+        with col2:
+            if len(st.session_state.topics_data) > 1:
+                if st.button('❌', key=f"remove_{topic['id']}"):
+                    topics_to_remove.append(topic['id'])
+
+    # Remover topics marcados para eliminación
+    if topics_to_remove:
+        st.session_state.topics_data = [
+            topic for topic in st.session_state.topics_data 
+            if topic['id'] not in topics_to_remove
+        ]
+        st.rerun()
+
+    # Botón para añadir nuevo topic
+    if st.button("➕ Añadir otro tema"):
+        new_id = max([t['id'] for t in st.session_state.topics_data]) + 1
+        st.session_state.topics_data.append({'id': new_id, 'value': ''})
+        st.rerun()
+
+    return [topic.strip() for topic in topics if topic.strip()]
+    
 def reset_session_state():
-    """Resetea todas las variables de estado de la sesión"""
+    """
+    Resetea el estado de la sesión manteniendo solo las credenciales
+    """
+    # Lista de keys que no queremos borrar
+    keys_to_keep = {
+        'api_key',
+        'search_engine_id', 
+        'serp_api_key'
+    }
+    
+    # Borrar solo las keys que no queremos mantener
     for key in list(st.session_state.keys()):
-        if key != 'num_topics':  # Mantener solo el contador de topics
+        if key not in keys_to_keep:
             del st.session_state[key]
 
 def test_api_connection(api_key, search_engine_id):
@@ -565,40 +620,79 @@ def test_api_connection(api_key, search_engine_id):
         print(f"Error inesperado: {str(e)}")
         return False, f"Error inesperado: {str(e)}"
 
+def load_config_from_file(uploaded_file):
+    """
+    Carga la configuración desde un archivo subido
+    """
+    try:
+        # Leer el contenido del archivo
+        content = uploaded_file.read()
+        
+        # Decodificar el contenido
+        if uploaded_file.type == "application/json":
+            config_data = json.loads(content)
+        else:
+            st.error("Por favor, sube un archivo JSON válido")
+            return None
+            
+        # Validar la estructura del archivo
+        required_keys = ['GOOGLE_API_KEY', 'SEARCH_ENGINE_ID', 'SERP_API_KEY']
+        if not all(key in config_data for key in required_keys):
+            st.error("El archivo de configuración no contiene todas las claves necesarias")
+            return None
+            
+        # Actualizar session state
+        st.session_state.api_key = config_data['GOOGLE_API_KEY']
+        st.session_state.search_engine_id = config_data['SEARCH_ENGINE_ID']
+        st.session_state.serp_api_key = config_data['SERP_API_KEY']
+        
+        return True
+        
+    except json.JSONDecodeError:
+        st.error("El archivo no es un JSON válido")
+        return None
+    except Exception as e:
+        st.error(f"Error al cargar el archivo: {str(e)}")
+        return None
+
 def sidebar_config():
     with st.sidebar:
         st.header("⚙️ Configuración")
         
-        # Inicializar las keys en el session state si no existen
-        if 'api_key' not in st.session_state:
-            st.session_state.api_key = os.getenv('GOOGLE_API_KEY', '')
-        if 'search_engine_id' not in st.session_state:
-            st.session_state.search_engine_id = os.getenv('SEARCH_ENGINE_ID', '')
-        if 'serp_api_key' not in st.session_state:
-            st.session_state.serp_api_key = os.getenv('SERP_API_KEY', '')
+        # Opción de carga de archivo
+        st.subheader("📁 Cargar Configuración")
+        uploaded_file = st.file_uploader(
+            "Cargar archivo de configuración",
+            type=['json'],
+            help="Sube un archivo JSON con tus credenciales"
+        )
         
-        # API Keys con manejo de estado
+        if uploaded_file is not None:
+            if load_config_from_file(uploaded_file):
+                st.success("✅ Configuración cargada exitosamente")
+        
+        st.divider()
+        
+        # API Keys (manual input como respaldo)
+        st.subheader("🔑 Configuración Manual")
         api_key = st.text_input(
             "Google API Key",
-            value=st.session_state.api_key,
-            type="password",
-            key="google_api_input"
+            value=st.session_state.get('api_key', ''),
+            type="password"
         )
         st.session_state.api_key = api_key
         
         search_engine_id = st.text_input(
             "Search Engine ID",
-            value=st.session_state.search_engine_id,
-            type="password",
-            key="search_engine_input"
+            value=st.session_state.get('search_engine_id', ''),
+            type="password"
         )
         st.session_state.search_engine_id = search_engine_id
         
         serp_api_key = st.text_input(
             "SerpAPI Key",
-            value=st.session_state.serp_api_key,
+            value=st.session_state.get('serp_api_key', ''),
             type="password",
-            key="serp_api_input",
             help="API key para SerpAPI (usado en análisis Hype Cycle)"
         )
         st.session_state.serp_api_key = serp_api_key
@@ -788,7 +882,9 @@ def should_include_content(content_type, content_types):
     return content_types.get(mapping.get(content_type, 'web_pages'), False)
 
 def main():
-    # Cargar configuración
+    #initialize_session_state()
+    
+    # Configuración del sidebar
     config = sidebar_config()
     
     # Encabezado principal
@@ -798,31 +894,17 @@ def main():
     if not config['api_key'] or not config['search_engine_id'] or not config['serp_api_key']:
         st.warning("⚠️ Por favor, configura todas las credenciales de API en el sidebar")
         return
-    
+
     # Área de búsqueda
     st.write("### 🎯 Define tus términos de búsqueda")
     
-    # Topics dinámicos
-    if 'num_topics' not in st.session_state:
-        st.session_state.num_topics = 1
+    # Gestión de topics con la nueva función
+    topics = manage_topics()
     
-    topics = []
-    for i in range(st.session_state.num_topics):
-        topic = st.text_input(
-            f"Tema {i+1}",
-            key=f"topic_{i}",
-            placeholder="Ej: Artificial Intelligence, Blockchain, IoT..."
-        )
-        if topic.strip():  # Solo añadir temas no vacíos
-            topics.append(topic)
-    
-    if st.button("+ Añadir otro tema"):
-        st.session_state.num_topics += 1
-        st.rerun()
-    
-    # Botón de búsqueda
+    # Botón de análisis
     if st.button("🔍 Analizar Tendencias", type="primary"):
         reset_session_state()
+        
         if not topics:
             st.error("Por favor, ingresa al menos un tema para buscar")
             return
