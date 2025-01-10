@@ -119,7 +119,13 @@ class ResultAnalyzer:
         return min(current_year, MAX_VALID_YEAR)
 
     def extract_country(self, text):
-        countries = ['USA', 'United States', 'UK', 'China', 'Japan', 'Germany', 'France']
+        countries = ['USA', 'United States', 'UK', 'China', 'Japan', 'Germany', 'France', 'India', 'Italy', 'Canada',
+                     'South Korea', 'Russia', 'Brazil', 'Australia', 'Spain', 'Mexico', 'Indonesia', 'Netherlands',
+                     'Turkey', 'Saudi Arabia', 'Switzerland', 'Sweden', 'Poland', 'Belgium', 'Norway', 'Austria',
+                     'UAE', 'Iran', 'Ireland, Denmark', 'Colombia', 'South Africa', 'Egypt', 'Chile', 'Argentina',
+                     'Finland', 'Czech Republic', 'Portugal', 'Greece', 'Vietnam', 'New Zealand', 'Thailand', 'Algeria',
+                     'Qatar', 'Peru', 'Romania', 'Hungary', 'Kazakhstan', 'Ukraine', 'Iraq', 'Morocco', 'Bangladesh',
+                     'Puerto Rico', 'Philippines', 'Pakistan', 'Venezuela', 'Croatia']
         for country in countries:
             if country.lower() in text.lower():
                 return country
@@ -299,18 +305,32 @@ class NewsAnalyzer:
 
     def perform_news_search(self, serp_api_key, query):
         """
-        Realiza búsqueda optimizada usando SerpAPI PRO, maximizando los resultados por consulta
+        Realiza búsqueda optimizada usando SerpAPI para noticias
         """
         try:
             all_results = []
             current_year = datetime.now().year
             start_year = current_year - 11
             
+            # Limpiar la query de filtros existentes
+            clean_query = re.sub(r'\s*(?:after|before):\d{4}(?:-\d{2}-\d{2})?\s*', '', query).strip()
+            
+            # Definir parámetros base que maximizan la cobertura
+            base_params = {
+                "api_key": serp_api_key,
+                "tbm": "nws",          # Búsqueda de noticias
+                "num": 100,            # Máximo número de resultados
+                "safe": "off",         # Desactivar SafeSearch
+                "gl": "us",            # Configuración global para maximizar resultados
+                "hl": "en",            # Idioma inglés para consistencia
+                "filter": "0"          # Intentar desactivar el filtrado de duplicados
+            }
+            
             # Definir rangos de búsqueda más amplios
             date_ranges = [
-                (start_year, start_year + 3),
-                (start_year + 4, start_year + 7),
-                (start_year + 8, current_year)
+                (start_year, start_year + 3),      # Primeros 4 años
+                (start_year + 4, start_year + 7),  # Siguientes 4 años
+                (start_year + 8, current_year)     # Últimos años hasta el presente
             ]
             
             print(f"Iniciando búsqueda optimizada desde {start_year} hasta {current_year}")
@@ -322,87 +342,97 @@ class NewsAnalyzer:
                 
                 print(f"\nBuscando en rango: {start_date}-{end_date}")
                 
-                while has_more:
+                while has_more and start < 100:  # Límite de start en SerpAPI
                     try:
                         # Construir query con rango de fecha
-                        date_query = f"{query} after:{start_date}-01-01 before:{end_date}-12-31"
+                        date_query = f"{clean_query} after:{start_date}-01-01 before:{end_date}-12-31"
+                        print(f"Query construida: {date_query}")
                         
+                        # Combinar parámetros
                         params = {
+                            **base_params,
                             "q": date_query,
-                            "tbm": "nws",
-                            "api_key": serp_api_key,
-                            "start": start,
-                            "num": 100
+                            "start": start
                         }
                         
                         print(f"Consultando resultados {start+1}-{start+100}")
                         response = requests.get(self.SERP_API_BASE_URL, params=params)
-                        
-                        # Imprimir detalles de la respuesta para debugging
-                        print(f"Status Code: {response.status_code}")
-                        
                         response.raise_for_status()
                         data = response.json()
-                        
-                        # Verificar la estructura de la respuesta
-                        print(f"Keys en respuesta: {data.keys()}")
                         
                         if "news_results" in data and data["news_results"]:
                             results = data["news_results"]
                             print(f"Encontrados {len(results)} resultados en esta página")
                             found_in_range += len(results)
                             
-                            # Procesar resultados con manejo de errores individual
+                            # Procesar resultados con validación
                             for item in results:
-                                try:
+                                if self._is_valid_result(item):
                                     processed = self._process_news_item(item)
                                     if processed:
                                         all_results.append(processed)
-                                        print(".", end="", flush=True)  # Indicador de progreso
-                                except Exception as e:
-                                    print(f"\nError procesando item: {str(e)}")
-                                    continue
-                            
-                            print(f"\nProcesados {len(results)} resultados exitosamente")
                             
                             if len(results) < 100:
                                 has_more = False
                                 print(f"No hay más resultados en este rango. Total encontrado: {found_in_range}")
                             else:
                                 start += len(results)
+                                print(f"Hay más resultados disponibles. Continuando búsqueda...")
                                 time.sleep(0.5)
                         else:
-                            print("No se encontraron news_results en la respuesta")
-                            if data.get("error"):
-                                print(f"Error reportado: {data['error']}")
                             has_more = False
-                    
-                    except requests.exceptions.RequestException as e:
-                        print(f"Error en la solicitud HTTP: {str(e)}")
-                        has_more = False
                     except Exception as e:
-                        print(f"Error inesperado: {str(e)}")
+                        print(f"Error en la solicitud: {str(e)}")
                         has_more = False
                         time.sleep(1)
             
             # Verificar resultados finales
             if not all_results:
-                print("No se encontraron resultados en ningún rango")
+                print("No se encontraron resultados")
                 return False, "No se encontraron resultados"
             
-            # Remover duplicados
+            # Remover duplicados basados en URL
             unique_results = {result['link']: result for result in all_results}.values()
             final_results = list(unique_results)
             
-            print(f"\nBúsqueda completada exitosamente:")
+            print(f"\nBúsqueda completada:")
             print(f"- Total de resultados encontrados: {len(all_results)}")
             print(f"- Resultados únicos después de filtrar: {len(final_results)}")
             
             return True, final_results
             
         except Exception as e:
-            print(f"Error general en la búsqueda: {str(e)}")
+            print(f"Error en la búsqueda: {str(e)}")
             return False, str(e)
+
+    def _is_valid_result(self, item):
+        """
+        Valida si un resultado debe ser incluido basado en criterios de calidad
+        """
+        try:
+            # Verificar campos requeridos
+            if not all(key in item for key in ['title', 'link', 'snippet']):
+                return False
+                
+            # Verificar longitud mínima del contenido
+            if len(item['snippet']) < 50:  # Contenido muy corto puede ser de baja calidad
+                return False
+                
+            # Verificar si es una fuente bloqueada
+            blocked_domains = [
+                'pinterest',
+                'facebook.com',
+                'twitter.com',
+                'instagram.com'
+            ]
+            if any(domain in item['link'].lower() for domain in blocked_domains):
+                return False
+                
+            return True
+                
+        except Exception:
+            return False
+    
 
     def _process_news_item(self, item):
         """Procesa un resultado de noticia con mejor manejo de errores"""
@@ -948,7 +978,47 @@ class NewsAnalyzer:
             'UK': ['united kingdom', 'uk', 'britain'],
             'China': ['china', 'chinese'],
             'Japan': ['japan', 'japanese'],
-            'Germany': ['germany', 'german']
+            'Germany': ['germany', 'german'],
+            'France': ['france', 'french'],
+            'Spain': ['spain', 'spanish'],
+            'Italy': ['italy', 'italian'],
+            'India': ['india', 'indian'],
+            'Brazil': ['brazil', 'brazilian'],
+            'Canada': ['canada', 'canadian'],
+            'Australia': ['australia', 'australian'],
+            'Mexico': ['mexico', 'mexican'],
+            'Russia': ['russia', 'russian'],
+            'South Korea': ['south korea', 'korea'],
+            'Netherlands': ['netherlands', 'dutch'],
+            'Sweden': ['sweden', 'swedish'],
+            'Switzerland': ['switzerland', 'swiss'],
+            'Singapore': ['singapore', 'singaporean'],
+            'Hong Kong': ['hong kong'],
+            'Taiwan': ['taiwan', 'taiwanese'],
+            'New Zealand': ['new zealand'],
+            'Norway': ['norway', 'norwegian'],
+            'Denmark': ['denmark', 'danish'],
+            'Finland': ['finland', 'finnish'],
+            'Belgium': ['belgium', 'belgian'],
+            'Austria': ['austria', 'austrian'],
+            'Ireland': ['ireland', 'irish'],
+            'Portugal': ['portugal', 'portuguese'],
+            'Greece': ['greece', 'greek'],
+            'Poland': ['poland', 'polish'],
+            'Czech Republic': ['czech republic', 'czech'],
+            'Turkey': ['turkey', 'turkish'],
+            'South Africa': ['south africa', 'south african'],
+            'Argentina': ['argentina', 'argentinian'],
+            'Chile': ['chile', 'chilean'],
+            'Colombia': ['colombia', 'colombian'],
+            'Peru': ['peru', 'peruvian'],
+            'Egypt': ['egypt', 'egyptian'],
+            'Nigeria': ['nigeria', 'nigerian'],
+            'Kenya': ['kenya', 'kenyan'],
+            'Croatia': ['croatia', 'croatian'],
+            'UAE': ['uae', 'united arab emirates'],
+            'Saudi Arabia': ['saudi arabia', 'saudi'],
+            'Qatar': ['qatar', 'qatari']
         }
         
         text_lower = text.lower()
@@ -1077,7 +1147,17 @@ class NewsAnalyzer:
         default_stopwords = set([
             'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i',
             'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
-            # ... resto de stopwords ...
+            'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her',
+            'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there',
+            'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get',
+            'which', 'go', 'me', 'when', 'make', 'can', 'like', 'time', 'no',
+            'just', 'him', 'know', 'take', 'people', 'into', 'year', 'your',
+            'good', 'some', 'could', 'them', 'see', 'other', 'than', 'then',
+            'now', 'look', 'only', 'come', 'its', 'over', 'think', 'also',
+            'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first',
+            'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these',
+            'give', 'day', 'most', 'us', 'using', 'great', 'must', 'go', 'may',
+            
         ])
 
         # Palabras específicas del dominio para bloquear
