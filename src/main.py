@@ -497,6 +497,74 @@ def export_to_pdf(results, query_info, hype_data, figures, news_results=None):
     buffer.seek(0)
     return buffer.getvalue()
 
+def test_serp_api_connection(api_key):
+    """
+    Prueba la conexión con SerpAPI
+    """
+    try:
+        import requests
+        
+        # Realizar una búsqueda simple de prueba
+        params = {
+            "api_key": api_key,
+            "q": "test",
+            "tbm": "nws",  # Búsqueda de noticias
+            "num": 1       # Solo un resultado para prueba
+        }
+        
+        response = requests.get("https://serpapi.com/search", params=params)
+        
+        # Verificar el código de respuesta
+        if response.status_code == 200:
+            data = response.json()
+            if "search_metadata" in data:
+                return True, "Conexión exitosa con SerpAPI"
+            else:
+                return False, "Respuesta inesperada de SerpAPI"
+        else:
+            error_message = response.json().get('error', 'Error desconocido')
+            return False, f"Error en SerpAPI ({response.status_code}): {error_message}"
+            
+    except requests.exceptions.RequestException as e:
+        return False, f"Error de conexión: {str(e)}"
+    except Exception as e:
+        return False, f"Error inesperado: {str(e)}"
+
+def test_api_connection(api_key, search_engine_id):
+    """
+    Prueba la conexión con Google Custom Search API
+    """
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
+        
+        print(f"Probando con API Key: {api_key[:10]}... y Search Engine ID: {search_engine_id}")
+        service = build("customsearch", "v1", developerKey=api_key)
+        print("Servicio creado exitosamente")
+        
+        result = service.cse().list(
+            q="test",
+            cx=search_engine_id,
+            num=1
+        ).execute()
+        print("Búsqueda ejecutada exitosamente")
+        print(f"Resultados obtenidos: {result.get('searchInformation', {}).get('totalResults', 'N/A')}")
+        
+        return True, "Conexión exitosa"
+    except HttpError as e:
+        error_details = str(e)
+        print(f"Error HTTP: {error_details}")
+        
+        if e.resp.status == 403:
+            return False, f"Error de autenticación (403): {error_details}"
+        elif e.resp.status == 400:
+            return False, f"Error en la configuración (400): {error_details}"
+        else:
+            return False, f"Error HTTP {e.resp.status}: {error_details}"
+    except Exception as e:
+        print(f"Error inesperado: {str(e)}")
+        return False, f"Error inesperado: {str(e)}"
+
 def sidebar_config():
     with st.sidebar:
         st.header("⚙️ Configuración")
