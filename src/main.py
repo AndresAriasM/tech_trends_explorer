@@ -56,30 +56,107 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def get_formatted_topics():
+    """
+    Obtiene los topics del session state y los formatea correctamente
+    """
+    formatted_topics = []
+    
+    if 'topics_data' in st.session_state:
+        for topic_data in st.session_state.topics_data:
+            if 'value' in topic_data and topic_data['value'].strip():
+                formatted_topic = {
+                    'value': topic_data['value'].strip(),
+                    'operator': topic_data.get('operator', 'AND'),
+                    'exact_match': topic_data.get('exact_match', False)
+                }
+                formatted_topics.append(formatted_topic)
+    
+    return formatted_topics
+    
+import streamlit as st
+
+def build_search_equation(topics):
+    """Construye la ecuación de búsqueda en base a los términos y operadores, sin operador al final."""
+    equation = ""
+    for i, topic in enumerate(topics):
+        # Escapamos los espacios si es una coincidencia exacta
+        if topic['exact_match']:
+            term = f'"{topic["value"]}"'
+        else:
+            term = topic['value']
+        
+        if i == len(topics) - 1:  # Si es el último término, no añadimos operador
+            equation += f"{term}"
+        else:  # Para todos los demás términos, agregamos operador
+            equation += f"{term} {topic['operator']} "
+    
+    return equation
+
 def manage_topics():
-    """Maneja la adición y eliminación de topics"""
+    """Maneja la adición y eliminación de topics con opciones avanzadas."""
     if 'topics_data' not in st.session_state:
-        st.session_state.topics_data = [{'id': 0, 'value': ''}]
+        st.session_state.topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
+    
+    # Mostrar guía de búsqueda
+    with st.expander("📖 Guía de Búsqueda Avanzada", expanded=False):
+        st.markdown("""
+        ### Operadores de Búsqueda
+        - **AND**: Encuentra resultados que contienen TODOS los términos (Por defecto)
+        - **OR**: Encuentra resultados que contienen ALGUNO de los términos
+        
+        ### Opciones Adicionales
+        - **Coincidencia exacta** ("..."): Busca la frase exacta
+        - **Exclusión** (-): Excluye términos específicos
+        - **Comodín** (*): Busca variaciones de palabras
+        
+        ### Ejemplos
+        - `"machine learning" AND robotics`: Encuentra resultados que contengan exactamente "machine learning" Y también "robotics"
+        - `AI OR "artificial intelligence"`: Encuentra resultados que contengan "AI" O "artificial intelligence"
+        - `blockchain -crypto`: Encuentra resultados sobre blockchain pero excluye los que mencionan crypto
+        """)
     
     topics = []
     topics_to_remove = []
 
-    # Crear columnas para cada topic con su botón de eliminación
+    st.write("### 🔍 Construye tu búsqueda")
+
+    # Crear columnas para cada topic con opciones avanzadas
     for topic in st.session_state.topics_data:
-        col1, col2 = st.columns([6, 1])
+        col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
+        
         with col1:
             value = st.text_input(
-                f"Tema {topic['id'] + 1}",
+                f"Término {topic['id'] + 1}",
                 value=topic.get('value', ''),
                 key=f"topic_{topic['id']}",
-                placeholder="Ej: Artificial Intelligence, Blockchain, IoT..."
+                placeholder="Ej: 'artificial intelligence' OR robot*"
             )
-            topics.append(value)
-            # Actualizar el valor en session_state
             topic['value'] = value
+            topics.append({
+                'value': value,
+                'operator': topic.get('operator', 'AND'),
+                'exact_match': topic.get('exact_match', False)
+            })
         
-        # No mostrar botón de eliminar si solo queda un topic
         with col2:
+            operator = st.selectbox(
+                "Operador",
+                options=['AND', 'OR', 'NOT'],
+                index=['AND', 'OR', 'NOT'].index(topic['operator']),
+                key=f"operator_{topic['id']}"
+            )
+            topic['operator'] = operator  # Actualizamos el operador en el topic directamente
+        
+        with col3:
+            exact_match = st.checkbox(
+                "Coincidencia exacta",
+                value=topic.get('exact_match', False),
+                key=f"exact_{topic['id']}"
+            )
+            topic['exact_match'] = exact_match
+        
+        with col4:
             if len(st.session_state.topics_data) > 1:
                 if st.button('❌', key=f"remove_{topic['id']}"):
                     topics_to_remove.append(topic['id'])
@@ -93,13 +170,52 @@ def manage_topics():
         st.rerun()
 
     # Botón para añadir nuevo topic
-    if st.button("➕ Añadir otro tema"):
+    if st.button("➕ Añadir otro término"):
         new_id = max([t['id'] for t in st.session_state.topics_data]) + 1
-        st.session_state.topics_data.append({'id': new_id, 'value': ''})
+        st.session_state.topics_data.append({
+            'id': new_id,
+            'value': '',
+            'operator': 'AND',
+            'exact_match': False
+        })
         st.rerun()
 
-    return [topic.strip() for topic in topics if topic.strip()]
+    # Construir y mostrar la ecuación final
+    if topics:
+        equation = build_search_equation(topics)
+        st.write("### 📝 Ecuación de búsqueda")
+        st.code(equation)
+
+    return topics
+
+
+def process_topics(topics_data):
+    """
+    Procesa los topics antes de construir la query
     
+    Args:
+        topics_data: Lista de topics con sus operadores y opciones
+    Returns:
+        Lista de diccionarios procesados
+    """
+    processed_topics = []
+    
+    for topic in topics_data:
+        if topic['value'].strip():  # Solo procesar topics no vacíos
+            processed_topic = {
+                'value': topic['value'].strip(),
+                'operator': topic.get('operator', 'AND'),
+                'exact_match': topic.get('exact_match', False)
+            }
+            
+            # Si ya tiene comillas, desactivar exact_match
+            if processed_topic['value'].startswith('"') and processed_topic['value'].endswith('"'):
+                processed_topic['exact_match'] = False
+            
+            processed_topics.append(processed_topic)
+    
+    return processed_topics
+
 def reset_session_state():
     """
     Resetea el estado de la sesión manteniendo solo las credenciales
@@ -108,7 +224,8 @@ def reset_session_state():
     keys_to_keep = {
         'api_key',
         'search_engine_id', 
-        'serp_api_key'
+        'serp_api_key',
+        'topics_data'
     }
     
     # Borrar solo las keys que no queremos mantener
@@ -915,8 +1032,9 @@ def main():
             news_analyzer = NewsAnalyzer()
             
             # Construir query principal
+            processed_topics = process_topics(topics)
             google_query = query_builder.build_google_query(
-                topics, 
+                processed_topics,  # Usar los topics procesados
                 config['min_year'],
                 config['content_types']['patents']
             )
@@ -924,7 +1042,7 @@ def main():
             # Crear objeto de información de queries
             query_info = {
                 'google_query': google_query,  # La clave existente
-                'scopus_query': query_builder.build_scopus_query(topics, config['min_year']),  # La clave existente
+                'scopus_query': query_builder.build_scopus_query(topics, config['min_year']),
                 'search_query': google_query,  # Nueva clave para display_advanced_analysis
                 'time_range': f"{CONFIG['MIN_YEAR']}-{datetime.now().year}"
             }

@@ -27,31 +27,102 @@ from folium.plugins import HeatMap
 from streamlit_folium import folium_static
 from config import CONFIG
 
-
-
-
 class QueryBuilder:
     @staticmethod
     def build_google_query(topics, min_year=None, include_patents=True):
-        base_query = ' AND '.join([f'"{topic.strip()}"' for topic in topics if topic.strip()])
+        """
+        Construye la consulta para Google Custom Search respetando la estructura de operadores
+        """
+        if not topics:
+            return ""
+            
+        query_parts = []
+        
+        for i, topic in enumerate(topics):
+            if not topic['value'].strip():
+                continue
+                
+            term = topic['value'].strip()
+            
+            # Aplicar coincidencia exacta si está seleccionada y el término no está ya entre comillas
+            if topic['exact_match'] and not (term.startswith('"') and term.endswith('"')):
+                term = f'"{term}"'
+            
+            # Solo añadimos el operador si no es el último término
+            if i == len(topics) - 1:
+                query_parts.append(term)
+            else:
+                query_parts.append(f"{term} {topic['operator']}")
+        
+        # Unir todas las partes
+        base_query = " ".join(query_parts)
+        
+        # Añadir filtros adicionales
         filters = []
         if min_year:
-            filters.append(f'after:{min_year}')
+            filters.append(f"after:{min_year}")
         if not include_patents:
-            filters.append('-patent')
+            filters.append("-patent")
         
-        full_query = base_query
+        # Combinar query base con filtros
+        final_query = base_query
         if filters:
-            full_query += ' ' + ' '.join(filters)
-        return full_query
+            final_query += " " + " ".join(filters)
+        
+        return final_query
 
     @staticmethod
     def build_scopus_query(topics, min_year=None):
-        terms = [f'TITLE-ABS-KEY("{topic.strip()}")' for topic in topics if topic.strip()]
-        base_query = ' AND '.join(terms)
+        """
+        Construye la consulta para Scopus respetando estructura de operadores
+        
+        Args:
+            topics: Lista de diccionarios con la estructura:
+                {
+                    'value': str,          # término de búsqueda
+                    'operator': str,       # 'AND', 'OR', o 'NOT'
+                    'exact_match': bool    # si debe ser coincidencia exacta
+                }
+            min_year: Año mínimo para la búsqueda
+        
+        Returns:
+            str: Query formateada para Scopus
+        """
+        if not topics:
+            return ""
+            
+        query_parts = []
+        
+        for i, topic in enumerate(topics):
+            if not topic['value'].strip():
+                continue
+                
+            term = topic['value'].strip()
+            
+            # Aplicar coincidencia exacta si está seleccionada y el término no está ya entre comillas
+            if topic['exact_match'] and not (term.startswith('"') and term.endswith('"')):
+                term = f'"{term}"'
+            
+            # En Scopus, los términos van envueltos en TITLE-ABS-KEY()
+            scopus_term = f'TITLE-ABS-KEY({term})'
+            
+            # Solo añadimos el operador si no es el último término
+            if i == len(topics) - 1:
+                query_parts.append(scopus_term)
+            else:
+                # Convertir el operador NOT a AND NOT para Scopus
+                operator = 'AND NOT' if topic['operator'] == 'NOT' else topic['operator']
+                query_parts.append(f"{scopus_term} {operator}")
+        
+        # Unir todas las partes
+        base_query = " ".join(query_parts)
+        
+        # Añadir filtro de año si existe
         if min_year:
-            base_query += f' AND PUBYEAR > {min_year}'
+            base_query += f" AND PUBYEAR > {min_year}"
+            
         return base_query
+
 
 class ResultAnalyzer:
     def __init__(self):
@@ -169,11 +240,23 @@ class ResultAnalyzer:
             return 'Web Page'
 
     def analyze_results(self, results, search_topics):
-        """Analiza los resultados y genera estadísticas"""
+        """
+        Analiza los resultados y genera estadísticas.
+        
+        Args:
+            results: Lista de resultados a analizar
+            search_topics: Lista de diccionarios con la información de los topics
+        """
         # Obtener palabras de búsqueda para filtrarlas
         search_words = set()
         for topic in search_topics:
-            words = re.sub(r'[^\w\s]', ' ', topic.lower()).split()
+            if isinstance(topic, dict):
+                # Si el topic viene en formato diccionario
+                words = re.sub(r'[^\w\s]', ' ', topic['value'].lower()).split()
+            else:
+                # Si el topic viene en formato string
+                words = re.sub(r'[^\w\s]', ' ', str(topic).lower()).split()
+                
             search_words.update(words)
 
         processed_results = []
@@ -206,7 +289,7 @@ class ResultAnalyzer:
                 'type': self.classify_result_type(item.get('link', ''), title)
             }
             processed_results.append(processed)
-        
+
         # Convertir a DataFrame para análisis
         df = pd.DataFrame(processed_results)
         
@@ -880,21 +963,47 @@ class NewsAnalyzer:
             return
 
         st_object.write("### 📰 Artículos Encontrados")
-        
-        # Crear un sistema de filtrado por país
-        countries = ['Todos'] + sorted(list(set(r['country'] for r in results if r.get('country'))))
-        selected_country = st_object.selectbox("🌍 Filtrar por país", countries)
-        
-        # Filtrar resultados
-        filtered_results = results
-        if selected_country != 'Todos':
-            filtered_results = [r for r in results if r.get('country') == selected_country]
-        
-        # Mostrar contador de resultados filtrados
-        st_object.write(f"Mostrando {len(filtered_results)} de {len(results)} resultados")
+        st_object.write(f"Mostrando {len(results)} resultados")
+
+        # Diccionario de banderas de países
+        country_emojis = {
+            'Afghanistan': '🇦🇫', 'Albania': '🇦🇱', 'Algeria': '🇩🇿', 'Andorra': '🇦🇩', 'Angola': '🇦🇴', 'Antigua and Barbuda': '🇦🇬',
+            'Argentina': '🇦🇷', 'Armenia': '🇦🇲', 'Australia': '🇦🇺', 'Austria': '🇦🇹', 'Azerbaijan': '🇦🇿', 'Bahamas': '🇧🇸',
+            'Bahrain': '🇧🇭', 'Bangladesh': '🇧🇩', 'Barbados': '🇧🇧', 'Belarus': '🇧🇾', 'Belgium': '🇧🇪', 'Belize': '🇧🇿',
+            'Benin': '🇧🇯', 'Bhutan': '🇧🇹', 'Bolivia': '🇧🇴', 'Bosnia and Herzegovina': '🇧🇦', 'Botswana': '🇧🇼', 'Brazil': '🇧🇷',
+            'Brunei': '🇧🇳', 'Bulgaria': '🇧🇬', 'Burkina Faso': '🇧🇫', 'Burundi': '🇧🇮', 'Cabo Verde': '🇨🇻', 'Cambodia': '🇰🇭',
+            'Cameroon': '🇨🇲', 'Canada': '🇨🇦', 'Central African Republic': '🇨🇫', 'Chad': '🇹🇩', 'Chile': '🇨🇱', 'China': '🇨🇳',
+            'Colombia': '🇨🇴', 'Comoros': '🇰🇲', 'Congo (Congo-Brazzaville)': '🇨🇬', 'Congo (DRC)': '🇨🇩', 'Costa Rica': '🇨🇷',
+            'Croatia': '🇭🇷', 'Cuba': '🇨🇺', 'Cyprus': '🇨🇾', 'Czech Republic': '🇨🇿', 'Denmark': '🇩🇰', 'Djibouti': '🇩🇯',
+            'Dominica': '🇩🇲', 'Dominican Republic': '🇩🇴', 'Ecuador': '🇪🇨', 'Egypt': '🇪🇬', 'El Salvador': '🇸🇻', 'Equatorial Guinea': '🇬🇶',
+            'Eritrea': '🇪🇷', 'Estonia': '🇪🇪', 'Eswatini': '🇸🇿', 'Ethiopia': '🇪🇹', 'Fiji': '🇫🇯', 'Finland': '🇫🇮', 'France': '🇫🇷',
+            'Gabon': '🇬🇦', 'Gambia': '🇬🇲', 'Georgia': '🇬🇪', 'Germany': '🇩🇪', 'Ghana': '🇬🇭', 'Greece': '🇬🇷', 'Grenada': '🇬🇩',
+            'Guatemala': '🇬🇹', 'Guinea': '🇬🇳', 'Guinea-Bissau': '🇬🇼', 'Guyana': '🇬🇾', 'Haiti': '🇭🇹', 'Honduras': '🇭🇳', 'Hungary': '🇭🇺',
+            'Iceland': '🇮🇸', 'India': '🇮🇳', 'Indonesia': '🇮🇩', 'Iran': '🇮🇷', 'Iraq': '🇮🇶', 'Ireland': '🇮🇪', 'Israel': '🇮🇱',
+            'Italy': '🇮🇹', 'Ivory Coast': '🇨🇮', 'Jamaica': '🇯🇲', 'Japan': '🇯🇵', 'Jordan': '🇯🇴', 'Kazakhstan': '🇰🇿', 'Kenya': '🇰🇪',
+            'Kiribati': '🇰🇮', 'Kuwait': '🇰🇼', 'Kyrgyzstan': '🇰🇬', 'Laos': '🇱🇦', 'Latvia': '🇱🇻', 'Lebanon': '🇱🇧', 'Lesotho': '🇱🇸',
+            'Liberia': '🇱🇷', 'Libya': '🇱🇾', 'Liechtenstein': '🇱🇮', 'Lithuania': '🇱🇹', 'Luxembourg': '🇱🇺', 'Madagascar': '🇲🇬',
+            'Malawi': '🇲🇼', 'Malaysia': '🇲🇾', 'Maldives': '🇲🇻', 'Mali': '🇲🇱', 'Malta': '🇲🇹', 'Marshall Islands': '🇲🇭',
+            'Mauritania': '🇲🇷', 'Mauritius': '🇲🇺', 'Mexico': '🇲🇽', 'Micronesia': '🇫🇲', 'Moldova': '🇲🇩', 'Monaco': '🇲🇨',
+            'Mongolia': '🇲🇳', 'Montenegro': '🇲🇪', 'Morocco': '🇲🇦', 'Mozambique': '🇲🇿', 'Myanmar': '🇲🇲', 'Namibia': '🇳🇦',
+            'Nauru': '🇳🇷', 'Nepal': '🇳🇵', 'Netherlands': '🇳🇱', 'New Zealand': '🇳🇿', 'Nicaragua': '🇳🇮', 'Niger': '🇳🇪',
+            'Nigeria': '🇳🇬', 'North Korea': '🇰🇵', 'North Macedonia': '🇲🇰', 'Norway': '🇳🇴', 'Oman': '🇴🇲', 'Pakistan': '🇵🇰',
+            'Palau': '🇵🇼', 'Panama': '🇵🇦', 'Papua New Guinea': '🇵🇬', 'Paraguay': '🇵🇾', 'Peru': '🇵🇪', 'Philippines': '🇵🇭',
+            'Poland': '🇵🇱', 'Portugal': '🇵🇹', 'Qatar': '🇶🇦', 'Romania': '🇷🇴', 'Russia': '🇷🇺', 'Rwanda': '🇷🇼', 'Saint Kitts and Nevis': '🇰🇳',
+            'Saint Lucia': '🇱🇨', 'Saint Vincent and the Grenadines': '🇻🇨', 'Samoa': '🇼🇸', 'San Marino': '🇸🇲', 'Saudi Arabia': '🇸🇦',
+            'Senegal': '🇸🇳', 'Serbia': '🇷🇸', 'Seychelles': '🇸🇨', 'Sierra Leone': '🇸🇱', 'Singapore': '🇸🇬', 'Slovakia': '🇸🇰',
+            'Slovenia': '🇸🇮', 'Solomon Islands': '🇸🇧', 'Somalia': '🇸🇴', 'South Africa': '🇿🇦', 'South Korea': '🇰🇷', 'South Sudan': '🇸🇸',
+            'Spain': '🇪🇸', 'Sri Lanka': '🇱🇰', 'Sudan': '🇸🇩', 'Suriname': '🇸🇷', 'Sweden': '🇸🇪', 'Switzerland': '🇨🇭', 'Syria': '🇸🇾',
+            'Taiwan': '🇹🇼', 'Tajikistan': '🇹🇯', 'Tanzania': '🇹🇿', 'Thailand': '🇹🇭', 'Timor-Leste': '🇹🇱', 'Togo': '🇹🇬',
+            'Tonga': '🇹🇴', 'Trinidad and Tobago': '🇹🇹', 'Tunisia': '🇹🇳', 'Turkey': '🇹🇷', 'Turkmenistan': '🇹🇲', 'Tuvalu': '🇹🇻',
+            'Uganda': '🇺🇬', 'Ukraine': '🇺🇦', 'United Arab Emirates': '🇦🇪', 'United Kingdom': '🇬🇧', 'United States': '🇺🇸',
+            'Uruguay': '🇺🇾', 'Uzbekistan': '🇺🇿', 'Vanuatu': '🇻🇺', 'Vatican City': '🇻🇦', 'Venezuela': '🇻🇪', 'Vietnam': '🇻🇳',
+            'Yemen': '🇾🇪', 'Zambia': '🇿🇲', 'Zimbabwe': '🇿🇼'
+        }
+
         
         # Mostrar resultados
-        for idx, result in enumerate(filtered_results, 1):
+        for idx, result in enumerate(results, 1):
             with st_object.expander(f"📄 {idx}. {result['title']}", expanded=False):
                 col1, col2 = st_object.columns([2,1])
                 
@@ -907,18 +1016,8 @@ class NewsAnalyzer:
                     st_object.markdown("**Detalles:**")
                     st_object.markdown(f"📅 **Fecha:** {result.get('date', 'No especificada')}")
                     
-                    # Mostrar país con bandera emoji si está disponible
+                    # Mostrar país con bandera emoji
                     country = result.get('country', 'No especificado')
-                    country_emojis = {
-                        'USA': '🇺🇸', 'UK': '🇬🇧','China': '🇨🇳','Japan': '🇯🇵','Germany': '🇩🇪','France': '🇫🇷',
-                        'Spain': '🇪🇸','Italy': '🇮🇹','India': '🇮🇳','Brazil': '🇧🇷','Canada': '🇨🇦','Australia': '🇦🇺',
-                        'South Korea': '🇰🇷','Russia': '🇷🇺','Netherlands': '🇳🇱','Sweden': '🇸🇪','Singapore': '🇸🇬',
-                        'Israel': '🇮🇱','Switzerland': '🇨🇭','Norway': '🇳🇴','Denmark': '🇩🇰','Finland': '🇫🇮','Belgium': '🇧🇪',
-                        'Austria': '🇦🇹','Ireland': '🇮🇪','Portugal': '🇵🇹','Greece': '🇬🇷','Poland': '🇵🇱','Czech Republic': '🇨🇿',
-                        'Turkey': '🇹🇷','South Africa': '🇿🇦','Argentina': '🇦🇷','Chile': '🇨🇱','Colombia': '🇨🇴','Peru': '🇵🇪','Egypt': '🇪🇬',
-                        'Nigeria': '🇳🇬','Kenya': '🇰🇪','Croatia': '🇭🇷','UAE': '🇦🇪','Saudi Arabia': '🇸🇦','Qatar': '🇶🇦','Hong Kong': '🇭🇰',
-                        'Taiwan': '🇹🇼'
-                    }
                     flag = country_emojis.get(country, '🌐')
                     st_object.markdown(f"🌍 **País:** {flag} {country}")
                     
@@ -935,9 +1034,10 @@ class NewsAnalyzer:
                     
                     # Mostrar palabras clave si existen
                     if result.get('keywords'):
-                        keywords = [k[0] for k in result['keywords'][:3]]  # Mostrar solo top 3
+                        keywords = [k[0] for k in result['keywords'][:3]]  # Top 3 keywords
                         st_object.markdown(f"🏷️ **Keywords:** {', '.join(keywords)}")
 
+                    
     def _calculate_position(self, growth, sentiment):
         """Calcula la posición en el Hype Cycle basada en métricas disponibles"""
         if growth > 0.3 and sentiment > 0:
@@ -966,53 +1066,53 @@ class NewsAnalyzer:
     def _extract_country(self, text):
         """Extrae menciones de países del texto"""
         countries = {
-            'USA': ['united states', 'usa', 'u.s.'],
-            'UK': ['united kingdom', 'uk', 'britain'],
-            'China': ['china', 'chinese'],
-            'Japan': ['japan', 'japanese'],
-            'Germany': ['germany', 'german'],
-            'France': ['france', 'french'],
-            'Spain': ['spain', 'spanish'],
-            'Italy': ['italy', 'italian'],
-            'India': ['india', 'indian'],
-            'Brazil': ['brazil', 'brazilian'],
-            'Canada': ['canada', 'canadian'],
-            'Australia': ['australia', 'australian'],
-            'Mexico': ['mexico', 'mexican'],
-            'Russia': ['russia', 'russian'],
-            'South Korea': ['south korea', 'korea'],
-            'Netherlands': ['netherlands', 'dutch'],
-            'Sweden': ['sweden', 'swedish'],
-            'Switzerland': ['switzerland', 'swiss'],
-            'Singapore': ['singapore', 'singaporean'],
-            'Hong Kong': ['hong kong'],
-            'Taiwan': ['taiwan', 'taiwanese'],
-            'New Zealand': ['new zealand'],
-            'Norway': ['norway', 'norwegian'],
-            'Denmark': ['denmark', 'danish'],
-            'Finland': ['finland', 'finnish'],
-            'Belgium': ['belgium', 'belgian'],
-            'Austria': ['austria', 'austrian'],
-            'Ireland': ['ireland', 'irish'],
-            'Portugal': ['portugal', 'portuguese'],
-            'Greece': ['greece', 'greek'],
-            'Poland': ['poland', 'polish'],
-            'Czech Republic': ['czech republic', 'czech'],
-            'Turkey': ['turkey', 'turkish'],
-            'South Africa': ['south africa', 'south african'],
-            'Argentina': ['argentina', 'argentinian'],
-            'Chile': ['chile', 'chilean'],
-            'Colombia': ['colombia', 'colombian'],
-            'Peru': ['peru', 'peruvian'],
-            'Egypt': ['egypt', 'egyptian'],
-            'Nigeria': ['nigeria', 'nigerian'],
-            'Kenya': ['kenya', 'kenyan'],
-            'Croatia': ['croatia', 'croatian'],
-            'UAE': ['uae', 'united arab emirates'],
-            'Saudi Arabia': ['saudi arabia', 'saudi'],
-            'Qatar': ['qatar', 'qatari']
+            'USA': ['united states', 'usa', 'u.s.'], 'UK': ['united kingdom', 'uk', 'britain'],
+            'China': ['china', 'chinese'], 'Japan': ['japan', 'japanese'], 'Germany': ['germany', 'german'],
+            'France': ['france', 'french'], 'Spain': ['spain', 'spanish'], 'Italy': ['italy', 'italian'],
+            'India': ['india', 'indian'], 'Brazil': ['brazil', 'brazilian'], 'Canada': ['canada', 'canadian'],
+            'Australia': ['australia', 'australian'], 'Mexico': ['mexico', 'mexican'], 'Russia': ['russia', 'russian'],
+            'South Korea': ['south korea', 'korea'], 'North Korea': ['north korea', 'dprk'], 'Netherlands': ['netherlands', 'dutch'],
+            'Sweden': ['sweden', 'swedish'], 'Switzerland': ['switzerland', 'swiss'], 'Singapore': ['singapore', 'singaporean'],
+            'Hong Kong': ['hong kong'], 'Taiwan': ['taiwan', 'taiwanese'], 'New Zealand': ['new zealand', 'kiwi'],
+            'Norway': ['norway', 'norwegian'], 'Denmark': ['denmark', 'danish'], 'Finland': ['finland', 'finnish'],
+            'Belgium': ['belgium', 'belgian'], 'Austria': ['austria', 'austrian'], 'Ireland': ['ireland', 'irish'],
+            'Portugal': ['portugal', 'portuguese'], 'Greece': ['greece', 'greek'], 'Poland': ['poland', 'polish'],
+            'Czech Republic': ['czech republic', 'czech'], 'Slovakia': ['slovakia', 'slovak'], 'Hungary': ['hungary', 'hungarian'],
+            'Turkey': ['turkey', 'turkish'], 'South Africa': ['south africa', 'south african'], 'Argentina': ['argentina', 'argentinian'],
+            'Chile': ['chile', 'chilean'], 'Colombia': ['colombia', 'colombian'], 'Peru': ['peru', 'peruvian'],
+            'Venezuela': ['venezuela', 'venezuelan'], 'Ecuador': ['ecuador', 'ecuadorian'], 'Paraguay': ['paraguay', 'paraguayan'],
+            'Uruguay': ['uruguay', 'uruguayan'], 'Bolivia': ['bolivia', 'bolivian'], 'Panama': ['panama', 'panamanian'],
+            'Costa Rica': ['costa rica', 'costa rican'], 'El Salvador': ['el salvador', 'salvadoran'],
+            'Guatemala': ['guatemala', 'guatemalan'], 'Honduras': ['honduras', 'honduran'], 'Nicaragua': ['nicaragua', 'nicaraguan'],
+            'Cuba': ['cuba', 'cuban'], 'Dominican Republic': ['dominican republic', 'dominican'],
+            'Jamaica': ['jamaica', 'jamaican'], 'Trinidad and Tobago': ['trinidad and tobago', 'trinidadian'],
+            'Egypt': ['egypt', 'egyptian'], 'Nigeria': ['nigeria', 'nigerian'], 'Kenya': ['kenya', 'kenyan'],
+            'Ethiopia': ['ethiopia', 'ethiopian'], 'Uganda': ['uganda', 'ugandan'], 'Ghana': ['ghana', 'ghanaian'],
+            'Algeria': ['algeria', 'algerian'], 'Morocco': ['morocco', 'moroccan'], 'Tunisia': ['tunisia', 'tunisian'],
+            'Libya': ['libya', 'libyan'], 'Sudan': ['sudan', 'sudanese'], 'South Sudan': ['south sudan', 'south sudanese'],
+            'Angola': ['angola', 'angolan'], 'Zambia': ['zambia', 'zambian'], 'Zimbabwe': ['zimbabwe', 'zimbabwean'],
+            'Mozambique': ['mozambique', 'mozambican'], 'Namibia': ['namibia', 'namibian'], 'Botswana': ['botswana', 'botswanan'],
+            'Madagascar': ['madagascar', 'malagasy'], 'Democratic Republic of the Congo': ['dr congo', 'democratic republic of congo'],
+            'Congo': ['congo', 'republic of congo'], 'Rwanda': ['rwanda', 'rwandan'], 'Burundi': ['burundi', 'burundian'],
+            'Tanzania': ['tanzania', 'tanzanian'], 'Saudi Arabia': ['saudi arabia', 'saudi'], 'UAE': ['uae', 'united arab emirates'],
+            'Qatar': ['qatar', 'qatari'], 'Bahrain': ['bahrain', 'bahraini'], 'Kuwait': ['kuwait', 'kuwaiti'],
+            'Oman': ['oman', 'omani'], 'Lebanon': ['lebanon', 'lebanese'], 'Jordan': ['jordan', 'jordanian'],
+            'Syria': ['syria', 'syrian'], 'Iraq': ['iraq', 'iraqi'], 'Iran': ['iran', 'iranian'], 'Pakistan': ['pakistan', 'pakistani'],
+            'Afghanistan': ['afghanistan', 'afghan'], 'Bangladesh': ['bangladesh', 'bangladeshi'], 'Sri Lanka': ['sri lanka', 'sri lankan'],
+            'Nepal': ['nepal', 'nepali'], 'Bhutan': ['bhutan', 'bhutanese'], 'Maldives': ['maldives', 'maldivian'],
+            'Indonesia': ['indonesia', 'indonesian'], 'Malaysia': ['malaysia', 'malaysian'], 'Philippines': ['philippines', 'filipino'],
+            'Thailand': ['thailand', 'thai'], 'Vietnam': ['vietnam', 'vietnamese'], 'Cambodia': ['cambodia', 'cambodian'],
+            'Laos': ['laos', 'laotian'], 'Myanmar': ['myanmar', 'burmese'], 'Mongolia': ['mongolia', 'mongolian'],
+            'Kazakhstan': ['kazakhstan', 'kazakh'], 'Uzbekistan': ['uzbekistan', 'uzbek'], 'Turkmenistan': ['turkmenistan', 'turkmen'],
+            'Kyrgyzstan': ['kyrgyzstan', 'kyrgyz'], 'Tajikistan': ['tajikistan', 'tajik'], 'Georgia': ['georgia', 'georgian'],
+            'Armenia': ['armenia', 'armenian'], 'Azerbaijan': ['azerbaijan', 'azerbaijani'], 'Belarus': ['belarus', 'belarusian'],
+            'Ukraine': ['ukraine', 'ukrainian'], 'Moldova': ['moldova', 'moldovan'], 'Lithuania': ['lithuania', 'lithuanian'],
+            'Latvia': ['latvia', 'latvian'], 'Estonia': ['estonia', 'estonian'], 'Serbia': ['serbia', 'serbian'],
+            'Montenegro': ['montenegro', 'montenegrin'], 'Bosnia and Herzegovina': ['bosnia and herzegovina', 'bosnian'],
+            'North Macedonia': ['north macedonia', 'macedonian'], 'Albania': ['albania', 'albanian'], 'Slovenia': ['slovenia', 'slovenian'],
+            'Croatia': ['croatia', 'croatian']
         }
-        
+
         text_lower = text.lower()
         for country, patterns in countries.items():
             if any(pattern in text_lower for pattern in patterns):
@@ -1122,7 +1222,6 @@ class NewsAnalyzer:
             'Russia': {'coords': [61.5240, 105.3188], 'full_name': 'Rusia'},
             'Netherlands': {'coords': [52.1326, 5.2913], 'full_name': 'Países Bajos'},
             'Sweden': {'coords': [60.1282, 18.6435], 'full_name': 'Suecia'},
-            'Singapore': {'coords': [1.3521, 103.8198], 'full_name': 'Singapur'},
             'Israel': {'coords': [31.0461, 34.8516], 'full_name': 'Israel'},
             'Switzerland': {'coords': [46.8182, 8.2275], 'full_name': 'Suiza'},
             'Norway': {'coords': [60.4720, 8.4689], 'full_name': 'Noruega'},
@@ -1150,7 +1249,152 @@ class NewsAnalyzer:
             'Qatar': {'coords': [25.3548, 51.1839], 'full_name': 'Catar'},
             'Singapore': {'coords': [1.3521, 103.8198], 'full_name': 'Singapur'},
             'Hong Kong': {'coords': [22.3193, 114.1694], 'full_name': 'Hong Kong'},
-            'Taiwan': {'coords': [23.6978, 120.9605], 'full_name': 'Taiwán'}
+            'Taiwan': {'coords': [23.6978, 120.9605], 'full_name': 'Taiwán'},
+            'Afghanistan': {'coords': [33.9391, 67.7100], 'full_name': 'Afganistán'},
+            'Bangladesh': {'coords': [23.6850, 90.3563], 'full_name': 'Bangladesh'},
+            'Bhutan': {'coords': [27.5142, 90.4336], 'full_name': 'Bután'},
+            'Pakistan': {'coords': [30.3753, 69.3451], 'full_name': 'Pakistán'},
+            'Sri Lanka': {'coords': [7.8731, 80.7718], 'full_name': 'Sri Lanka'},
+            'Maldives': {'coords': [3.2028, 73.2207], 'full_name': 'Maldivas'},
+            'Nepal': {'coords': [28.3949, 84.1240], 'full_name': 'Nepal'},
+            'Myanmar': {'coords': [21.9162, 95.9560], 'full_name': 'Myanmar'},
+            'Cambodia': {'coords': [12.5657, 104.9910], 'full_name': 'Camboya'},
+            'Laos': {'coords': [19.8563, 102.4955], 'full_name': 'Laos'},
+            'Vietnam': {'coords': [14.0583, 108.2772], 'full_name': 'Vietnam'},
+            'Thailand': {'coords': [15.8700, 100.9925], 'full_name': 'Tailandia'},
+            'Malaysia': {'coords': [4.2105, 101.9758], 'full_name': 'Malasia'},
+            'Singapore': {'coords': [1.3521, 103.8198], 'full_name': 'Singapur'},
+            'Indonesia': {'coords': [-0.7893, 113.9213], 'full_name': 'Indonesia'},
+            'Philippines': {'coords': [12.8797, 121.7740], 'full_name': 'Filipinas'},
+            'Brunei': {'coords': [4.5353, 114.7277], 'full_name': 'Brunéi'},
+            'Timor-Leste': {'coords': [-8.8742, 125.7275], 'full_name': 'Timor Oriental'},
+            'New Zealand': {'coords': [-40.9006, 174.8860], 'full_name': 'Nueva Zelanda'},
+            'Fiji': {'coords': [-17.7134, 178.0650], 'full_name': 'Fiyi'},
+            'Solomon Islands': {'coords': [-9.6457, 160.1562], 'full_name': 'Islas Salomón'},
+            'Vanuatu': {'coords': [-15.3767, 166.9592], 'full_name': 'Vanuatu'},
+            'Papua New Guinea': {'coords': [-6.3149, 143.9556], 'full_name': 'Papúa Nueva Guinea'},
+            'Samoa': {'coords': [-13.7590, -172.1046], 'full_name': 'Samoa'},
+            'Tonga': {'coords': [-21.1789, -175.1982], 'full_name': 'Tonga'},
+            'Kiribati': {'coords': [1.8709, -157.3623], 'full_name': 'Kiribati'},
+            'Tuvalu': {'coords': [-7.1095, 177.6493], 'full_name': 'Tuvalu'},
+            'Marshall Islands': {'coords': [7.1315, 171.1845], 'full_name': 'Islas Marshall'},
+            'Micronesia': {'coords': [7.4256, 150.5508], 'full_name': 'Micronesia'},
+            'Palau': {'coords': [7.5150, 134.5825], 'full_name': 'Palaos'},
+            'Nauru': {'coords': [-0.5228, 166.9315], 'full_name': 'Nauru'},
+            'Kiribati': {'coords': [1.8709, -157.3623], 'full_name': 'Kiribati'},
+            'Ecuador': {'coords': [-1.8312, -78.1834], 'full_name': 'Ecuador'},
+            'Bolivia': {'coords': [-16.2902, -63.5887], 'full_name': 'Bolivia'},
+            'Paraguay': {'coords': [-23.4425, -58.4438], 'full_name': 'Paraguay'},
+            'Uruguay': {'coords': [-32.5228, -55.7658], 'full_name': 'Uruguay'},
+            'Panama': {'coords': [8.5379, -80.7821], 'full_name': 'Panamá'},
+            'Costa Rica': {'coords': [9.7489, -83.7534], 'full_name': 'Costa Rica'},
+            'Honduras': {'coords': [15.2000, -86.2419], 'full_name': 'Honduras'},
+            'El Salvador': {'coords': [13.7942, -88.8965], 'full_name': 'El Salvador'},
+            'Guatemala': {'coords': [15.7835, -90.2308], 'full_name': 'Guatemala'},
+            'Nicaragua': {'coords': [12.8654, -85.2072], 'full_name': 'Nicaragua'},
+            'Cuba': {'coords': [21.5218, -77.7812], 'full_name': 'Cuba'},
+            'Jamaica': {'coords': [18.1096, -77.2975], 'full_name': 'Jamaica'},
+            'Trinidad and Tobago': {'coords': [10.6918, -61.2225], 'full_name': 'Trinidad y Tobago'},
+            'Haiti': {'coords': [18.9712, -72.2852], 'full_name': 'Haití'},
+            'Dominican Republic': {'coords': [18.7357, -70.1627], 'full_name': 'República Dominicana'},
+            'Bahamas': {'coords': [25.0343, -77.3963], 'full_name': 'Bahamas'},
+            'Barbados': {'coords': [13.1939, -59.5432], 'full_name': 'Barbados'},
+            'Saint Lucia': {'coords': [13.9094, -60.9789], 'full_name': 'Santa Lucía'},
+            'Saint Vincent and the Grenadines': {'coords': [12.9843, -61.2872], 'full_name': 'San Vicente y las Granadinas'},
+            'Grenada': {'coords': [12.1165, -61.6790], 'full_name': 'Granada'},
+            'Saint Kitts and Nevis': {'coords': [17.3578, -62.782998], 'full_name': 'San Cristóbal y Nieves'},
+            'Antigua and Barbuda': {'coords': [17.0608, -61.7964], 'full_name': 'Antigua y Barbuda'},
+            'Dominica': {'coords': [15.4150, -61.3710], 'full_name': 'Dominica'},
+            'Saint Kitts and Nevis': {'coords': [17.3578, -62.782998], 'full_name': 'San Cristóbal y Nieves'},
+            'Monaco': {'coords': [43.7384, 7.4246], 'full_name': 'Mónaco'},
+            'Andorra': {'coords': [42.5063, 1.5218], 'full_name': 'Andorra'},
+            'San Marino': {'coords': [43.9424, 12.4578], 'full_name': 'San Marino'},
+            'Liechtenstein': {'coords': [47.1660, 9.5554], 'full_name': 'Liechtenstein'},
+            'Vatican City': {'coords': [41.9029, 12.4534], 'full_name': 'Ciudad del Vaticano'},
+            'Moldova': {'coords': [47.4116, 28.3699], 'full_name': 'Moldavia'},
+            'Belarus': {'coords': [53.7098, 27.9534], 'full_name': 'Bielorrusia'},
+            'Ukraine': {'coords': [48.3794, 31.1656], 'full_name': 'Ucrania'},
+            'Armenia': {'coords': [40.0691, 45.0382], 'full_name': 'Armenia'},
+            'Azerbaijan': {'coords': [40.1431, 47.5769], 'full_name': 'Azerbaiyán'},
+            'Georgia': {'coords': [42.3154, 43.3569], 'full_name': 'Georgia'},
+            'Kazakhstan': {'coords': [48.0196, 66.9237], 'full_name': 'Kazajistán'},
+            'Uzbekistan': {'coords': [41.3775, 64.5853], 'full_name': 'Uzbekistán'},
+            'Turkmenistan': {'coords': [38.9697, 59.5563], 'full_name': 'Turkmenistán'},
+            'Kyrgyzstan': {'coords': [41.2044, 74.7661], 'full_name': 'Kirguistán'},
+            'Tajikistan': {'coords': [38.8610, 71.2761], 'full_name': 'Tayikistán'},
+            'Montenegro': {'coords': [42.7087, 19.3744], 'full_name': 'Montenegro'},
+            'Serbia': {'coords': [44.0165, 21.0059], 'full_name': 'Serbia'},
+            'Bosnia and Herzegovina': {'coords': [43.9159, 17.6791], 'full_name': 'Bosnia y Herzegovina'},
+            'Mongolia': {'coords': [46.8625, 103.8467], 'full_name': 'Mongolia'},
+            'North Korea': {'coords': [40.3399, 127.5101], 'full_name': 'Corea del Norte'},
+            'South Korea': {'coords': [35.9078, 127.7669], 'full_name': 'Corea del Sur'},
+            'North Macedonia': {'coords': [41.6086, 21.7453], 'full_name': 'Macedonia del Norte'},
+            'Morocco': {'coords': [31.7917, -7.0926], 'full_name': 'Marruecos'},
+            'Algeria': {'coords': [28.0339, 1.6596], 'full_name': 'Argelia'},
+            'Tunisia': {'coords': [33.8869, 9.5375], 'full_name': 'Túnez'},
+            'Libya': {'coords': [26.3351, 17.2283], 'full_name': 'Libia'},
+            'Sudan': {'coords': [12.8628, 30.2176], 'full_name': 'Sudán'},
+            'South Sudan': {'coords': [6.8770, 31.3070], 'full_name': 'Sudán del Sur'},
+            'Ethiopia': {'coords': [9.1450, 40.4897], 'full_name': 'Etiopía'},
+            'Eritrea': {'coords': [15.1794, 39.7823], 'full_name': 'Eritrea'},
+            'Djibouti': {'coords': [11.8251, 42.5903], 'full_name': 'Yibuti'},
+            'Somalia': {'coords': [5.1521, 46.1996], 'full_name': 'Somalia'},
+            'Ghana': {'coords': [7.9465, -1.0232], 'full_name': 'Ghana'},
+            'Ivory Coast': {'coords': [7.5400, -5.5471], 'full_name': 'Costa de Marfil'},
+            'Senegal': {'coords': [14.4974, -14.4524], 'full_name': 'Senegal'},
+            'Mali': {'coords': [17.5707, -3.9962], 'full_name': 'Mali'},
+            'Burkina Faso': {'coords': [12.2383, -1.5616], 'full_name': 'Burkina Faso'},
+            'Niger': {'coords': [17.6078, 8.0817], 'full_name': 'Níger'},
+            'Chad': {'coords': [15.4542, 18.7322], 'full_name': 'Chad'},
+            'Cameroon': {'coords': [7.3697, 12.3547], 'full_name': 'Camerún'},
+            'Central African Republic': {'coords': [6.6111, 20.9394], 'full_name': 'República Centroafricana'},
+            'Uganda': {'coords': [1.3733, 32.2903], 'full_name': 'Uganda'},
+            'Rwanda': {'coords': [-1.9403, 29.8739], 'full_name': 'Ruanda'},
+            'Burundi': {'coords': [-3.3731, 29.9189], 'full_name': 'Burundi'},
+            'Tanzania': {'coords': [-6.369028, 34.888822], 'full_name': 'Tanzania'},
+            'Madagascar': {'coords': [-18.766947, 46.869107], 'full_name': 'Madagascar'},
+            'Mozambique': {'coords': [-18.665695, 35.529562], 'full_name': 'Mozambique'},
+            'Zambia': {'coords': [-13.133897, 27.849332], 'full_name': 'Zambia'},
+            'Zimbabwe': {'coords': [-19.015438, 29.154857], 'full_name': 'Zimbabue'},
+            'Namibia': {'coords': [-22.957640, 18.490410], 'full_name': 'Namibia'},
+            'Botswana': {'coords': [-22.328474, 24.684866], 'full_name': 'Botsuana'},
+            'Lesotho': {'coords': [-29.609988, 28.233608], 'full_name': 'Lesoto'},
+            'Eswatini': {'coords': [-26.522503, 31.465866], 'full_name': 'Esuatini'},
+            'Angola': {'coords': [-11.202692, 17.873887], 'full_name': 'Angola'},
+            'DR Congo': {'coords': [-4.038333, 21.758664], 'full_name': 'República Democrática del Congo'},
+            'Congo': {'coords': [-0.228021, 15.827659], 'full_name': 'República del Congo'},
+            'Gabon': {'coords': [-0.803689, 11.609444], 'full_name': 'Gabón'},
+            'Luxembourg': {'coords': [49.8153, 6.1296], 'full_name': 'Luxemburgo'},
+            'Hungary': {'coords': [47.1625, 19.5033], 'full_name': 'Hungría'},
+            'Slovakia': {'coords': [48.6690, 19.6990], 'full_name': 'Eslovaquia'},
+            'Slovenia': {'coords': [46.1512, 14.9955], 'full_name': 'Eslovenia'},
+            'Romania': {'coords': [45.9432, 24.9668], 'full_name': 'Rumanía'},
+            'Bulgaria': {'coords': [42.7339, 25.4858], 'full_name': 'Bulgaria'},
+            'Albania': {'coords': [41.1533, 20.1683], 'full_name': 'Albania'},
+            'Kosovo': {'coords': [42.6026, 20.9030], 'full_name': 'Kosovo'},
+            'Estonia': {'coords': [58.5953, 25.0136], 'full_name': 'Estonia'},
+            'Latvia': {'coords': [56.8796, 24.6032], 'full_name': 'Letonia'},
+            'Lithuania': {'coords': [55.1694, 23.8813], 'full_name': 'Lituania'},
+            'Iceland': {'coords': [64.9631, -19.0208], 'full_name': 'Islandia'},
+            'Malta': {'coords': [35.9375, 14.3754], 'full_name': 'Malta'},
+            'Cyprus': {'coords': [35.1264, 33.4299], 'full_name': 'Chipre'},
+            'Iraq': {'coords': [33.2232, 43.6793], 'full_name': 'Irak'},
+            'Iran': {'coords': [32.4279, 53.6880], 'full_name': 'Irán'},
+            'Syria': {'coords': [34.8021, 38.9968], 'full_name': 'Siria'},
+            'Lebanon': {'coords': [33.8547, 35.8623], 'full_name': 'Líbano'},
+            'Jordan': {'coords': [30.5852, 36.2384], 'full_name': 'Jordania'},
+            'Yemen': {'coords': [15.5527, 48.5164], 'full_name': 'Yemen'},
+            'Oman': {'coords': [21.4735, 55.9754], 'full_name': 'Omán'},
+            'Kuwait': {'coords': [29.3117, 47.4818], 'full_name': 'Kuwait'},
+            'Bahrain': {'coords': [26.0667, 50.5577], 'full_name': 'Baréin'},
+            'Madagascar': {'coords': [-18.7669, 46.8691], 'full_name': 'Madagascar'},
+            'New Caledonia': {'coords': [-20.9043, 165.6180], 'full_name': 'Nueva Caledonia'},
+            'French Polynesia': {'coords': [-17.6797, -149.4068], 'full_name': 'Polinesia Francesa'},
+            'Greenland': {'coords': [71.7069, -42.6043], 'full_name': 'Groenlandia'},
+            'Guyana': {'coords': [4.8604, -58.9302], 'full_name': 'Guyana'},
+            'Suriname': {'coords': [3.9193, -56.0278], 'full_name': 'Surinam'},
+            'French Guiana': {'coords': [3.9339, -53.1258], 'full_name': 'Guayana Francesa'},
+            'Belize': {'coords': [17.1899, -88.4976], 'full_name': 'Belice'},
         }
 
         # Crear dos columnas
