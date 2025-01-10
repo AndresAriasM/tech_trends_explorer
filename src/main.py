@@ -569,23 +569,39 @@ def sidebar_config():
     with st.sidebar:
         st.header("⚙️ Configuración")
         
-        # API Keys
+        # Inicializar las keys en el session state si no existen
+        if 'api_key' not in st.session_state:
+            st.session_state.api_key = os.getenv('GOOGLE_API_KEY', '')
+        if 'search_engine_id' not in st.session_state:
+            st.session_state.search_engine_id = os.getenv('SEARCH_ENGINE_ID', '')
+        if 'serp_api_key' not in st.session_state:
+            st.session_state.serp_api_key = os.getenv('SERP_API_KEY', '')
+        
+        # API Keys con manejo de estado
         api_key = st.text_input(
             "Google API Key",
-            value=os.getenv('GOOGLE_API_KEY', ''),
-            type="password"
+            value=st.session_state.api_key,
+            type="password",
+            key="google_api_input"
         )
+        st.session_state.api_key = api_key
+        
         search_engine_id = st.text_input(
             "Search Engine ID",
-            value=os.getenv('SEARCH_ENGINE_ID', ''),
-            type="password"
+            value=st.session_state.search_engine_id,
+            type="password",
+            key="search_engine_input"
         )
+        st.session_state.search_engine_id = search_engine_id
+        
         serp_api_key = st.text_input(
             "SerpAPI Key",
-            value=os.getenv('SERP_API_KEY', ''),
+            value=st.session_state.serp_api_key,
             type="password",
+            key="serp_api_input",
             help="API key para SerpAPI (usado en análisis Hype Cycle)"
         )
+        st.session_state.serp_api_key = serp_api_key
         
         # Botón de prueba
         if st.button("🔄 Probar conexión"):
