@@ -15,7 +15,7 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.tag import pos_tag
 from datetime import datetime
-from serpapi import GoogleSearch
+from serpapi.google_search import GoogleSearch
 import numpy as np
 import plotly.graph_objects as go
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
