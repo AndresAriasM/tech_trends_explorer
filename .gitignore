@@ -6,3 +6,6 @@ __pycache__/
 data/cache/*
 data/exports/*
 data/database.sqlite
+
+GitHubCredentials.json
+.streamlit/secrets.toml
