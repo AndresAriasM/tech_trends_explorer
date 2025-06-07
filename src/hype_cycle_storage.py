@@ -442,12 +442,13 @@ class HypeCycleHistoryInterface:
         except:
             categories = [{"id": "default", "name": "Sin categoría"}]
         
-        # Selector de categoría
+        # Selector de categoría - AÑADIR KEY ÚNICA
         category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
         
         selected_category_name = st.selectbox(
             "Selecciona una categoría",
-            options=list(category_options.keys())
+            options=list(category_options.keys()),
+            key="hype_history_category_explorer_selectbox"  # ← KEY ÚNICA AÑADIDA
         )
         
         selected_category_id = category_options[selected_category_name]
@@ -598,17 +599,17 @@ class HypeCycleHistoryInterface:
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                if st.button("📊 Ver Detalles"):
+                if st.button("📊 Ver Detalles", key="hype_history_view_details_btn"):
                     for query in selected_queries:
                         self._display_query_details(query)
             
             with col2:
-                if st.button("📋 Comparar Fases"):
+                if st.button("📋 Comparar Fases", key="hype_history_compare_phases_btn"):
                     self._compare_selected_queries(selected_queries)
             
             with col3:
-                if st.button("🗑️ Eliminar", type="secondary"):
-                    if st.checkbox("Confirmar eliminación"):
+                if st.button("🗑️ Eliminar", type="secondary", key="hype_history_delete_btn"):
+                    if st.checkbox("Confirmar eliminación", key="hype_history_confirm_delete_checkbox"):
                         for query in selected_queries:
                             query_id = query.get("query_id", query.get("analysis_id"))
                             if self.storage.delete_query(query_id):
@@ -619,6 +620,8 @@ class HypeCycleHistoryInterface:
     
     def _display_query_card(self, query: Dict):
         """Muestra una tarjeta de consulta"""
+        query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
+        
         with st.expander(
             f"🔍 {query.get('search_query', 'Sin consulta')[:60]}... - "
             f"**{query.get('hype_metrics', {}).get('phase', 'Unknown')}**",
@@ -658,8 +661,8 @@ class HypeCycleHistoryInterface:
                 except:
                     st.write("**Fecha:** No disponible")
             
-            # Botón para reutilizar consulta
-            if st.button(f"🔄 Reutilizar Consulta", key=f"reuse_{query.get('query_id', 'unknown')}"):
+            # Botón para reutilizar consulta - KEY ÚNICA
+            if st.button(f"🔄 Reutilizar Consulta", key=f"hype_reuse_query_{query_id}"):
                 self._reuse_query(query)
     
     def _display_query_details(self, query: Dict):
