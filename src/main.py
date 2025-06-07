@@ -64,6 +64,13 @@ st.markdown("""
             margin-bottom: 15px;
             border: 1px solid #cce5ff;
         }
+        .aws-config {
+            background-color: #fff3cd;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ffeaa7;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -81,6 +88,14 @@ def initialize_session_state():
     if 'scopus_api_key' not in st.session_state:
         st.session_state.scopus_api_key = os.getenv('SCOPUS_API_KEY', '')
     
+    # Credenciales de AWS DynamoDB
+    if 'aws_access_key_id' not in st.session_state:
+        st.session_state.aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID', '')
+    if 'aws_secret_access_key' not in st.session_state:
+        st.session_state.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY', '')
+    if 'aws_region' not in st.session_state:
+        st.session_state.aws_region = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+    
     # Estado para tópicos de búsqueda - específicos para cada módulo
     if 'hype_topics_data' not in st.session_state:
         st.session_state.hype_topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
@@ -89,7 +104,7 @@ def initialize_session_state():
     if 'scurve_topics_data' not in st.session_state:
         st.session_state.scurve_topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
     
-    # Para compatibilidad con código existente, mantenemos 'topics_data'
+    # Para compatibilidad con código existente
     if 'topics_data' not in st.session_state:
         st.session_state.topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
     
@@ -151,11 +166,11 @@ def show_welcome_screen():
     st.markdown("### 🚀 Cómo Comenzar")
     st.markdown("""
     1. Configura tus API keys en la barra lateral
-    2. Selecciona una funcionalidad en las pestañas superiores
-    3. Sigue las instrucciones específicas de cada módulo
+    2. Configura el almacenamiento de datos (Local o AWS DynamoDB)
+    3. Selecciona una funcionalidad en las pestañas superiores
+    4. Sigue las instrucciones específicas de cada módulo
     
-    Si es tu primera vez, te recomendamos revisar la configuración de API para asegurarte 
-    de que todas las funcionalidades estén disponibles.
+    **Nuevo**: Ahora puedes guardar tus análisis en AWS DynamoDB para acceso desde cualquier lugar.
     """)
     
     # Ejemplo de visualización
@@ -195,13 +210,13 @@ def sidebar_config():
         uploaded_file = st.file_uploader(
             "Cargar archivo de configuración",
             type=['json'],
-            help="Sube un archivo JSON con tus credenciales de API"
+            help="Sube un archivo JSON con tus credenciales de API y AWS"
         )
         
         if uploaded_file is not None:
             config_data = load_config_from_file(uploaded_file)
             if config_data:
-                # Actualizar session state con las claves disponibles
+                # Actualizar session state con las claves de API
                 if 'GOOGLE_API_KEY' in config_data:
                     st.session_state.google_api_key = config_data['GOOGLE_API_KEY']
                 if 'SEARCH_ENGINE_ID' in config_data:
@@ -210,6 +225,14 @@ def sidebar_config():
                     st.session_state.serp_api_key = config_data['SERP_API_KEY']
                 if 'SCOPUS_API_KEY' in config_data:
                     st.session_state.scopus_api_key = config_data['SCOPUS_API_KEY']
+                
+                # Actualizar credenciales de AWS
+                if 'AWS_ACCESS_KEY_ID' in config_data:
+                    st.session_state.aws_access_key_id = config_data['AWS_ACCESS_KEY_ID']
+                if 'AWS_SECRET_ACCESS_KEY' in config_data:
+                    st.session_state.aws_secret_access_key = config_data['AWS_SECRET_ACCESS_KEY']
+                if 'AWS_DEFAULT_REGION' in config_data:
+                    st.session_state.aws_region = config_data['AWS_DEFAULT_REGION']
                 
                 st.success("✅ Configuración cargada exitosamente")
         
@@ -285,49 +308,68 @@ def sidebar_config():
         
         st.divider()
         
+        # Sección de AWS DynamoDB
+        with st.expander("🗄️ AWS DynamoDB (Almacenamiento)", expanded=False):
+            st.markdown('<div class="aws-config">', unsafe_allow_html=True)
+            st.write("**Configuración de AWS para almacenamiento en DynamoDB**")
+            
+            aws_access_key = st.text_input(
+                "AWS Access Key ID",
+                value=st.session_state.aws_access_key_id,
+                type="password",
+                help="Tu Access Key ID de AWS"
+            )
+            st.session_state.aws_access_key_id = aws_access_key
+            
+            aws_secret_key = st.text_input(
+                "AWS Secret Access Key",
+                value=st.session_state.aws_secret_access_key,
+                type="password",
+                help="Tu Secret Access Key de AWS"
+            )
+            st.session_state.aws_secret_access_key = aws_secret_key
+            
+            aws_region = st.selectbox(
+                "AWS Region",
+                options=['us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-1'],
+                index=0,
+                help="Región donde están creadas las tablas DynamoDB"
+            )
+            st.session_state.aws_region = aws_region
+            
+            if st.button("🔄 Probar conexión AWS", key="test_aws"):
+                with st.spinner("Probando conexión con DynamoDB..."):
+                    try:
+                        from data_storage import DynamoDBStorage
+                        dynamo_storage = DynamoDBStorage(
+                            region_name=aws_region,
+                            aws_access_key_id=aws_access_key,
+                            aws_secret_access_key=aws_secret_key
+                        )
+                        st.success("✅ Conexión exitosa con DynamoDB")
+                    except Exception as e:
+                        st.error(f"❌ Error de conexión: {str(e)}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
         # Acerca de la aplicación
         with st.expander("ℹ️ Acerca de", expanded=False):
             st.write("""
-            **Tech Trends Explorer**
+            **Tech Trends Explorer v2.0**
             
-            Versión: 2.0
-            
-            Desarrollado por: Tu Nombre/Equipo
+            **Nuevas características:**
+            - ✅ Almacenamiento en AWS DynamoDB
+            - ✅ Mejor gestión de datos
+            - ✅ Acceso desde cualquier dispositivo
+            - ❌ Eliminado: Almacenamiento en GitHub
             
             Esta aplicación te permite analizar tendencias tecnológicas 
             utilizando múltiples fuentes de datos y métodos de análisis.
             
             © 2025 Todos los derechos reservados
             """)
-
-def check_github_config():
-    """
-    Verifica la configuración de GitHub y devuelve un estado y mensaje.
-    Maneja correctamente la ausencia de archivos secrets.toml.
-    """
-    # Verificar variables de entorno primero
-    github_token = os.environ.get('GITHUB_TOKEN')
-    repo_owner = os.environ.get('GITHUB_REPO_OWNER')
-    repo_name = os.environ.get('GITHUB_REPO_NAME')
-    
-    # Intentar obtener de secrets solo si la verificación anterior falla
-    if not github_token or not repo_owner or not repo_name:
-        try:
-            # Verificar si hay un archivo de secretos disponible antes de intentar acceder
-            github_token = github_token or st.secrets.get("github_token", "")
-            repo_owner = repo_owner or st.secrets.get("github_repo_owner", "")
-            repo_name = repo_name or st.secrets.get("github_repo_name", "")
-        except FileNotFoundError:
-            # No hay archivo de secretos, continuar con los valores actuales
-            pass
-        except Exception as e:
-            # Otro tipo de error al acceder a secretos
-            st.warning(f"Error al acceder a secretos: {str(e)}")
-    
-    # Determinar si la configuración es válida
-    is_valid = bool(github_token and repo_owner and repo_name)
-    
-    return is_valid, github_token, repo_owner, repo_name
 
 def main():
     """
@@ -349,35 +391,28 @@ def main():
     ])
     
     with tab1:
-        # Mostrar pantalla de bienvenida en la pestaña de inicio
         show_welcome_screen()
     
     with tab2:
-        # Verificar configuración antes de ejecutar la búsqueda de tendencias
         if not st.session_state.google_api_key or not st.session_state.search_engine_id:
             st.warning("⚠️ Para usar esta funcionalidad, configura tu Google API Key y Search Engine ID en el panel lateral")
         else:
-            # Ejecutar el módulo de búsqueda de tendencias
             run_trend_search()
     
     with tab3:
-        # Verificar configuración antes de ejecutar el análisis del Hype Cycle
         if not st.session_state.serp_api_key:
             st.warning("⚠️ Para usar esta funcionalidad, configura tu SerpAPI Key en el panel lateral")
         else:
-            # Ejecutar el módulo de análisis del Hype Cycle
             run_hype_cycle_analysis()
     
     with tab4:
-        # Verificar configuración antes de ejecutar el análisis de curvas en S
         if not st.session_state.scopus_api_key:
             st.warning("⚠️ Para usar esta funcionalidad, configura tu Scopus API Key en el panel lateral")
         else:
-            # Ejecutar el módulo de análisis de curvas en S
             run_s_curve_analysis()
     
     with tab5:
-        st.title("🗄️ Datos Guardados")
+        st.title("🗄️ Gestión de Datos")
         
         # Configuración para datos guardados
         col1, col2 = st.columns([1, 1])
@@ -386,8 +421,8 @@ def main():
             # Selector para modo de almacenamiento
             storage_mode = st.radio(
                 "Modo de almacenamiento",
-                options=["Local", "GitHub"],
-                index=0,  # Por defecto usar almacenamiento local
+                options=["Local", "AWS DynamoDB"],
+                index=0,
                 help="Selecciona dónde guardar los datos de análisis"
             )
         
@@ -402,76 +437,59 @@ def main():
                 ⚠️ Estos datos solo están disponibles en tu computadora actual.
                 """)
                 
-                # Opcional: Botón para abrir carpeta local
-                if st.button("Abrir carpeta de datos", key="open_data_folder"):
+                if st.button("📂 Abrir carpeta de datos", key="open_data_folder"):
                     data_path = os.path.abspath("./data")
-                    os.makedirs(data_path, exist_ok=True)  # Crear directorio si no existe
-                    
-                    # Intentar abrir carpeta según el sistema operativo
-                    try:
-                        if os.name == 'nt':  # Windows
-                            os.startfile(data_path)
-                        elif os.name == 'posix':  # macOS y Linux
-                            import subprocess
-                            subprocess.call(('open', data_path) if os.uname().sysname == 'Darwin' else ('xdg-open', data_path))
-                    except Exception as e:
-                        st.error(f"No se pudo abrir la carpeta: {str(e)}")
+                    os.makedirs(data_path, exist_ok=True)
+                    st.success(f"📁 Datos guardados en: {data_path}")
             else:
-                # Configuración de GitHub
-                github_configured = (
-                    os.environ.get('GITHUB_TOKEN') or 
-                    st.session_state.get('github_token') or
-                    (hasattr(st, 'secrets') and st.secrets.get("github_token"))
+                # Configuración de DynamoDB
+                aws_configured = (
+                    st.session_state.aws_access_key_id and 
+                    st.session_state.aws_secret_access_key and 
+                    st.session_state.aws_region
                 )
                 
-                if not github_configured:
-                    st.warning("⚠️ Configuración de GitHub incompleta")
-                    
-                    # Formulario para configuración temporal
-                    with st.form("github_config_form"):
-                        temp_token = st.text_input("Token de GitHub (temporal)", type="password")
-                        temp_owner = st.text_input("Usuario/Organización de GitHub", value="tu-usuario-github")
-                        temp_repo = st.text_input("Nombre del repositorio", value="tech-trends-explorer")
-                        
-                        submit_config = st.form_submit_button("Usar configuración temporal")
-                        
-                        if submit_config and temp_token:
-                            # Guardar en session_state
-                            st.session_state.github_token = temp_token
-                            st.session_state.github_repo_owner = temp_owner
-                            st.session_state.github_repo_name = temp_repo
-                            
-                            # Establecer variables de entorno
-                            os.environ['GITHUB_TOKEN'] = temp_token
-                            os.environ['GITHUB_REPO_OWNER'] = temp_owner
-                            os.environ['GITHUB_REPO_NAME'] = temp_repo
-                            
-                            st.success("✅ Configuración temporal aplicada. Recarga esta pestaña para continuar.")
-                            github_configured = True
+                if not aws_configured:
+                    st.warning("⚠️ Configuración de AWS incompleta")
+                    st.info("""
+                    Para usar DynamoDB:
+                    1. Configura las credenciales en el panel lateral
+                    2. Asegúrate de que las tablas estén creadas:
+                       - tech-trends-analyses
+                       - tech-trends-categories
+                    """)
                 else:
-                    st.success("✅ Configuración de GitHub disponible")
+                    st.success("✅ Configuración de AWS disponible")
+                    st.info(f"""
+                    **Región**: {st.session_state.aws_region}
+                    
+                    ☁️ Los datos se guardarán en DynamoDB y estarán disponibles desde cualquier dispositivo.
+                    """)
         
-        # Inicializar sistema de almacenamiento según modo seleccionado
-        from data_storage import initialize_github_db
+        # Inicializar sistema de almacenamiento
+        from data_storage import initialize_database
         
         if storage_mode == "Local":
-            # Usar almacenamiento local
-            db = initialize_github_db(use_local=True)
+            db = initialize_database("local")
         else:
-            # Usar GitHub con configuración disponible
-            repo_owner = os.environ.get('GITHUB_REPO_OWNER', st.session_state.get("github_repo_owner", ""))
-            repo_name = os.environ.get('GITHUB_REPO_NAME', st.session_state.get("github_repo_name", ""))
-            
-            # Verificar si hay credenciales suficientes
-            if not (github_configured and repo_owner and repo_name):
-                st.error("❌ Faltan datos de configuración para GitHub")
-                db = None
+            if aws_configured:
+                try:
+                    db = initialize_database(
+                        "dynamodb",
+                        region_name=st.session_state.aws_region,
+                        aws_access_key_id=st.session_state.aws_access_key_id,
+                        aws_secret_access_key=st.session_state.aws_secret_access_key
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error al conectar con DynamoDB: {str(e)}")
+                    st.info("Usando almacenamiento local como fallback")
+                    db = initialize_database("local")
             else:
-                db = initialize_github_db(repo_owner, repo_name)
+                st.warning("Configuración de AWS incompleta. Usando almacenamiento local.")
+                db = initialize_database("local")
         
-        # Dividir la interfaz con pestañas
+        # Cargar interfaz de gestión
         if db is not None:
-            # Cargar el gestor de base de datos
             try:
                 from database_manager import run_database_manager
                 run_database_manager(db)
@@ -480,8 +498,7 @@ def main():
                 import traceback
                 st.code(traceback.format_exc())
         else:
-            st.warning("No se pudo inicializar el sistema de almacenamiento. Verifica la configuración.")
+            st.warning("No se pudo inicializar el sistema de almacenamiento.")
 
 if __name__ == "__main__":
     main()
-

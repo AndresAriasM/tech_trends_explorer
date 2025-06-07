@@ -253,7 +253,7 @@ class PatentDataManager:
     """
     
     @staticmethod
-    def create_template(start_year=1990, end_year=None):
+    def create_template(start_year=1920, end_year=None):
         """
         Crea una plantilla Excel para la carga de datos de patentes por año.
         
@@ -735,7 +735,7 @@ def run_s_curve_analysis():
                 "Año inicial", 
                 min_value=1900,
                 max_value=datetime.now().year - 5,
-                value=1990,
+                value=1920,
                 help="El primer año para incluir en la plantilla"
             )
             
@@ -1039,78 +1039,165 @@ def run_s_curve_analysis():
                 save_expander = st.expander("Guardar este análisis", expanded=False)
                 
                 with save_expander:
-                    # Inicializar sistema de base de datos
-                    from data_storage import initialize_github_db
-                    
-                    # Usar almacenamiento local en lugar de GitHub
-                    db = initialize_github_db(use_local=True)
-                    
-                    if db is None:
-                        st.error("❌ No se pudo inicializar el sistema de almacenamiento.")
+                    # Mostrar información de datos disponibles
+                    available_data = []
+                    if analyze_papers and 'papers_by_year' in locals() and papers_by_year:
+                        available_data.append("✅ Datos de papers")
                     else:
-                        # Formulario para guardar
-                        with st.form("save_analysis_form"):
-                            # Nombre del análisis
-                            analysis_name = st.text_input(
-                                "Nombre para este análisis",
-                                value=f"Análisis de {scopus_query[:30]}..." if len(scopus_query) > 30 else f"Análisis de {scopus_query}"
-                            )
+                        available_data.append("❌ No hay datos de papers")
+                        
+                    if analyze_patents and 'patents_by_year' in locals() and patents_by_year:
+                        available_data.append("✅ Datos de patentes")
+                    else:
+                        available_data.append("❌ No hay datos de patentes")
+                        
+                    st.info("Datos disponibles para guardar:\n- " + "\n- ".join(available_data))
+                    
+                    # Intentar primero con LocalStorage
+                    from data_storage import initialize_github_db, save_analysis_direct
+                    
+                    # Formulario para guardar
+                    with st.form("save_analysis_form"):
+                        # Nombre del análisis
+                        analysis_name = st.text_input(
+                            "Nombre para este análisis",
+                            value=f"Análisis de {scopus_query[:30]}..." if len(scopus_query) > 30 else f"Análisis de {scopus_query}"
+                        )
+                        
+                        # Crear sistema para categorías
+                        try:
+                            # Inicializar almacenamiento local
+                            db = initialize_github_db(use_local=True)
                             
-                            # Seleccionar categoría
-                            categories = db.get_all_categories()
-                            category_options = {cat["name"]: cat["id"] for cat in categories}
-                            
-                            selected_category = st.selectbox(
-                                "Categoría",
-                                options=list(category_options.keys()),
-                                index=0
-                            )
-                            
-                            selected_category_id = category_options[selected_category]
-                            
-                            # Opción para crear nueva categoría
-                            new_category = st.checkbox("Crear nueva categoría")
-                            
-                            if new_category:
-                                new_cat_name = st.text_input("Nombre de la nueva categoría")
-                                new_cat_desc = st.text_input("Descripción (opcional)")
-                            
-                            # Botón para guardar
-                            submit = st.form_submit_button("Guardar Análisis")
-                            
-                            if submit:
-                                # Crear nueva categoría si es necesario
-                                if new_category and new_cat_name:
-                                    category_id = db.create_category(new_cat_name, new_cat_desc)
-                                    if not category_id:
-                                        st.error("❌ Error al crear la categoría.")
-                                        st.stop()
-                                else:
-                                    category_id = selected_category_id
+                            if db and hasattr(db, 'get_all_categories'):
+                                # Obtener categorías existentes
+                                categories = db.get_all_categories()
+                                category_options = {cat["name"]: cat["id"] for cat in categories}
                                 
+                                # Selector de categoría
+                                selected_category = st.selectbox(
+                                    "Categoría",
+                                    options=list(category_options.keys()),
+                                    index=0
+                                )
+                                
+                                selected_category_id = category_options[selected_category]
+                                
+                                # Opción para crear nueva categoría
+                                new_category = st.checkbox("Crear nueva categoría")
+                                
+                                if new_category:
+                                    new_cat_name = st.text_input("Nombre de la nueva categoría")
+                                    new_cat_desc = st.text_input("Descripción (opcional)")
+                            else:
+                                st.warning("No se pudo inicializar el sistema de categorías.")
+                                selected_category_id = "default"
+                                new_category = False
+                        except Exception as e:
+                            st.error(f"Error al cargar categorías: {str(e)}")
+                            selected_category_id = "default"
+                            new_category = False
+                        
+                        # Opciones de guardado
+                        save_method = st.radio(
+                            "Método de guardado",
+                            options=["Sistema de Base de Datos", "Archivo directo"],
+                            index=0,
+                            help="Elige cómo guardar los datos"
+                        )
+                        
+                        # Botón para guardar
+                        submit = st.form_submit_button("Guardar Análisis")
+                        
+                        if submit:
+                            # Opción 1: Guardar en el sistema de base de datos
+                            if save_method == "Sistema de Base de Datos":
+                                try:
+                                    # Crear nueva categoría si es necesario
+                                    if new_category and new_cat_name and db:
+                                        try:
+                                            category_id = db.create_category(new_cat_name, new_cat_desc or "")
+                                            if category_id:
+                                                st.success(f"✅ Categoría '{new_cat_name}' creada con éxito.")
+                                                selected_category_id = category_id
+                                            else:
+                                                st.error("❌ No se pudo crear la categoría.")
+                                        except Exception as cat_error:
+                                            st.error(f"Error al crear categoría: {str(cat_error)}")
+                                    
+                                    # Preparar datos para guardar
+                                    paper_data = papers_by_year if analyze_papers and 'papers_by_year' in locals() and papers_by_year else None
+                                    patent_data = patents_by_year if analyze_patents and 'patents_by_year' in locals() and patents_by_year else None
+                                    
+                                    paper_metrics = ajuste_info if analyze_papers and 'ajuste_info' in locals() and ajuste_info else None
+                                    patent_metrics = ajuste_info if analyze_patents and 'ajuste_info' in locals() and ajuste_info else None
+                                    
+                                    # Imprimir información para depuración
+                                    st.write(f"Guardando análisis '{analysis_name}' en categoría '{selected_category_id}'")
+                                    
+                                    # Guardar en la base de datos
+                                    if db:
+                                        try:
+                                            analysis_id = db.save_s_curve_analysis(
+                                                query=scopus_query,
+                                                paper_data=paper_data,
+                                                patent_data=patent_data,
+                                                paper_metrics=paper_metrics,
+                                                patent_metrics=patent_metrics,
+                                                category_id=selected_category_id,
+                                                analysis_name=analysis_name
+                                            )
+                                            
+                                            if analysis_id:
+                                                st.success(f"✅ Análisis guardado correctamente con ID: {analysis_id}")
+                                                st.info("Puedes ver y comparar todos los análisis guardados en la pestaña 'Datos Guardados'.")
+                                            else:
+                                                st.error("❌ Error al guardar el análisis.")
+                                        except Exception as save_error:
+                                            st.error(f"Error al guardar análisis: {str(save_error)}")
+                                            st.error(traceback.format_exc())
+                                    else:
+                                        st.error("El sistema de base de datos no está disponible.")
+                                except Exception as e:
+                                    st.error(f"Error general en el proceso de guardado: {str(e)}")
+                                    st.error(traceback.format_exc())
+                            
+                            # Opción 2: Guardar en archivo directamente
+                            else:
                                 # Preparar datos para guardar
-                                paper_data = papers_by_year if analyze_papers and 'papers_by_year' in locals() else None
-                                patent_data = patents_by_year if analyze_patents and 'patents_by_year' in locals() else None
+                                paper_data = papers_by_year if analyze_papers and 'papers_by_year' in locals() and papers_by_year else None
+                                patent_data = patents_by_year if analyze_patents and 'patents_by_year' in locals() and patents_by_year else None
                                 
-                                paper_metrics = ajuste_info if analyze_papers and 'ajuste_info' in locals() else None
-                                patent_metrics = ajuste_info if analyze_patents and 'ajuste_info' in locals() else None
+                                paper_metrics = ajuste_info if analyze_papers and 'ajuste_info' in locals() and ajuste_info else None
+                                patent_metrics = ajuste_info if analyze_patents and 'ajuste_info' in locals() and ajuste_info else None
                                 
-                                # Guardar en la base de datos
-                                analysis_id = db.save_s_curve_analysis(
+                                # Guardar directamente
+                                result = save_analysis_direct(
+                                    analysis_name=analysis_name,
                                     query=scopus_query,
                                     paper_data=paper_data,
                                     patent_data=patent_data,
                                     paper_metrics=paper_metrics,
-                                    patent_metrics=patent_metrics,
-                                    category_id=category_id,
-                                    analysis_name=analysis_name
+                                    patent_metrics=patent_metrics
                                 )
                                 
-                                if analysis_id:
-                                    st.success(f"✅ Análisis guardado correctamente con ID: {analysis_id}")
-                                    st.info("Puedes ver y comparar todos los análisis guardados en la pestaña 'Datos Guardados'.")
+                                if result:
+                                    st.success(f"✅ Análisis guardado directamente en: {result}")
+                                    # Mostrar opción para descargar el archivo
+                                    try:
+                                        with open(result, 'r', encoding='utf-8') as f:
+                                            file_content = f.read()
+                                            
+                                        st.download_button(
+                                            label="📥 Descargar archivo JSON",
+                                            data=file_content,
+                                            file_name=os.path.basename(result),
+                                            mime="application/json"
+                                        )
+                                    except Exception as download_error:
+                                        st.warning(f"No se pudo preparar descarga: {str(download_error)}")
                                 else:
-                                    st.error("❌ Error al guardar el análisis.")
+                                    st.error("❌ No se pudo guardar el análisis directamente.")
     else:
         # Mostrar instrucciones cuando no se ha realizado búsqueda
         st.info("""
@@ -1128,7 +1215,7 @@ def run_s_curve_analysis():
         """)
 
 
-def generate_sample_patent_data(query, start_year=1990, end_year=None):
+def generate_sample_patent_data(query, start_year=1920, end_year=None):
     """
     Genera datos de muestra para patentes basados en la consulta de búsqueda.
     Útil para demostración cuando no hay datos reales disponibles.
@@ -1190,6 +1277,37 @@ def generate_sample_patent_data(query, start_year=1990, end_year=None):
     
     return patents_by_year
 
+def add_direct_save_option(analysis_name, query, paper_data=None, patent_data=None, paper_metrics=None, patent_metrics=None):
+    """
+    Añade una opción para guardar directamente los datos del análisis.
+    """
+    from data_storage import save_analysis_direct
+    
+    if st.button("💾 Guardar datos directamente", type="primary"):
+        result = save_analysis_direct(
+            analysis_name=analysis_name,
+            query=query,
+            paper_data=paper_data,
+            patent_data=patent_data,
+            paper_metrics=paper_metrics,
+            patent_metrics=patent_metrics
+        )
+        
+        if result:
+            st.success(f"Datos guardados correctamente en: {result}")
+            # Mostrar opción para descargar el archivo
+            try:
+                with open(result, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                    
+                st.download_button(
+                    label="Descargar archivo JSON",
+                    data=file_content,
+                    file_name=os.path.basename(result),
+                    mime="application/json"
+                )
+            except Exception as e:
+                st.warning(f"No se pudo preparar descarga: {str(e)}")
 
 if __name__ == "__main__":
     run_s_curve_analysis()

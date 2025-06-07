@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import json
 import os
-from data_storage import initialize_github_db
+from data_storage import initialize_database
 
 def run_database_manager(db=None):
     """
@@ -18,29 +18,22 @@ def run_database_manager(db=None):
     """
     st.title("📊 Gestor de Datos Guardados")
     
-    # Si no se proporciona db, intentar inicializar
+    # Si no se proporciona db, intentar inicializar con almacenamiento local
     if db is None:
-        # Configuración del repositorio de GitHub (para compatibilidad con código anterior)
-        from data_storage import initialize_github_db
-        
         try:
-            repo_owner = os.environ.get('GITHUB_REPO_OWNER', st.session_state.get("github_repo_owner", ""))
-            repo_name = os.environ.get('GITHUB_REPO_NAME', st.session_state.get("github_repo_name", ""))
-            
-            # Intentar primero con almacenamiento local
-            db = initialize_github_db(use_local=True)
-            
-            # Si falla, intentar con GitHub
-            if db is None:
-                db = initialize_github_db(repo_owner, repo_name)
+            db = initialize_database("local")
         except Exception as e:
             st.error(f"Error al inicializar base de datos: {str(e)}")
-            st.info("Configura el almacenamiento en la pestaña 'Datos Guardados'")
+            st.info("No se pudo inicializar el sistema de almacenamiento")
             return
     
     if db is None:
         st.error("No se pudo inicializar el sistema de almacenamiento.")
         return
+    
+    # Mostrar tipo de almacenamiento activo
+    storage_type = "DynamoDB" if hasattr(db.storage, 'dynamodb') else "Local"
+    st.info(f"🗄️ Almacenamiento activo: **{storage_type}**")
     
     # Opciones de la interfaz
     tab1, tab2, tab3 = st.tabs([
@@ -68,24 +61,29 @@ def show_saved_analyses(db):
     st.header("🔍 Análisis Guardados")
     
     # Obtener categorías y análisis
-    categories = db.get_all_categories()
-    all_analyses = db.storage.get_all_searches()
+    try:
+        categories = db.get_all_categories()
+        all_analyses = db.storage.get_all_searches()
+    except Exception as e:
+        st.error(f"Error al cargar datos: {str(e)}")
+        return
     
     # Si no hay datos, mostrar mensaje
     if not all_analyses:
-        st.info("No hay análisis guardados. Realiza algunas búsquedas en la sección de Curvas en S.")
+        st.info("No hay análisis guardados. Realiza algunas búsquedas en las pestañas de análisis.")
         return
     
     # Opciones de filtrado
     st.subheader("Filtrar Análisis")
     
     # Por categoría
-    category_options = {cat["name"]: cat["id"] for cat in categories}
+    category_options = {"Todas las categorías": "all"}
+    category_options.update({cat["name"]: cat["id"] for cat in categories})
+    
     selected_category = st.selectbox(
         "Categoría",
         options=list(category_options.keys()),
-        index=0,
-        format_func=lambda x: x
+        index=0
     )
     selected_category_id = category_options[selected_category]
     
@@ -104,14 +102,21 @@ def show_saved_analyses(db):
     
     for analysis in all_analyses:
         # Filtrar por categoría
-        if selected_category_id != "all" and analysis["category_id"] != selected_category_id:
+        if selected_category_id != "all" and analysis.get("category_id") != selected_category_id:
             continue
             
         # Filtrar por fecha
-        analysis_date = datetime.fromisoformat(analysis["timestamp"]).date()
-        if len(date_range) == 2:
-            if not (date_range[0] <= analysis_date <= date_range[1]):
-                continue
+        try:
+            # Manejar diferentes formatos de timestamp
+            timestamp = analysis.get("timestamp") or analysis.get("execution_date")
+            if timestamp:
+                analysis_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).date()
+                if len(date_range) == 2:
+                    if not (date_range[0] <= analysis_date <= date_range[1]):
+                        continue
+        except Exception:
+            # Si no se puede parsear la fecha, incluir el análisis
+            pass
         
         filtered_analyses.append(analysis)
     
@@ -129,17 +134,31 @@ def show_saved_analyses(db):
         # Obtener nombre de categoría
         category_name = "Desconocida"
         for cat in categories:
-            if cat["id"] == analysis["category_id"]:
-                category_name = cat["name"]
+            if cat.get("id") == analysis.get("category_id") or cat.get("category_id") == analysis.get("category_id"):
+                category_name = cat.get("name", "Sin nombre")
                 break
+        
+        # Manejar diferentes estructuras de ID
+        analysis_id = analysis.get("id") or analysis.get("analysis_id")
+        
+        # Manejar diferentes formatos de timestamp
+        timestamp = analysis.get("timestamp") or analysis.get("execution_date")
+        try:
+            if timestamp:
+                formatted_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime("%d/%m/%Y %H:%M")
+            else:
+                formatted_date = "Fecha desconocida"
+        except Exception:
+            formatted_date = str(timestamp) if timestamp else "Fecha desconocida"
         
         # Extraer datos básicos
         analysis_data = {
-            "ID": analysis["id"],
-            "Nombre": analysis.get("name", "Sin nombre"),
+            "ID": analysis_id or "Sin ID",
+            "Nombre": analysis.get("name") or "Sin nombre",
             "Categoría": category_name,
-            "Fecha": datetime.fromisoformat(analysis["timestamp"]).strftime("%d/%m/%Y %H:%M"),
-            "Consulta": analysis["query"],
+            "Fecha": formatted_date,
+            "Consulta": analysis.get("query") or "Sin consulta",
+            "Tipo": analysis.get("analysis_type") or "Desconocido",
             "Datos de Papers": "Sí" if analysis.get("paper_data") else "No",
             "Datos de Patentes": "Sí" if analysis.get("patent_data") else "No"
         }
@@ -157,6 +176,7 @@ def show_saved_analyses(db):
             "Categoría": st.column_config.TextColumn("Categoría", width="small"),
             "Fecha": st.column_config.TextColumn("Fecha", width="small"),
             "Consulta": st.column_config.TextColumn("Consulta", width="large"),
+            "Tipo": st.column_config.TextColumn("Tipo", width="small"),
             "Datos de Papers": st.column_config.TextColumn("Papers", width="small"),
             "Datos de Patentes": st.column_config.TextColumn("Patentes", width="small")
         }
@@ -165,15 +185,22 @@ def show_saved_analyses(db):
     # Ver detalles de un análisis específico
     st.subheader("Ver Detalles de Análisis")
     
-    selected_analysis_id = st.selectbox(
-        "Selecciona un análisis para ver detalles",
-        options=[a["id"] for a in filtered_analyses],
-        format_func=lambda x: next((a["name"] for a in filtered_analyses if a["id"] == x), x)
-    )
-    
-    if selected_analysis_id:
-        display_analysis_details(db, selected_analysis_id)
-
+    if filtered_analyses:
+        analysis_options = {}
+        for analysis in filtered_analyses:
+            analysis_id = analysis.get("id") or analysis.get("analysis_id")
+            analysis_name = analysis.get("name") or f"Análisis {analysis_id}"
+            analysis_options[analysis_name] = analysis_id
+        
+        selected_analysis_name = st.selectbox(
+            "Selecciona un análisis para ver detalles",
+            options=list(analysis_options.keys())
+        )
+        
+        selected_analysis_id = analysis_options[selected_analysis_name]
+        
+        if selected_analysis_id:
+            display_analysis_details(db, selected_analysis_id)
 
 def display_analysis_details(db, analysis_id):
     """
@@ -184,25 +211,47 @@ def display_analysis_details(db, analysis_id):
         analysis_id: ID del análisis a mostrar
     """
     # Obtener datos del análisis
-    analysis = db.get_analysis_by_id(analysis_id)
+    try:
+        analysis = db.get_analysis_by_id(analysis_id)
+    except Exception as e:
+        st.error(f"Error al obtener análisis: {str(e)}")
+        return
     
     if not analysis:
         st.error(f"No se encontró el análisis con ID: {analysis_id}")
         return
     
     # Crear contenedor expandible
-    with st.expander(f"Detalles: {analysis.get('name', 'Análisis sin nombre')}", expanded=True):
+    analysis_name = analysis.get('name') or 'Análisis sin nombre'
+    with st.expander(f"Detalles: {analysis_name}", expanded=True):
         # Información básica
         col1, col2 = st.columns(2)
         
         with col1:
-            st.write("**Consulta:**", analysis["query"])
-            st.write("**Fecha de ejecución:**", datetime.fromisoformat(analysis["timestamp"]).strftime("%d/%m/%Y %H:%M"))
+            st.write("**Consulta:**", analysis.get("query", "No especificada"))
+            
+            # Manejar diferentes formatos de timestamp
+            timestamp = analysis.get("timestamp") or analysis.get("execution_date")
+            if timestamp:
+                try:
+                    formatted_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime("%d/%m/%Y %H:%M")
+                except Exception:
+                    formatted_date = str(timestamp)
+            else:
+                formatted_date = "Fecha desconocida"
+            
+            st.write("**Fecha de ejecución:**", formatted_date)
         
         with col2:
             # Categoría
-            category = db.storage.get_category_by_id(analysis["category_id"])
-            st.write("**Categoría:**", category["name"] if category else "Desconocida")
+            try:
+                category = db.storage.get_category_by_id(analysis.get("category_id"))
+                category_name = category.get("name") if category else "Desconocida"
+            except Exception:
+                category_name = "Error al obtener categoría"
+            
+            st.write("**Categoría:**", category_name)
+            st.write("**Tipo de análisis:**", analysis.get("analysis_type", "No especificado"))
             
             # Conteo de datos
             paper_count = len(analysis.get("paper_data", {}))
@@ -230,11 +279,14 @@ def display_analysis_details(db, analysis_id):
                 
                 cols = st.columns(3)
                 with cols[0]:
-                    st.metric("R² del ajuste", f"{metrics.get('R2', 0):.4f}")
+                    r2_value = metrics.get('R2', metrics.get('r2', 0))
+                    st.metric("R² del ajuste", f"{r2_value:.4f}")
                 with cols[1]:
-                    st.metric("Punto de inflexión", f"{metrics.get('x0', 0):.1f}")
+                    x0_value = metrics.get('x0', metrics.get('punto_inflexion', 0))
+                    st.metric("Punto de inflexión", f"{x0_value:.1f}")
                 with cols[2]:
-                    st.metric("Fase", metrics.get("Fase", "No disponible"))
+                    fase = metrics.get("Fase", metrics.get("fase", "No disponible"))
+                    st.metric("Fase", fase)
         
         if analysis.get("patent_data"):
             st.subheader("Datos de Patentes")
@@ -256,11 +308,14 @@ def display_analysis_details(db, analysis_id):
                 
                 cols = st.columns(3)
                 with cols[0]:
-                    st.metric("R² del ajuste", f"{metrics.get('R2', 0):.4f}")
+                    r2_value = metrics.get('R2', metrics.get('r2', 0))
+                    st.metric("R² del ajuste", f"{r2_value:.4f}")
                 with cols[1]:
-                    st.metric("Punto de inflexión", f"{metrics.get('x0', 0):.1f}")
+                    x0_value = metrics.get('x0', metrics.get('punto_inflexion', 0))
+                    st.metric("Punto de inflexión", f"{x0_value:.1f}")
                 with cols[2]:
-                    st.metric("Fase", metrics.get("Fase", "No disponible"))
+                    fase = metrics.get("Fase", metrics.get("fase", "No disponible"))
+                    st.metric("Fase", fase)
         
         # Mostrar gráfico con datos
         if analysis.get("paper_data") or analysis.get("patent_data"):
@@ -321,7 +376,6 @@ def display_analysis_details(db, analysis_id):
             # Mostrar gráfico
             st.plotly_chart(fig, use_container_width=True)
 
-
 def manage_categories(db):
     """
     Interfaz para gestionar categorías.
@@ -332,7 +386,11 @@ def manage_categories(db):
     st.header("📂 Gestión de Categorías")
     
     # Obtener categorías
-    categories = db.get_all_categories()
+    try:
+        categories = db.get_all_categories()
+    except Exception as e:
+        st.error(f"Error al cargar categorías: {str(e)}")
+        return
     
     # Dividir en columnas
     col1, col2 = st.columns([2, 1])
@@ -347,15 +405,28 @@ def manage_categories(db):
             # Crear tabla
             cat_data = []
             for cat in categories:
+                # Manejar diferentes estructuras de ID
+                cat_id = cat.get("id") or cat.get("category_id")
+                
                 # Contar análisis en esta categoría
-                analyses_count = len(db.get_category_analysis(cat["id"]))
+                try:
+                    analyses_count = len(db.get_category_analysis(cat_id))
+                except Exception:
+                    analyses_count = 0
+                
+                # Manejar fecha de creación
+                created_at = cat.get("created_at", datetime.now().isoformat())
+                try:
+                    formatted_date = datetime.fromisoformat(created_at.replace('Z', '+00:00')).strftime("%d/%m/%Y")
+                except Exception:
+                    formatted_date = str(created_at) if created_at else "Desconocida"
                 
                 cat_data.append({
-                    "ID": cat["id"],
-                    "Nombre": cat["name"],
+                    "ID": cat_id or "Sin ID",
+                    "Nombre": cat.get("name", "Sin nombre"),
                     "Descripción": cat.get("description", ""),
                     "Análisis": analyses_count,
-                    "Creada": datetime.fromisoformat(cat.get("created_at", datetime.now().isoformat())).strftime("%d/%m/%Y")
+                    "Creada": formatted_date
                 })
             
             # Mostrar tabla
@@ -377,66 +448,101 @@ def manage_categories(db):
             submit = st.form_submit_button("Crear Categoría")
             
             if submit and cat_name:
-                # Crear nueva categoría
-                new_cat_id = db.create_category(cat_name, cat_description)
-                
-                if new_cat_id:
-                    st.success(f"✅ Categoría '{cat_name}' creada con éxito.")
-                    # Refrescar lista de categorías
-                    st.rerun()
-                else:
-                    st.error("❌ Error al crear la categoría. Verifica la configuración de GitHub.")
+                try:
+                    # Crear nueva categoría
+                    new_cat_id = db.create_category(cat_name, cat_description)
+                    
+                    if new_cat_id:
+                        st.success(f"✅ Categoría '{cat_name}' creada con éxito.")
+                        st.rerun()
+                    else:
+                        st.error("❌ Error al crear la categoría.")
+                except Exception as e:
+                    st.error(f"❌ Error al crear categoría: {str(e)}")
     
     # Sección para reasignar análisis a categorías
     st.subheader("Reasignar Análisis")
     
     # Obtener todos los análisis
-    all_analyses = db.storage.get_all_searches()
+    try:
+        all_analyses = db.storage.get_all_searches()
+    except Exception as e:
+        st.error(f"Error al cargar análisis: {str(e)}")
+        return
     
     if not all_analyses:
         st.info("No hay análisis guardados para reasignar.")
         return
     
     # Opciones de selección
-    analysis_options = {a.get("name", f"Análisis {a['id']}"): a["id"] for a in all_analyses}
+    analysis_options = {}
+    for analysis in all_analyses:
+        analysis_id = analysis.get("id") or analysis.get("analysis_id")
+        analysis_name = analysis.get("name") or f"Análisis {analysis_id}"
+        analysis_options[analysis_name] = analysis_id
     
     col1, col2 = st.columns(2)
     
     with col1:
-        selected_analysis = st.selectbox(
+        selected_analysis_name = st.selectbox(
             "Selecciona un análisis",
             options=list(analysis_options.keys())
         )
-        selected_analysis_id = analysis_options[selected_analysis]
+        selected_analysis_id = analysis_options[selected_analysis_name]
     
     with col2:
         # Selector de categoría destino
-        category_mapping = {cat["id"]: cat["name"] for cat in categories}
+        category_mapping = {}
+        for cat in categories:
+            cat_id = cat.get("id") or cat.get("category_id")
+            cat_name = cat.get("name", "Sin nombre")
+            category_mapping[cat_name] = cat_id
         
         selected_category = st.selectbox(
             "Mover a categoría",
-            options=list(category_mapping.values())
+            options=list(category_mapping.keys())
         )
-        selected_category_id = [k for k, v in category_mapping.items() if v == selected_category][0]
+        selected_category_id = category_mapping[selected_category]
     
     # Botón para reasignar
     if st.button("Reasignar Análisis", type="primary"):
-        # Obtener el análisis seleccionado
-        analysis = db.get_analysis_by_id(selected_analysis_id)
-        
-        if analysis and analysis["category_id"] != selected_category_id:
-            # Actualizar categoría
-            analysis["category_id"] = selected_category_id
+        try:
+            # Obtener el análisis seleccionado
+            analysis = db.get_analysis_by_id(selected_analysis_id)
             
-            # Guardar cambios
-            if db.storage.save_data():
-                st.success(f"✅ Análisis movido a la categoría '{selected_category}'")
-                st.rerun()
+            if analysis:
+                current_category = analysis.get("category_id")
+                if current_category != selected_category_id:
+                    # Actualizar categoría
+                    analysis["category_id"] = selected_category_id
+                    
+                    # Guardar cambios (esto depende del tipo de storage)
+                    try:
+                        # Para DynamoDB, necesitamos actualizar el item
+                        if hasattr(db.storage, 'analyses_table'):
+                            # DynamoDB update
+                            db.storage.analyses_table.update_item(
+                                Key={
+                                    'analysis_id': analysis.get('analysis_id'),
+                                    'timestamp': analysis.get('timestamp')
+                                },
+                                UpdateExpression='SET category_id = :cat_id',
+                                ExpressionAttributeValues={':cat_id': selected_category_id}
+                            )
+                        else:
+                            # Local storage update
+                            db.storage.save_data()
+                        
+                        st.success(f"✅ Análisis movido a la categoría '{selected_category}'")
+                        st.rerun()
+                    except Exception as update_error:
+                        st.error(f"❌ Error al actualizar: {str(update_error)}")
+                else:
+                    st.info("El análisis ya pertenece a esta categoría.")
             else:
-                st.error("❌ Error al actualizar la categoría del análisis.")
-        elif analysis and analysis["category_id"] == selected_category_id:
-            st.info("El análisis ya pertenece a esta categoría.")
-
+                st.error("No se pudo encontrar el análisis seleccionado.")
+        except Exception as e:
+            st.error(f"❌ Error en la reasignación: {str(e)}")
 
 def comparative_analysis(db):
     """
@@ -452,10 +558,14 @@ def comparative_analysis(db):
     """)
     
     # Obtener todos los análisis
-    all_analyses = db.storage.get_all_searches()
+    try:
+        all_analyses = db.storage.get_all_searches()
+    except Exception as e:
+        st.error(f"Error al cargar análisis: {str(e)}")
+        return
     
     if not all_analyses:
-        st.info("No hay análisis guardados para comparar. Realiza algunas búsquedas en la sección de Curvas en S.")
+        st.info("No hay análisis guardados para comparar. Realiza algunas búsquedas en las pestañas de análisis.")
         return
     
     # Filtrar para mostrar solo los que tienen datos
@@ -472,23 +582,29 @@ def comparative_analysis(db):
     st.subheader("Seleccionar Análisis a Comparar")
     
     # Organizar por categorías
-    categories = db.get_all_categories()
+    try:
+        categories = db.get_all_categories()
+    except Exception:
+        categories = [{"id": "default", "name": "Sin categoría"}]
     
     # Crear estructura jerárquica de selección
     category_analyses = {}
     
     for cat in categories:
-        cat_id = cat["id"]
-        cat_name = cat["name"]
+        cat_id = cat.get("id") or cat.get("category_id")
+        cat_name = cat.get("name", "Sin nombre")
         
         # Filtrar análisis para esta categoría
-        cat_analyses = [a for a in valid_analyses if a["category_id"] == cat_id]
+        cat_analyses = [a for a in valid_analyses if a.get("category_id") == cat_id]
         
         if cat_analyses:
-            category_analyses[cat_name] = {
-                a.get("name", f"Análisis {i+1}"): a["id"] 
-                for i, a in enumerate(cat_analyses)
-            }
+            analysis_dict = {}
+            for i, analysis in enumerate(cat_analyses):
+                analysis_id = analysis.get("id") or analysis.get("analysis_id")
+                analysis_name = analysis.get("name") or f"Análisis {i+1}"
+                analysis_dict[analysis_name] = analysis_id
+            
+            category_analyses[cat_name] = analysis_dict
     
     # Widget de multiselección con estructura de árbol
     selected_analyses = []
@@ -531,63 +647,68 @@ def comparative_analysis(db):
             comparison_data = []
             
             for analysis_id in selected_analyses:
-                analysis = db.get_analysis_by_id(analysis_id)
+                try:
+                    analysis = db.get_analysis_by_id(analysis_id)
+                    
+                    if not analysis:
+                        continue
+                    
+                    analysis_name = analysis.get("name") or f"Análisis {analysis_id}"
+                    
+                    # Procesar según tipo de datos seleccionado
+                    if data_type in ["Papers", "Ambos"] and analysis.get("paper_data"):
+                        paper_data = analysis["paper_data"]
+                        
+                        # Convertir a formato para gráfica
+                        years = [int(y) for y in paper_data.keys()]
+                        values = list(paper_data.values())
+                        
+                        # Calcular acumulado
+                        cum_values = []
+                        cum_total = 0
+                        for v in values:
+                            cum_total += v
+                            cum_values.append(cum_total)
+                        
+                        # Añadir a datos de comparación
+                        comparison_data.append({
+                            "id": analysis_id,
+                            "name": f"{analysis_name} (Papers)",
+                            "years": years,
+                            "values": values,
+                            "cumulative": cum_values,
+                            "type": "Papers",
+                            "metrics": analysis.get("paper_metrics", {})
+                        })
+                    
+                    if data_type in ["Patentes", "Ambos"] and analysis.get("patent_data"):
+                        patent_data = analysis["patent_data"]
+                        
+                        # Convertir a formato para gráfica
+                        years = [int(y) for y in patent_data.keys()]
+                        values = list(patent_data.values())
+                        
+                        # Calcular acumulado
+                        cum_values = []
+                        cum_total = 0
+                        for v in values:
+                            cum_total += v
+                            cum_values.append(cum_total)
+                        
+                        # Añadir a datos de comparación
+                        comparison_data.append({
+                            "id": analysis_id,
+                            "name": f"{analysis_name} (Patentes)",
+                            "years": years,
+                            "values": values,
+                            "cumulative": cum_values,
+                            "type": "Patentes",
+                            "metrics": analysis.get("patent_metrics", {})
+                        })
                 
-                if not analysis:
+                except Exception as e:
+                    st.warning(f"Error procesando análisis {analysis_id}: {str(e)}")
                     continue
-                
-                analysis_name = analysis.get("name", f"Análisis {analysis_id}")
-                
-                # Procesar según tipo de datos seleccionado
-                if data_type in ["Papers", "Ambos"] and analysis.get("paper_data"):
-                    paper_data = analysis["paper_data"]
-                    
-                    # Convertir a formato para gráfica
-                    years = [int(y) for y in paper_data.keys()]
-                    values = list(paper_data.values())
-                    
-                    # Calcular acumulado
-                    cum_values = []
-                    cum_total = 0
-                    for v in values:
-                        cum_total += v
-                        cum_values.append(cum_total)
-                    
-                    # Añadir a datos de comparación
-                    comparison_data.append({
-                        "id": analysis_id,
-                        "name": f"{analysis_name} (Papers)",
-                        "years": years,
-                        "values": values,
-                        "cumulative": cum_values,
-                        "type": "Papers",
-                        "metrics": analysis.get("paper_metrics", {})
-                    })
-                
-                if data_type in ["Patentes", "Ambos"] and analysis.get("patent_data"):
-                    patent_data = analysis["patent_data"]
-                    
-                    # Convertir a formato para gráfica
-                    years = [int(y) for y in patent_data.keys()]
-                    values = list(patent_data.values())
-                    
-                    # Calcular acumulado
-                    cum_values = []
-                    cum_total = 0
-                    for v in values:
-                        cum_total += v
-                        cum_values.append(cum_total)
-                    
-                    # Añadir a datos de comparación
-                    comparison_data.append({
-                        "id": analysis_id,
-                        "name": f"{analysis_name} (Patentes)",
-                        "years": years,
-                        "values": values,
-                        "cumulative": cum_values,
-                        "type": "Patentes",
-                        "metrics": analysis.get("patent_metrics", {})
-                    })
             
             # Verificar si hay datos para comparar
             if not comparison_data:
