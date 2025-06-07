@@ -1,377 +1,458 @@
-# src/utils/scopus_builder.py
+# utils/scopus_builder.py
 import streamlit as st
 import re
-
-def build_scopus_advanced_equation(term_groups):
-    """
-    Construye una ecuación de búsqueda Scopus avanzada basada en grupos de términos.
-    
-    Args:
-        term_groups: Lista de diccionarios, cada uno con:
-            - field: Campo de búsqueda (TITLE, ABSTRACT, etc.)
-            - terms: Lista de términos para ese campo
-            - operator: Operador para unir con el siguiente grupo
-    
-    Returns:
-        String con la ecuación Scopus completa
-    """
-    parts = []
-    
-    for i, group in enumerate(term_groups):
-        if not group['terms']:
-            continue
-            
-        # Construir la parte del campo
-        field = group['field']
-        terms = group['terms']
-        
-        # Si hay múltiples términos, los unimos con OR
-        if len(terms) > 1:
-            terms_clause = " OR ".join([f'"{term}"' if ' ' in term else term for term in terms])
-            terms_clause = f"({terms_clause})"
-        else:
-            term = terms[0]
-            terms_clause = f'"{term}"' if ' ' in term else term
-        
-        # Agregar el campo con los términos
-        field_clause = f"{field}({terms_clause})"
-        
-        # Si no es el último grupo y hay un operador, añadirlo
-        if i < len(term_groups) - 1 and group.get('operator'):
-            field_clause += f" {group['operator']}"
-        
-        parts.append(field_clause)
-    
-    # Unir todas las partes
-    equation = " ".join(parts)
-    return equation
+from typing import List, Dict, Tuple
 
 def scopus_equation_interface():
     """
-    Interfaz de usuario para construir ecuaciones Scopus avanzadas.
+    Interfaz interactiva para construir ecuaciones de búsqueda en Scopus
     
     Returns:
-        String con la ecuación Scopus construida
+        str: Ecuación de búsqueda formateada para Scopus
     """
-    st.write("### 🔍 Constructor de Ecuación Scopus")
+    st.subheader("🔧 Constructor de Ecuaciones Scopus")
     
     # Inicializar estado si no existe
-    if 'scopus_term_groups' not in st.session_state:
-        st.session_state.scopus_term_groups = [
-            {
-                'id': 0,
-                'field': 'TITLE',
-                'terms': [],
-                'operator': 'AND'
-            }
-        ]
+    if 'scopus_terms' not in st.session_state:
+        st.session_state.scopus_terms = [{"field": "TITLE", "value": "", "operator": "AND"}]
     
-    # Funciones para manipular grupos de términos
-    def add_term_group():
-        """Añade un nuevo grupo de términos"""
-        new_id = max([g['id'] for g in st.session_state.scopus_term_groups]) + 1
-        st.session_state.scopus_term_groups.append({
-            'id': new_id,
-            'field': 'TITLE',
-            'terms': [],
-            'operator': 'AND'
-        })
+    # Mostrar guía de campos de Scopus
+    with st.expander("📖 Guía de Campos de Scopus", expanded=False):
+        st.markdown("""
+        ### Campos Principales de Búsqueda:
+        - **TITLE**: Título del documento
+        - **ABS**: Abstract/Resumen
+        - **KEY**: Palabras clave del autor
+        - **TITLE-ABS-KEY**: Título, resumen y palabras clave combinados
+        - **AUTH**: Autor
+        - **AFFIL**: Afiliación
+        - **PUBYEAR**: Año de publicación
+        - **DOCTYPE**: Tipo de documento (ar=artículo, re=review, cp=conference paper)
+        - **SUBJAREA**: Área temática
+        - **LANGUAGE**: Idioma
+        
+        ### Operadores:
+        - **AND**: Ambos términos deben estar presentes
+        - **OR**: Cualquiera de los términos debe estar presente
+        - **AND NOT**: Excluir términos
+        
+        ### Ejemplos:
+        - `TITLE("machine learning") AND KEY("agriculture")`
+        - `TITLE-ABS-KEY("blockchain") AND PUBYEAR > 2020`
+        - `AUTH("Smith") AND AFFIL("MIT")`
+        """)
     
-    def remove_term_group(group_id):
-        """Elimina un grupo de términos"""
-        st.session_state.scopus_term_groups = [
-            g for g in st.session_state.scopus_term_groups 
-            if g['id'] != group_id
-        ]
+    # Constructor de términos
+    st.write("### 🔍 Construir Ecuación")
     
-    def add_term(group_id, term):
-        """Añade un término a un grupo específico"""
-        if not term:
-            return
+    terms_to_remove = []
+    
+    for i, term in enumerate(st.session_state.scopus_terms):
+        col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 1, 1])
+        
+        with col1:
+            # Selector de campo
+            field_options = [
+                "TITLE", "ABS", "KEY", "TITLE-ABS-KEY", "AUTH", "AFFIL", 
+                "PUBYEAR", "DOCTYPE", "SUBJAREA", "LANGUAGE", "ALL"
+            ]
             
-        for group in st.session_state.scopus_term_groups:
-            if group['id'] == group_id:
-                if term not in group['terms']:
-                    group['terms'].append(term)
-                break
-    
-    def remove_term(group_id, term):
-        """Elimina un término de un grupo específico"""
-        for group in st.session_state.scopus_term_groups:
-            if group['id'] == group_id:
-                group['terms'] = [t for t in group['terms'] if t != term]
-                break
-    
-    def update_field(group_id, field):
-        """Actualiza el campo de un grupo"""
-        for group in st.session_state.scopus_term_groups:
-            if group['id'] == group_id:
-                group['field'] = field
-                break
-    
-    def update_operator(group_id, operator):
-        """Actualiza el operador de un grupo"""
-        for group in st.session_state.scopus_term_groups:
-            if group['id'] == group_id:
-                group['operator'] = operator
-                break
-    
-    # Mostrar interfaz para cada grupo de términos
-    for group in st.session_state.scopus_term_groups:
-        with st.expander(f"Grupo {group['id']+1}: {group['field']}", expanded=True):
-            # Selección de campo
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                field = st.selectbox(
-                    "Campo de búsqueda",
-                    options=["TITLE", "TITLE-ABS-KEY", "AUTHOR", "AFFIL", "SRCTITLE"],
-                    index=["TITLE", "TITLE-ABS-KEY", "AUTHOR", "AFFIL", "SRCTITLE"].index(group['field']),
-                    key=f"field_{group['id']}",
-                    help="Campo en el que se buscarán los términos"
-                )
-                update_field(group['id'], field)
-            
-            with col2:
-                operator = st.selectbox(
-                    "Operador",
-                    options=["AND", "OR", "AND NOT"],
-                    index=["AND", "OR", "AND NOT"].index(group['operator']),
-                    key=f"operator_{group['id']}",
-                    help="Operador para vincular con el siguiente grupo"
-                )
-                update_operator(group['id'], operator)
-            
-            # Mostrar términos actuales
-            if group['terms']:
-                st.write("**Términos añadidos:**")
-                term_cols = st.columns(3)
-                for i, term in enumerate(group['terms']):
-                    col_idx = i % 3
-                    with term_cols[col_idx]:
-                        st.write(f"{i+1}. {term}")
-                        if st.button("🗑️", key=f"remove_term_{group['id']}_{i}"):
-                            remove_term(group['id'], term)
-            
-            # Entrada para nuevos términos
-            new_term = st.text_input(
-                "Añadir término",
-                key=f"new_term_{group['id']}",
-                placeholder="Ej: artificial intelligence"
+            field = st.selectbox(
+                f"Campo {i+1}",
+                options=field_options,
+                index=field_options.index(term["field"]) if term["field"] in field_options else 0,
+                key=f"scopus_field_{i}"
             )
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.button("➕ Añadir", key=f"add_term_{group['id']}"):
-                    add_term(group['id'], new_term)
-                    # Limpiar el campo
-                    st.session_state[f"new_term_{group['id']}"] = ""
-            
-            with col2:
-                if st.button("📋 Ejemplos comunes", key=f"examples_{group['id']}"):
-                    examples = {
-                        "TITLE": ["enzyme", "glucose oxidase", "flour", "starch", "noodles", "pasta"],
-                        "TITLE-ABS-KEY": ["gelatinization", "pulp", "antioxidant", "phenolic"]
-                    }
-                    field_examples = examples.get(group['field'], ["No hay ejemplos para este campo"])
-                    
-                    example_cols = st.columns(3)
-                    for i, example in enumerate(field_examples):
-                        col_idx = i % 3
-                        with example_cols[col_idx]:
-                            if st.button(example, key=f"example_{group['id']}_{i}"):
-                                add_term(group['id'], example)
+            term["field"] = field
         
-        # Botón para eliminar grupo
-        col1, col2 = st.columns([3, 1])
         with col2:
-            if len(st.session_state.scopus_term_groups) > 1:
-                if st.button("🗑️ Eliminar grupo", key=f"remove_group_{group['id']}"):
-                    remove_term_group(group['id'])
-    
-    # Botón para añadir nuevo grupo
-    if st.button("➕ Añadir grupo de términos", key="add_group"):
-        add_term_group()
-    
-    # Costruir y mostrar la ecuación completa
-    equation = build_scopus_advanced_equation(st.session_state.scopus_term_groups)
-    
-    st.write("### 📝 Ecuación de búsqueda para Scopus")
-    st.code(equation)
-    
-    # Sugerencias basadas en patrones comunes
-    with st.expander("📚 Ejemplos de Ecuaciones Comunes"):
-        examples = [
-            'TITLE("Plantain" OR "banana" OR "musa") AND TITLE("flour" OR "starch") AND TITLE("enzyme" OR "glucose oxidase")',
-            'TITLE("Plantain" OR "banana" OR "musa") AND TITLE("noodles" OR "pasta")',
-            'TITLE("Plantain" OR "banana" OR "musa") AND TITLE("flour" OR "starch") AND TITLE-ABS-KEY(glucose AND oxidase)',
-            'TITLE("noodles" OR "pasta" OR "raviolis") AND TITLE("egg" OR "gum") AND TITLE("free" AND "gluten")',
-            'TITLE(plantain OR musa) AND TITLE-ABS-KEY(gelatinization AND pulp)'
-        ]
+            # Valor del término
+            value = st.text_input(
+                f"Valor {i+1}",
+                value=term["value"],
+                key=f"scopus_value_{i}",
+                placeholder="Ej: machine learning, 2020, Smith"
+            )
+            term["value"] = value
         
-        for i, example in enumerate(examples):
-            st.markdown(f"**Ejemplo {i+1}**: `{example}`")
-            if st.button(f"Usar este ejemplo", key=f"use_example_{i}"):
-                # Parsear el ejemplo y configurar la interfaz
-                parse_and_set_equation(example)
+        with col3:
+            # Operador (solo si no es el último término)
+            if i < len(st.session_state.scopus_terms) - 1:
+                operator = st.selectbox(
+                    f"Operador {i+1}",
+                    options=["AND", "OR", "AND NOT"],
+                    index=["AND", "OR", "AND NOT"].index(term["operator"]) if term["operator"] in ["AND", "OR", "AND NOT"] else 0,
+                    key=f"scopus_operator_{i}"
+                )
+                term["operator"] = operator
+            else:
+                st.write("—")
+        
+        with col4:
+            # Checkbox para comillas exactas
+            exact_match = st.checkbox(
+                "\"Exacto\"",
+                value=term.get("exact_match", False),
+                key=f"scopus_exact_{i}"
+            )
+            term["exact_match"] = exact_match
+        
+        with col5:
+            # Botón para eliminar término
+            if len(st.session_state.scopus_terms) > 1:
+                if st.button("❌", key=f"scopus_remove_{i}"):
+                    terms_to_remove.append(i)
     
-    return equation
+    # Eliminar términos marcados
+    if terms_to_remove:
+        for idx in sorted(terms_to_remove, reverse=True):
+            del st.session_state.scopus_terms[idx]
+        st.rerun()
+    
+    # Botones de control
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        if st.button("➕ Añadir Término"):
+            st.session_state.scopus_terms.append({
+                "field": "TITLE",
+                "value": "",
+                "operator": "AND",
+                "exact_match": False
+            })
+            st.rerun()
+    
+    with col2:
+        if st.button("🗑️ Limpiar Todo"):
+            st.session_state.scopus_terms = [{"field": "TITLE", "value": "", "operator": "AND"}]
+            st.rerun()
+    
+    # Construir y mostrar ecuación
+    equation = build_scopus_equation(st.session_state.scopus_terms)
+    
+    if equation:
+        st.write("### 📝 Ecuación Generada:")
+        st.code(equation, language="text")
+        
+        # Validar ecuación
+        is_valid, validation_message = validate_scopus_equation(equation)
+        
+        if is_valid:
+            st.success(f"✅ {validation_message}")
+        else:
+            st.error(f"❌ {validation_message}")
+        
+        # Botón para usar ecuación predefinida
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📋 Copiar Ecuación"):
+                st.code(equation)
+                st.success("Ecuación lista para copiar")
+        
+        with col2:
+            if st.button("🔄 Cargar Ejemplos"):
+                _load_example_equations()
+        
+        return equation
+    else:
+        st.info("Añade al menos un término con valor para generar la ecuación")
+        return ""
 
-def parse_and_set_equation(equation):
+def build_scopus_equation(terms: List[Dict]) -> str:
     """
-    Parsea una ecuación Scopus y configura la interfaz para reflejarla.
+    Construye la ecuación de Scopus basada en los términos
     
     Args:
-        equation: String con la ecuación Scopus a parsear
-    """
-    # Reset the current groups
-    st.session_state.scopus_term_groups = []
-    
-    # Define regex pattern to extract FIELD(terms) AND/OR FIELD(terms)
-    pattern = r'(TITLE|TITLE-ABS-KEY|AUTHOR|AFFIL|SRCTITLE)\(([^)]+)\)(?:\s+(AND|OR|AND NOT))?'
-    
-    matches = re.finditer(pattern, equation)
-    
-    group_id = 0
-    for match in matches:
-        field = match.group(1)
-        terms_str = match.group(2)
-        operator = match.group(3) if match.group(3) else "AND"
-        
-        # Extract individual terms, respecting quoted terms
-        terms = []
-        in_quotes = False
-        current_term = ""
-        
-        i = 0
-        while i < len(terms_str):
-            char = terms_str[i]
-            
-            if char == '"':
-                in_quotes = not in_quotes
-                current_term += char
-            elif char == ' ' and not in_quotes:
-                if current_term.strip():
-                    if current_term.lower().strip() not in ('and', 'or'):
-                        terms.append(current_term.strip())
-                current_term = ""
-            elif (char == 'O' and i+1 < len(terms_str) and terms_str[i+1] == 'R' and 
-                  (i+2 == len(terms_str) or terms_str[i+2].isspace()) and not in_quotes):
-                # Skip "OR" operator
-                i += 1  # Skip 'R'
-                current_term = ""
-            elif (char == 'A' and i+2 < len(terms_str) and terms_str[i+1] == 'N' and 
-                  terms_str[i+2] == 'D' and (i+3 == len(terms_str) or terms_str[i+3].isspace()) and 
-                  not in_quotes):
-                # Skip "AND" operator
-                i += 2  # Skip 'ND'
-                current_term = ""
-            else:
-                current_term += char
-            
-            i += 1
-        
-        # Add the last term if any
-        if current_term.strip():
-            terms.append(current_term.strip())
-        
-        # Clean up terms - remove quotes
-        cleaned_terms = []
-        for term in terms:
-            if term.startswith('"') and term.endswith('"'):
-                cleaned_terms.append(term[1:-1])
-            else:
-                cleaned_terms.append(term)
-        
-        # Add the group
-        st.session_state.scopus_term_groups.append({
-            'id': group_id,
-            'field': field,
-            'terms': cleaned_terms,
-            'operator': operator
-        })
-        
-        group_id += 1
-    
-    # Ensure at least one group exists
-    if not st.session_state.scopus_term_groups:
-        st.session_state.scopus_term_groups = [{
-            'id': 0,
-            'field': 'TITLE',
-            'terms': [],
-            'operator': 'AND'
-        }]
-
-def parse_scopus_query(query):
-    """
-    Parsea una consulta de Scopus y la convierte a un formato estructurado.
-    
-    Args:
-        query: String con la consulta Scopus
+        terms: Lista de términos con campo, valor y operador
         
     Returns:
-        Lista de diccionarios con los grupos de términos
+        str: Ecuación formateada para Scopus
     """
-    term_groups = []
+    equation_parts = []
     
-    # Define regex pattern to extract FIELD(terms) AND/OR FIELD(terms)
-    pattern = r'(TITLE|TITLE-ABS-KEY|AUTHOR|AFFIL|SRCTITLE)\(([^)]+)\)(?:\s+(AND|OR|AND NOT))?'
-    
-    matches = re.finditer(pattern, query)
-    
-    for match in matches:
-        field = match.group(1)
-        terms_str = match.group(2)
-        operator = match.group(3) if match.group(3) else "AND"
+    for i, term in enumerate(terms):
+        if not term["value"].strip():
+            continue
         
-        # Extract individual terms
-        terms = []
-        in_quotes = False
-        current_term = ""
+        field = term["field"]
+        value = term["value"].strip()
         
-        i = 0
-        while i < len(terms_str):
-            char = terms_str[i]
+        # Aplicar comillas si es necesario
+        if term.get("exact_match", False) and not (value.startswith('"') and value.endswith('"')):
+            value = f'"{value}"'
+        
+        # Construir el término con su campo
+        if field == "ALL":
+            term_part = value
+        else:
+            term_part = f'{field}({value})'
+        
+        equation_parts.append(term_part)
+        
+        # Añadir operador si no es el último término
+        if i < len(terms) - 1 and i < len([t for t in terms if t["value"].strip()]) - 1:
+            equation_parts.append(term["operator"])
+    
+    return " ".join(equation_parts)
+
+def validate_scopus_equation(equation: str) -> Tuple[bool, str]:
+    """
+    Valida una ecuación de Scopus
+    
+    Args:
+        equation: Ecuación a validar
+        
+    Returns:
+        Tuple[bool, str]: (es_válida, mensaje)
+    """
+    if not equation.strip():
+        return False, "La ecuación está vacía"
+    
+    # Verificar paréntesis balanceados
+    if equation.count("(") != equation.count(")"):
+        return False, "Paréntesis no están balanceados"
+    
+    # Verificar comillas balanceadas
+    if equation.count('"') % 2 != 0:
+        return False, "Comillas no están balanceadas"
+    
+    # Verificar que no termine con operador
+    if equation.strip().endswith(("AND", "OR", "AND NOT")):
+        return False, "La ecuación no puede terminar con un operador"
+    
+    # Verificar campos válidos
+    valid_fields = [
+        "TITLE", "ABS", "KEY", "TITLE-ABS-KEY", "AUTH", "AUTHFIRST", "AUTHLAST",
+        "AFFIL", "PUBYEAR", "DOCTYPE", "SUBJAREA", "LANGUAGE", "PMID", "DOI",
+        "ISSN", "ISBN", "VOLUME", "ISSUE", "PAGES", "ARTNUM", "SRCTYPE",
+        "CONF", "REFTEXT", "CHEM", "CAS", "FUND", "OPENACCESS"
+    ]
+    
+    # Extraer campos usados en la ecuación
+    field_pattern = r'([A-Z-]+)\('
+    used_fields = re.findall(field_pattern, equation)
+    
+    invalid_fields = [field for field in used_fields if field not in valid_fields]
+    if invalid_fields:
+        return False, f"Campos inválidos encontrados: {', '.join(invalid_fields)}"
+    
+    # Verificar sintaxis básica
+    if " AND AND " in equation or " OR OR " in equation:
+        return False, "Operadores duplicados encontrados"
+    
+    return True, "Ecuación válida"
+
+def parse_scopus_query(equation: str) -> List[Dict]:
+    """
+    Parsea una ecuación de Scopus existente en términos individuales
+    
+    Args:
+        equation: Ecuación de Scopus
+        
+    Returns:
+        List[Dict]: Lista de términos parseados
+    """
+    terms = []
+    
+    try:
+        # Dividir por operadores principales
+        parts = re.split(r'\s+(AND|OR|AND NOT)\s+', equation)
+        
+        for i in range(0, len(parts), 2):  # Saltar operadores
+            part = parts[i].strip()
             
-            if char == '"':
-                in_quotes = not in_quotes
-                current_term += char
-            elif char == ' ' and not in_quotes:
-                if current_term.lower().strip() not in ('', 'and', 'or'):
-                    terms.append(current_term.strip())
-                current_term = ""
-            elif (char == 'O' and i+1 < len(terms_str) and terms_str[i+1] == 'R' and 
-                  (i+2 == len(terms_str) or terms_str[i+2].isspace()) and not in_quotes):
-                # Skip "OR" operator
-                i += 1  # Skip 'R'
-                current_term = ""
-            elif (char == 'A' and i+2 < len(terms_str) and terms_str[i+1] == 'N' and 
-                  terms_str[i+2] == 'D' and (i+3 == len(terms_str) or terms_str[i+3].isspace()) and 
-                  not in_quotes):
-                # Skip "AND" operator
-                i += 2  # Skip 'ND'
-                current_term = ""
+            # Extraer campo y valor
+            if "(" in part and ")" in part:
+                field_match = re.match(r'([A-Z-]+)\((.*)\)', part)
+                if field_match:
+                    field = field_match.group(1)
+                    value = field_match.group(2)
+                    
+                    # Quitar comillas si existen
+                    exact_match = value.startswith('"') and value.endswith('"')
+                    if exact_match:
+                        value = value[1:-1]
+                    
+                    # Determinar operador (si existe)
+                    operator = "AND"
+                    if i + 1 < len(parts):
+                        operator = parts[i + 1]
+                    
+                    terms.append({
+                        "field": field,
+                        "value": value,
+                        "operator": operator,
+                        "exact_match": exact_match
+                    })
+                else:
+                    # Si no se puede parsear, tratarlo como término general
+                    terms.append({
+                        "field": "ALL",
+                        "value": part,
+                        "operator": "AND" if i + 1 < len(parts) else "",
+                        "exact_match": False
+                    })
             else:
-                current_term += char
-            
-            i += 1
-        
-        # Add the last term if any
-        if current_term.lower().strip() not in ('', 'and', 'or'):
-            terms.append(current_term.strip())
-        
-        # Clean up terms - remove surrounding quotes but keep internal structure
-        clean_terms = []
-        for term in terms:
-            if term.startswith('"') and term.endswith('"'):
-                clean_terms.append(term[1:-1])
-            else:
-                clean_terms.append(term)
-                
-        if clean_terms:
-            term_groups.append({
-                'field': field,
-                'terms': clean_terms,
-                'operator': operator
-            })
+                # Término sin campo específico
+                terms.append({
+                    "field": "ALL",
+                    "value": part,
+                    "operator": "AND" if i + 1 < len(parts) else "",
+                    "exact_match": False
+                })
     
-    return term_groups
+    except Exception as e:
+        st.warning(f"Error parseando ecuación: {str(e)}")
+        # Retornar término básico si falla el parsing
+        terms = [{
+            "field": "TITLE-ABS-KEY",
+            "value": equation,
+            "operator": "AND",
+            "exact_match": False
+        }]
+    
+    return terms
+
+def _load_example_equations():
+    """Carga ecuaciones de ejemplo en el constructor"""
+    examples = {
+        "Inteligencia Artificial en Agricultura": [
+            {"field": "TITLE-ABS-KEY", "value": "artificial intelligence", "operator": "AND", "exact_match": True},
+            {"field": "TITLE-ABS-KEY", "value": "agriculture", "operator": "OR", "exact_match": False},
+            {"field": "TITLE-ABS-KEY", "value": "farming", "operator": "AND", "exact_match": False},
+            {"field": "PUBYEAR", "value": "> 2020", "operator": "AND", "exact_match": False}
+        ],
+        "Blockchain en Finanzas": [
+            {"field": "TITLE", "value": "blockchain", "operator": "AND", "exact_match": False},
+            {"field": "TITLE-ABS-KEY", "value": "finance", "operator": "OR", "exact_match": False},
+            {"field": "TITLE-ABS-KEY", "value": "financial", "operator": "AND NOT", "exact_match": False},
+            {"field": "DOCTYPE", "value": "ar", "operator": "", "exact_match": False}
+        ],
+        "Machine Learning en Medicina": [
+            {"field": "TITLE-ABS-KEY", "value": "machine learning", "operator": "AND", "exact_match": True},
+            {"field": "TITLE-ABS-KEY", "value": "medical", "operator": "OR", "exact_match": False},
+            {"field": "TITLE-ABS-KEY", "value": "healthcare", "operator": "", "exact_match": False}
+        ]
+    }
+    
+    st.write("### 📋 Ejemplos de Ecuaciones")
+    
+    selected_example = st.selectbox(
+        "Selecciona un ejemplo:",
+        options=list(examples.keys())
+    )
+    
+    if st.button("Cargar Ejemplo Seleccionado"):
+        st.session_state.scopus_terms = examples[selected_example]
+        st.success(f"✅ Ejemplo '{selected_example}' cargado")
+        st.rerun()
+    
+    # Mostrar preview del ejemplo seleccionado
+    example_equation = build_scopus_equation(examples[selected_example])
+    st.code(example_equation, language="text")
+
+def export_scopus_equation(equation: str, terms: List[Dict]) -> Dict:
+    """
+    Exporta la ecuación y términos en formato reutilizable
+    
+    Args:
+        equation: Ecuación construida
+        terms: Términos utilizados
+        
+    Returns:
+        Dict: Datos exportables
+    """
+    export_data = {
+        "equation": equation,
+        "terms": terms,
+        "created_at": pd.Timestamp.now().isoformat(),
+        "version": "1.0",
+        "description": "Ecuación de Scopus generada por Tech Trends Explorer"
+    }
+    
+    return export_data
+
+def import_scopus_equation(import_data: Dict) -> bool:
+    """
+    Importa una ecuación previamente exportada
+    
+    Args:
+        import_data: Datos de ecuación exportada
+        
+    Returns:
+        bool: Éxito de la importación
+    """
+    try:
+        if "terms" in import_data:
+            st.session_state.scopus_terms = import_data["terms"]
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error importando ecuación: {str(e)}")
+        return False
+
+def get_scopus_field_suggestions(field_type: str) -> List[str]:
+    """
+    Proporciona sugerencias para diferentes tipos de campos
+    
+    Args:
+        field_type: Tipo de campo de Scopus
+        
+    Returns:
+        List[str]: Lista de sugerencias
+    """
+    suggestions = {
+        "TITLE": [
+            "artificial intelligence", "machine learning", "blockchain", 
+            "quantum computing", "internet of things", "big data"
+        ],
+        "DOCTYPE": [
+            "ar (article)", "re (review)", "cp (conference paper)", 
+            "ch (book chapter)", "bk (book)", "le (letter)"
+        ],
+        "SUBJAREA": [
+            "COMP (Computer Science)", "ENGI (Engineering)", "MEDI (Medicine)",
+            "PHYS (Physics)", "CHEM (Chemistry)", "MATH (Mathematics)"
+        ],
+        "LANGUAGE": [
+            "english", "spanish", "french", "german", "chinese", "japanese"
+        ],
+        "PUBYEAR": [
+            "> 2020", "= 2023", "< 2022", "> 2015 AND < 2025"
+        ]
+    }
+    
+    return suggestions.get(field_type, [])
+
+# Funciones adicionales para análisis avanzado
+def optimize_scopus_query(equation: str) -> Tuple[str, List[str]]:
+    """
+    Optimiza una ecuación de Scopus para mejor rendimiento
+    
+    Args:
+        equation: Ecuación original
+        
+    Returns:
+        Tuple[str, List[str]]: (ecuación_optimizada, sugerencias)
+    """
+    optimized = equation
+    suggestions = []
+    
+    # Optimización 1: Usar TITLE-ABS-KEY en lugar de campos separados
+    if "TITLE(" in equation and "ABS(" in equation and "KEY(" in equation:
+        suggestions.append("Considera usar TITLE-ABS-KEY para combinar título, resumen y palabras clave")
+    
+    # Optimización 2: Añadir filtros de tipo de documento
+    if "DOCTYPE" not in equation:
+        suggestions.append("Considera añadir DOCTYPE(ar) para limitar a artículos de investigación")
+    
+    # Optimización 3: Añadir filtros temporales
+    if "PUBYEAR" not in equation:
+        suggestions.append("Considera añadir filtros de año para resultados más relevantes")
+    
+    # Optimización 4: Simplificar operadores complejos
+    if " AND NOT " in equation:
+        suggestions.append("Los operadores AND NOT pueden ser costosos, considera reformular")
+    
+    return optimized, suggestions
