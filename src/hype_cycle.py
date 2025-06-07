@@ -1,4 +1,4 @@
-# src/hype_cycle.py
+# src/hype_cycle.py - ACTUALIZADO con sistema de almacenamiento
 import streamlit as st
 import pandas as pd
 import time
@@ -6,26 +6,157 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 from datetime import datetime
-from analysis import NewsAnalyzer, QueryBuilder  # Añadida la importación de QueryBuilder
+from analysis import NewsAnalyzer, QueryBuilder
 from config import CONFIG
+
+# Importar el nuevo sistema de almacenamiento
+from hype_cycle_storage import (
+    HypeCycleStorage, 
+    HypeCycleHistoryInterface, 
+    initialize_hype_cycle_storage,
+    create_hype_cycle_interface
+)
+from data_storage import initialize_database
 
 def run_hype_cycle_analysis():
     """
     Ejecuta el análisis del Hype Cycle utilizando la API de SerpAPI
+    Con sistema de almacenamiento automático en DynamoDB
     """
     st.markdown('<p class="tab-subheader">📈 Análisis del Hype Cycle</p>', unsafe_allow_html=True)
     
+    # Pestañas para análisis y historial
+    tab_analysis, tab_history = st.tabs(["🔍 Nuevo Análisis", "📚 Historial"])
+    
+    with tab_analysis:
+        _show_analysis_interface()
+    
+    with tab_history:
+        _show_history_interface()
+
+def _show_analysis_interface():
+    """Interfaz para realizar nuevos análisis"""
     st.write("""
     Esta herramienta te permite analizar tecnologías usando el modelo del Hype Cycle de Gartner.
     El análisis del Hype Cycle ayuda a entender en qué fase de expectativas y adopción se 
     encuentra una tecnología.
     """)
     
+    # Inicializar sistema de almacenamiento
+    storage_mode = st.session_state.get('hype_storage_mode', 'local')
+    try:
+        if storage_mode == 'local':
+            db = initialize_database("local")
+        else:
+            # Usar DynamoDB si está configurado
+            aws_configured = (
+                st.session_state.get('aws_access_key_id') and 
+                st.session_state.get('aws_secret_access_key') and 
+                st.session_state.get('aws_region')
+            )
+            
+            if aws_configured:
+                db = initialize_database(
+                    "dynamodb",
+                    region_name=st.session_state.aws_region,
+                    aws_access_key_id=st.session_state.aws_access_key_id,
+                    aws_secret_access_key=st.session_state.aws_secret_access_key
+                )
+            else:
+                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
+                db = initialize_database("local")
+        
+        hype_storage = initialize_hype_cycle_storage(db.storage) if db else None
+    except Exception as e:
+        st.error(f"Error inicializando almacenamiento: {str(e)}")
+        hype_storage = None
+    
+    # Verificar si hay una consulta para reutilizar
+    reuse_query = st.session_state.get('hype_reuse_query')
+    if reuse_query:
+        st.info("🔄 **Consulta cargada desde historial**")
+        st.code(reuse_query['search_query'])
+        if st.button("Limpiar consulta cargada", key="hype_clear_reused_query_btn"):
+            del st.session_state.hype_reuse_query
+            st.rerun()
+    
+    # Configuración de categoría para guardar
+    st.write("### 📂 Configuración de Almacenamiento")
+    with st.expander("⚙️ Opciones de guardado", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Modo de almacenamiento
+            storage_options = ["local", "dynamodb"]
+            current_mode = st.selectbox(
+                "Modo de almacenamiento",
+                options=storage_options,
+                index=storage_options.index(storage_mode),
+                help="Selecciona dónde guardar los resultados del análisis"
+            )
+            st.session_state.hype_storage_mode = current_mode
+            
+            # Auto-guardar
+            auto_save = st.checkbox(
+                "Guardar automáticamente", 
+                value=True,
+                help="Guarda automáticamente cada análisis realizado"
+            )
+        
+        with col2:
+            # Selector de categoría
+            if hype_storage:
+                try:
+                    categories = hype_storage.storage.get_all_categories()
+                    category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
+                    
+                    selected_category_name = st.selectbox(
+                        "Categoría para guardar",
+                        options=list(category_options.keys()),
+                        help="Selecciona la categoría donde guardar este análisis"
+                    )
+                    
+                    selected_category_id = category_options[selected_category_name]
+                    
+                    # Opción para crear nueva categoría
+                    if st.checkbox("Crear nueva categoría"):
+                        new_cat_name = st.text_input("Nombre de la nueva categoría")
+                        new_cat_desc = st.text_area("Descripción (opcional)", height=60)
+                        
+                        if st.button("Crear Categoría") and new_cat_name:
+                            try:
+                                new_cat_id = hype_storage.storage.add_category(new_cat_name, new_cat_desc)
+                                if new_cat_id:
+                                    st.success(f"✅ Categoría '{new_cat_name}' creada")
+                                    selected_category_id = new_cat_id
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Error creando categoría: {str(e)}")
+                
+                except Exception as e:
+                    st.warning(f"Error cargando categorías: {str(e)}")
+                    selected_category_id = "default"
+            else:
+                selected_category_id = "default"
+                st.info("Sistema de almacenamiento no disponible")
+    
     # Configuración de búsqueda
     st.write("### 🎯 Define los términos para el análisis")
     
-    # Reutilizamos la gestión de topics del main original 
-    topics = manage_topics("hype")  # Pasamos un prefijo único para este módulo
+    # Si hay consulta reutilizada, cargar los términos
+    if reuse_query and reuse_query.get('search_terms'):
+        # Pre-cargar términos de la consulta reutilizada
+        topics = reuse_query['search_terms']
+        st.write("**Términos cargados desde historial:**")
+        for i, term in enumerate(topics):
+            st.write(f"{i+1}. {term.get('value', '')} ({term.get('operator', 'AND')})")
+        
+        if st.button("Modificar términos", key="hype_modify_terms_btn"):
+            # Permite editar los términos
+            topics = manage_topics("hype", preset_topics=topics)
+    else:
+        # Gestión normal de topics
+        topics = manage_topics("hype")
     
     # Configuración adicional del Hype Cycle
     with st.expander("⚙️ Opciones avanzadas", expanded=False):
@@ -35,19 +166,42 @@ def run_hype_cycle_analysis():
                 "Año mínimo",
                 min_value=2010,
                 max_value=2025,
-                value=2015,
+                value=reuse_query.get('search_parameters', {}).get('min_year', 2015) if reuse_query else 2015,
                 help="Año desde el cual buscar resultados"
             )
         with col2:
             sources_filter = st.multiselect(
                 "Filtrar fuentes",
                 options=["Tech News", "Business News", "Academic Sources", "Blogs"],
-                default=["Tech News", "Business News"],
+                default=reuse_query.get('search_parameters', {}).get('sources_filter', ["Tech News", "Business News"]) if reuse_query else ["Tech News", "Business News"],
                 help="Tipos de fuentes a incluir en el análisis"
             )
+        
+        # Configuración adicional para almacenamiento
+        col3, col4 = st.columns(2)
+        with col3:
+            max_results = st.number_input(
+                "Máximo resultados API",
+                min_value=50,
+                max_value=1000,
+                value=200,
+                help="Número máximo de resultados a obtener de la API"
+            )
+        with col4:
+            analysis_notes = st.text_input(
+                "Notas del análisis",
+                placeholder="Ej: Análisis para Q1 2025, investigación de mercado...",
+                help="Notas que se guardarán con el análisis"
+            )
+    
+    # Mostrar información de consulta actual
+    if topics:
+        current_query = build_search_equation(topics)
+        st.write("### 📝 Consulta actual")
+        st.code(current_query)
     
     # Botón de análisis
-    if st.button("📊 Analizar Hype Cycle", type="primary"):
+    if st.button("📊 Analizar Hype Cycle", type="primary", key="hype_analyze_main_btn"):
         if not topics:
             st.error("Por favor, ingresa al menos un tema para analizar")
             return
@@ -56,7 +210,18 @@ def run_hype_cycle_analysis():
             st.error("Se requiere una API key de SerpAPI. Por favor, configúrala en el panel lateral.")
             return
             
+        # Almacenar parámetros de búsqueda
+        search_parameters = {
+            "min_year": min_year,
+            "sources_filter": sources_filter,
+            "max_results": max_results,
+            "auto_save": auto_save,
+            "category_id": selected_category_id
+        }
+        
         with st.spinner("🔄 Analizando el Hype Cycle..."):
+            start_time = time.time()
+            
             # Inicializar analizador
             news_analyzer = NewsAnalyzer()
             
@@ -88,8 +253,10 @@ def run_hype_cycle_analysis():
                 hype_data = news_analyzer.analyze_hype_cycle(serp_results)
                 
                 if hype_data:
-                    # Mostrar fase actual
-                    st.success(f"**Fase Actual:** {hype_data['phase']}")
+                    processing_time = time.time() - start_time
+                    
+                    # Mostrar resultados
+                    st.success(f"**Fase Actual:** {hype_data['phase']} (Confianza: {hype_data['confidence']:.2f})")
                     
                     # Descripción de la fase
                     phase_descriptions = {
@@ -125,11 +292,12 @@ def run_hype_cycle_analysis():
                         """
                     }
                     
-                    st.info(phase_descriptions[hype_data['phase']])
+                    st.info(phase_descriptions.get(hype_data['phase'], "Descripción no disponible"))
                     
                     # Mostrar gráfico del Hype Cycle
                     fig = news_analyzer.plot_hype_cycle(hype_data, topics)
-                    st.plotly_chart(fig, use_container_width=True)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
 
                     # Análisis de puntos de inflexión
                     st.write("### 📊 Análisis de Puntos de Inflexión")
@@ -138,9 +306,58 @@ def run_hype_cycle_analysis():
                         hype_data['yearly_stats'], 
                         inflection_points
                     )
-                    st.plotly_chart(inflection_fig, use_container_width=True)
+                    if inflection_fig:
+                        st.plotly_chart(inflection_fig, use_container_width=True)
                     
-                    # Mostrar resultados detallados
+                    # Guardar automáticamente si está habilitado
+                    if auto_save and hype_storage:
+                        with st.spinner("💾 Guardando análisis..."):
+                            try:
+                                query_id = hype_storage.save_hype_cycle_query(
+                                    search_query=google_query,
+                                    search_terms=processed_topics,
+                                    hype_analysis_results=hype_data,
+                                    news_results=serp_results,
+                                    category_id=selected_category_id,
+                                    search_parameters=search_parameters,
+                                    notes=analysis_notes
+                                )
+                                
+                                if query_id:
+                                    st.success(f"✅ Análisis guardado automáticamente con ID: {query_id}")
+                                    
+                                    # Opción para ver en historial
+                                    if st.button("📚 Ver en Historial", key="hype_view_in_history_btn"):
+                                        st.session_state.hype_show_query_id = query_id
+                                        st.rerun()
+                                        
+                            except Exception as e:
+                                st.error(f"❌ Error guardando análisis: {str(e)}")
+                    
+                    # Opción manual de guardado si auto-save está deshabilitado
+                    elif hype_storage and not auto_save:
+                        st.write("### 💾 Guardar Análisis")
+                        
+                        if st.button("Guardar este análisis", type="secondary", key="hype_manual_save_btn"):
+                            with st.spinner("💾 Guardando análisis..."):
+                                try:
+                                    query_id = hype_storage.save_hype_cycle_query(
+                                        search_query=google_query,
+                                        search_terms=processed_topics,
+                                        hype_analysis_results=hype_data,
+                                        news_results=serp_results,
+                                        category_id=selected_category_id,
+                                        search_parameters=search_parameters,
+                                        notes=analysis_notes
+                                    )
+                                    
+                                    if query_id:
+                                        st.success(f"✅ Análisis guardado con ID: {query_id}")
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ Error guardando análisis: {str(e)}")
+                    
+                    # Mostrar análisis detallado
                     news_analyzer.display_advanced_analysis(serp_results, query_info, st)
                     news_analyzer.display_results(serp_results, st)
                       
@@ -163,20 +380,73 @@ def run_hype_cycle_analysis():
         
         Para comenzar, ingresa los términos de búsqueda en el formulario superior y haz clic en "Analizar Hype Cycle".
         """)
+
+def _show_history_interface():
+    """Interfaz para mostrar el historial de consultas"""
+    try:
+        # Inicializar sistema de almacenamiento
+        storage_mode = st.session_state.get('hype_storage_mode', 'local')
         
-        # Mostrar imagen del modelo de Gartner
-        st.image("https://www.gartner.com/imagesrv/newsroom/images/hype-cycle-pr.png", 
-                caption="Modelo del Hype Cycle de Gartner", width=600)
+        if storage_mode == 'local':
+            db = initialize_database("local")
+        else:
+            aws_configured = (
+                st.session_state.get('aws_access_key_id') and 
+                st.session_state.get('aws_secret_access_key') and 
+                st.session_state.get('aws_region')
+            )
+            
+            if aws_configured:
+                db = initialize_database(
+                    "dynamodb",
+                    region_name=st.session_state.aws_region,
+                    aws_access_key_id=st.session_state.aws_access_key_id,
+                    aws_secret_access_key=st.session_state.aws_secret_access_key
+                )
+            else:
+                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
+                db = initialize_database("local")
+        
+        if db:
+            hype_storage = initialize_hype_cycle_storage(db.storage)
+            history_interface = create_hype_cycle_interface(hype_storage)
+            
+            # Mostrar consulta específica si se solicita
+            show_query_id = st.session_state.get('hype_show_query_id')
+            if show_query_id:
+                st.info(f"Mostrando detalles de la consulta: {show_query_id}")
+                query = hype_storage.get_query_by_id(show_query_id)
+                if query:
+                    history_interface._display_query_details(query)
+                else:
+                    st.error("No se encontró la consulta especificada")
+                
+                if st.button("Volver al historial", key="hype_back_to_history_btn"):
+                    del st.session_state.hype_show_query_id
+                    st.rerun()
+            else:
+                # Mostrar interfaz completa de historial
+                history_interface.show_history_interface()
+        else:
+            st.error("No se pudo inicializar el sistema de almacenamiento")
+            
+    except Exception as e:
+        st.error(f"Error en la interfaz de historial: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # Funciones auxiliares reutilizadas del script principal
-def manage_topics(prefix="hype"):
+def manage_topics(prefix="hype", preset_topics=None):
     """Maneja la adición y eliminación de topics con opciones avanzadas."""
     # Usar un estado específico para este módulo
     state_key = f"{prefix}_topics_data"
-    if state_key not in st.session_state:
+    
+    # Si hay preset_topics, cargarlos
+    if preset_topics and state_key not in st.session_state:
+        st.session_state[state_key] = preset_topics
+    elif state_key not in st.session_state:
         st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
     
-    # El resto de la función sigue igual, pero usando el state_key específico
     # Mostrar guía de búsqueda
     with st.expander("📖 Guía de Búsqueda Avanzada", expanded=False):
         st.markdown("""

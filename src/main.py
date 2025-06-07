@@ -1,4 +1,4 @@
-# src/main.py
+# src/main.py - ACTUALIZADO con sistema de almacenamiento para Hype Cycle
 import streamlit as st
 import os
 import json
@@ -71,6 +71,13 @@ st.markdown("""
             margin-bottom: 15px;
             border: 1px solid #ffeaa7;
         }
+        .hype-storage-config {
+            background-color: #e8f5e8;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #c3e6c3;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +101,15 @@ def initialize_session_state():
     if 'aws_secret_access_key' not in st.session_state:
         st.session_state.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY', '')
     if 'aws_region' not in st.session_state:
-        st.session_state.aws_region = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+        st.session_state.aws_region = os.getenv('AWS_DEFAULT_REGION', 'us-east-2')
+    
+    # Configuración específica para Hype Cycle Storage
+    if 'hype_storage_mode' not in st.session_state:
+        st.session_state.hype_storage_mode = 'local'  # 'local' o 'dynamodb'
+    if 'hype_auto_save' not in st.session_state:
+        st.session_state.hype_auto_save = True
+    if 'hype_default_category' not in st.session_state:
+        st.session_state.hype_default_category = 'default'
     
     # Estado para tópicos de búsqueda - específicos para cada módulo
     if 'hype_topics_data' not in st.session_state:
@@ -113,6 +128,12 @@ def initialize_session_state():
         st.session_state.current_results = None
     if 'current_query_info' not in st.session_state:
         st.session_state.current_query_info = None
+    
+    # Estados específicos para Hype Cycle
+    if 'hype_reuse_query' not in st.session_state:
+        st.session_state.hype_reuse_query = None
+    if 'hype_show_query_id' not in st.session_state:
+        st.session_state.hype_show_query_id = None
 
 def show_welcome_screen():
     """Muestra la pantalla de bienvenida"""
@@ -124,6 +145,15 @@ def show_welcome_screen():
         <h2>Bienvenido al Explorador de Tendencias Tecnológicas</h2>
         <p>Esta herramienta te permite analizar y visualizar tendencias tecnológicas emergentes utilizando 
         múltiples fuentes de datos. Selecciona una funcionalidad en las pestañas de arriba para comenzar.</p>
+        
+        <h3>🆕 Nuevas Características v2.1:</h3>
+        <ul>
+            <li>✅ <strong>Almacenamiento automático de consultas Hype Cycle</strong></li>
+            <li>✅ <strong>Sistema de categorías para organizar análisis</strong></li>
+            <li>✅ <strong>Historial de consultas sin gastar tokens</strong></li>
+            <li>✅ <strong>Reutilización de análisis previos</strong></li>
+            <li>✅ <strong>Comparación entre fases del Hype Cycle</strong></li>
+        </ul>
     </div>
     """, unsafe_allow_html=True)
     
@@ -144,10 +174,10 @@ def show_welcome_screen():
     
     with col2:
         st.markdown("""
-        **📈 Análisis del Hype Cycle**
+        **📈 Análisis del Hype Cycle** ⭐ *MEJORADO*
         
         Determina la posición de tecnologías dentro del ciclo de sobreexpectación de Gartner.
-        Identifica fases como "Disparador de Innovación" o "Meseta de Productividad".
+        **Ahora con almacenamiento automático y historial completo.**
         
         *Requiere: SerpAPI Key*
         """)
@@ -165,43 +195,45 @@ def show_welcome_screen():
     # Instrucciones de inicio
     st.markdown("### 🚀 Cómo Comenzar")
     st.markdown("""
-    1. Configura tus API keys en la barra lateral
-    2. Configura el almacenamiento de datos (Local o AWS DynamoDB)
-    3. Selecciona una funcionalidad en las pestañas superiores
-    4. Sigue las instrucciones específicas de cada módulo
+    1. **Configura tus API keys** en la barra lateral
+    2. **Selecciona el modo de almacenamiento** (Local o AWS DynamoDB)
+    3. **Crea categorías** para organizar tus análisis
+    4. **Realiza análisis** - se guardarán automáticamente
+    5. **Consulta el historial** para reutilizar análisis sin gastar tokens
     
-    **Nuevo**: Ahora puedes guardar tus análisis en AWS DynamoDB para acceso desde cualquier lugar.
+    **💡 Tip**: Las consultas del Hype Cycle se guardan automáticamente con toda la información de la API, 
+    incluyendo el punto exacto del ciclo donde se encuentra cada tecnología.
     """)
     
     # Ejemplo de visualización
-    if st.checkbox("Mostrar ejemplo de visualización"):
+    if st.checkbox("Mostrar ejemplo de análisis guardado", key="main_show_example_checkbox"):
+        st.markdown("### 📊 Ejemplo de Datos Guardados")
+        
+        # Crear datos de ejemplo
+        example_data = pd.DataFrame({
+            'Consulta': ['AI AND Agriculture', 'Blockchain OR Finance', 'Quantum Computing', 'IoT AND Healthcare'],
+            'Fase': ['Slope of Enlightenment', 'Plateau of Productivity', 'Innovation Trigger', 'Peak of Expectations'],
+            'Confianza': [0.85, 0.92, 0.76, 0.88],
+            'Total Menciones': [1250, 3400, 890, 2100],
+            'Fecha': ['2025-06-01', '2025-06-03', '2025-06-05', '2025-06-07']
+        })
+        
+        st.dataframe(example_data, use_container_width=True)
+        
+        # Gráfico de ejemplo
         import plotly.express as px
-        
-        # Datos de ejemplo
-        years = list(range(2010, 2025))
-        values = [5, 8, 12, 20, 35, 65, 120, 180, 220, 250, 270, 285, 290, 292, 293]
-        
-        # Crear un gráfico de ejemplo
-        fig = px.line(
-            x=years, 
-            y=values,
-            markers=True,
-            labels={"x": "Año", "y": "Número de Publicaciones"},
-            title="Ejemplo: Adopción de Inteligencia Artificial (2010-2024)"
+        fig = px.scatter(
+            example_data,
+            x='Confianza',
+            y='Total Menciones',
+            color='Fase',
+            hover_data=['Consulta'],
+            title="Ejemplo: Comparación de Consultas Guardadas"
         )
-        
-        # Personalizar el gráfico
-        fig.update_layout(
-            xaxis=dict(showgrid=True),
-            yaxis=dict(showgrid=True),
-            plot_bgcolor="white"
-        )
-        
-        # Mostrar el gráfico
         st.plotly_chart(fig, use_container_width=True)
 
 def sidebar_config():
-    """Configuración del sidebar con opciones para todas las APIs"""
+    """Configuración del sidebar con opciones para todas las APIs y almacenamiento"""
     with st.sidebar:
         st.header("⚙️ Configuración")
         
@@ -235,6 +267,49 @@ def sidebar_config():
                     st.session_state.aws_region = config_data['AWS_DEFAULT_REGION']
                 
                 st.success("✅ Configuración cargada exitosamente")
+        
+        st.divider()
+        
+        # Configuración específica para Hype Cycle Storage
+        with st.expander("🗄️ Configuración Hype Cycle Storage", expanded=True):
+            st.markdown('<div class="hype-storage-config">', unsafe_allow_html=True)
+            st.write("**Configuración para almacenamiento de análisis Hype Cycle**")
+            
+            # Modo de almacenamiento
+            storage_mode = st.radio(
+                "Modo de almacenamiento",
+                options=["local", "dynamodb"],
+                index=0 if st.session_state.hype_storage_mode == "local" else 1,
+                help="Local: archivos JSON | DynamoDB: base de datos en la nube",
+                key="main_hype_storage_mode_radio"
+            )
+            st.session_state.hype_storage_mode = storage_mode
+            
+            # Auto-guardar
+            auto_save = st.checkbox(
+                "Guardar automáticamente",
+                value=st.session_state.hype_auto_save,
+                help="Guardar cada análisis automáticamente sin preguntar",
+                key="main_hype_auto_save_checkbox"
+            )
+            st.session_state.hype_auto_save = auto_save
+            
+            # Mostrar estado actual
+            if storage_mode == "local":
+                st.info("💾 Los análisis se guardarán en archivos locales")
+                data_path = os.path.abspath("./data")
+                st.caption(f"Ubicación: {data_path}")
+            else:
+                aws_configured = (
+                    st.session_state.aws_access_key_id and 
+                    st.session_state.aws_secret_access_key
+                )
+                if aws_configured:
+                    st.success("☁️ DynamoDB configurado y listo")
+                else:
+                    st.warning("⚠️ Configura AWS DynamoDB abajo")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
         
@@ -333,7 +408,8 @@ def sidebar_config():
                 "AWS Region",
                 options=['us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-1'],
                 index=0,
-                help="Región donde están creadas las tablas DynamoDB"
+                help="Región donde están creadas las tablas DynamoDB",
+                key="main_aws_region_selectbox"
             )
             st.session_state.aws_region = aws_region
             
@@ -357,13 +433,21 @@ def sidebar_config():
         # Acerca de la aplicación
         with st.expander("ℹ️ Acerca de", expanded=False):
             st.write("""
-            **Tech Trends Explorer v2.0**
+            **Tech Trends Explorer v2.1**
             
-            **Nuevas características:**
+            **🆕 Nuevas características:**
+            - ✅ Almacenamiento automático de consultas Hype Cycle
+            - ✅ Sistema de categorías jerárquico
+            - ✅ Historial de consultas sin gastar tokens
+            - ✅ Reutilización de análisis previos
+            - ✅ Comparación entre fases del Hype Cycle
+            - ✅ Dashboard de métricas y estadísticas
+            
+            **Características existentes:**
             - ✅ Almacenamiento en AWS DynamoDB
             - ✅ Mejor gestión de datos
             - ✅ Acceso desde cualquier dispositivo
-            - ❌ Eliminado: Almacenamiento en GitHub
+            - ✅ Análisis de tendencias múltiples
             
             Esta aplicación te permite analizar tendencias tecnológicas 
             utilizando múltiples fuentes de datos y métodos de análisis.
@@ -414,91 +498,229 @@ def main():
     with tab5:
         st.title("🗄️ Gestión de Datos")
         
-        # Configuración para datos guardados
-        col1, col2 = st.columns([1, 1])
+        # Subtabs para diferentes tipos de datos
+        subtab1, subtab2 = st.tabs(["📈 Datos del Hype Cycle", "📊 Otros Análisis"])
         
-        with col1:
-            # Selector para modo de almacenamiento
-            storage_mode = st.radio(
-                "Modo de almacenamiento",
-                options=["Local", "AWS DynamoDB"],
-                index=0,
-                help="Selecciona dónde guardar los datos de análisis"
+        with subtab1:
+            _show_hype_cycle_data_management()
+        
+        with subtab2:
+            _show_general_data_management()
+
+def _show_hype_cycle_data_management():
+    """Gestión específica de datos del Hype Cycle"""
+    st.header("📈 Gestión de Datos del Hype Cycle")
+    
+    # Información sobre el estado del almacenamiento
+    storage_mode = st.session_state.hype_storage_mode
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if storage_mode == "local":
+            st.info("""
+            **Modo Local Activo**: Los análisis de Hype Cycle se guardan en archivos JSON locales.
+            
+            📂 Ubicación: `./data/`
+            
+            ⚠️ Estos datos solo están disponibles en tu computadora actual.
+            """)
+        else:
+            aws_configured = (
+                st.session_state.aws_access_key_id and 
+                st.session_state.aws_secret_access_key
             )
-        
-        with col2:
-            # Mostrar información sobre el modo seleccionado
-            if storage_mode == "Local":
-                st.info("""
-                **Modo local activo**: Los datos se guardarán en archivos JSON locales.
+            
+            if aws_configured:
+                st.success(f"""
+                **Modo DynamoDB Activo**: Los análisis se guardan en AWS DynamoDB.
                 
-                📂 Ubicación: `./data/`
+                ☁️ Región: {st.session_state.aws_region}
                 
-                ⚠️ Estos datos solo están disponibles en tu computadora actual.
+                ✅ Los datos están disponibles desde cualquier dispositivo.
                 """)
-                
-                if st.button("📂 Abrir carpeta de datos", key="open_data_folder"):
-                    data_path = os.path.abspath("./data")
-                    os.makedirs(data_path, exist_ok=True)
-                    st.success(f"📁 Datos guardados en: {data_path}")
             else:
-                # Configuración de DynamoDB
+                st.warning("""
+                **DynamoDB no configurado**: Usando almacenamiento local como fallback.
+                
+                Para usar DynamoDB, configura las credenciales de AWS en el panel lateral.
+                """)
+    
+    with col2:
+        # Métricas rápidas
+        try:
+            from data_storage import initialize_database
+            from hype_cycle_storage import initialize_hype_cycle_storage
+            
+            # Inicializar storage
+            if storage_mode == "local":
+                db = initialize_database("local")
+            else:
                 aws_configured = (
                     st.session_state.aws_access_key_id and 
-                    st.session_state.aws_secret_access_key and 
-                    st.session_state.aws_region
+                    st.session_state.aws_secret_access_key
                 )
-                
-                if not aws_configured:
-                    st.warning("⚠️ Configuración de AWS incompleta")
-                    st.info("""
-                    Para usar DynamoDB:
-                    1. Configura las credenciales en el panel lateral
-                    2. Asegúrate de que las tablas estén creadas:
-                       - tech-trends-analyses
-                       - tech-trends-categories
-                    """)
-                else:
-                    st.success("✅ Configuración de AWS disponible")
-                    st.info(f"""
-                    **Región**: {st.session_state.aws_region}
-                    
-                    ☁️ Los datos se guardarán en DynamoDB y estarán disponibles desde cualquier dispositivo.
-                    """)
-        
-        # Inicializar sistema de almacenamiento
-        from data_storage import initialize_database
-        
-        if storage_mode == "Local":
-            db = initialize_database("local")
-        else:
-            if aws_configured:
-                try:
+                if aws_configured:
                     db = initialize_database(
                         "dynamodb",
                         region_name=st.session_state.aws_region,
                         aws_access_key_id=st.session_state.aws_access_key_id,
                         aws_secret_access_key=st.session_state.aws_secret_access_key
                     )
-                except Exception as e:
-                    st.error(f"❌ Error al conectar con DynamoDB: {str(e)}")
-                    st.info("Usando almacenamiento local como fallback")
+                else:
                     db = initialize_database("local")
+            
+            if db:
+                hype_storage = initialize_hype_cycle_storage(db.storage)
+                queries = hype_storage.get_all_hype_cycle_queries()
+                
+                st.metric("Total Consultas", len(queries))
+                
+                if queries:
+                    # Fase más común
+                    phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in queries]
+                    most_common = max(set(phases), key=phases.count) if phases else "N/A"
+                    st.metric("Fase Más Común", most_common)
+                    
+                    # Consultas esta semana
+                    from datetime import datetime, timedelta
+                    week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+                    recent = [q for q in queries if q.get("execution_date", "") > week_ago]
+                    st.metric("Esta Semana", len(recent))
+                
+        except Exception as e:
+            st.error(f"Error obteniendo métricas: {str(e)}")
+    
+    st.divider()
+    
+    # Interfaz de historial específica para Hype Cycle
+    try:
+        from data_storage import initialize_database
+        from hype_cycle_storage import initialize_hype_cycle_storage, create_hype_cycle_interface
+        
+        # Inicializar storage según configuración
+        if storage_mode == "local":
+            db = initialize_database("local")
+        else:
+            aws_configured = (
+                st.session_state.aws_access_key_id and 
+                st.session_state.aws_secret_access_key
+            )
+            if aws_configured:
+                db = initialize_database(
+                    "dynamodb",
+                    region_name=st.session_state.aws_region,
+                    aws_access_key_id=st.session_state.aws_access_key_id,
+                    aws_secret_access_key=st.session_state.aws_secret_access_key
+                )
             else:
-                st.warning("Configuración de AWS incompleta. Usando almacenamiento local.")
+                st.warning("DynamoDB no configurado. Usando almacenamiento local.")
                 db = initialize_database("local")
         
-        # Cargar interfaz de gestión
-        if db is not None:
-            try:
-                from database_manager import run_database_manager
-                run_database_manager(db)
-            except Exception as e:
-                st.error(f"Error al inicializar el gestor de base de datos: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
+        if db:
+            hype_storage = initialize_hype_cycle_storage(db.storage)
+            history_interface = create_hype_cycle_interface(hype_storage)
+            
+            # Mostrar interfaz de historial
+            history_interface.show_history_interface()
         else:
-            st.warning("No se pudo inicializar el sistema de almacenamiento.")
+            st.error("No se pudo inicializar el sistema de almacenamiento")
+            
+    except Exception as e:
+        st.error(f"Error en la interfaz de historial: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
+def _show_general_data_management():
+    """Gestión de datos generales (S-curves, trends, etc.)"""
+    st.header("📊 Otros Análisis Guardados")
+    
+    # Configuración para datos generales
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # Selector para modo de almacenamiento general
+        storage_mode = st.radio(
+            "Modo de almacenamiento",
+            options=["Local", "AWS DynamoDB"],
+            index=0,
+            help="Selecciona dónde están guardados los otros análisis",
+            key="main_general_storage_mode_radio"
+        )
+    
+    with col2:
+        # Mostrar información sobre el modo seleccionado
+        if storage_mode == "Local":
+            st.info("""
+            **Modo local activo**: Los datos se guardan en archivos JSON locales.
+            
+            📂 Ubicación: `./data/`
+            
+            ⚠️ Estos datos solo están disponibles en tu computadora actual.
+            """)
+            
+            if st.button("📂 Abrir carpeta de datos", key="main_open_data_folder_btn"):
+                data_path = os.path.abspath("./data")
+                os.makedirs(data_path, exist_ok=True)
+                st.success(f"📁 Datos guardados en: {data_path}")
+        else:
+            # Configuración de DynamoDB
+            aws_configured = (
+                st.session_state.aws_access_key_id and 
+                st.session_state.aws_secret_access_key and 
+                st.session_state.aws_region
+            )
+            
+            if not aws_configured:
+                st.warning("⚠️ Configuración de AWS incompleta")
+                st.info("""
+                Para usar DynamoDB:
+                1. Configura las credenciales en el panel lateral
+                2. Asegúrate de que las tablas estén creadas:
+                   - tech-trends-analyses
+                   - tech-trends-categories
+                """)
+            else:
+                st.success("✅ Configuración de AWS disponible")
+                st.info(f"""
+                **Región**: {st.session_state.aws_region}
+                
+                ☁️ Los datos se guardarán en DynamoDB y estarán disponibles desde cualquier dispositivo.
+                """)
+    
+    # Inicializar sistema de almacenamiento
+    from data_storage import initialize_database
+    
+    if storage_mode == "Local":
+        db = initialize_database("local")
+    else:
+        if aws_configured:
+            try:
+                db = initialize_database(
+                    "dynamodb",
+                    region_name=st.session_state.aws_region,
+                    aws_access_key_id=st.session_state.aws_access_key_id,
+                    aws_secret_access_key=st.session_state.aws_secret_access_key
+                )
+            except Exception as e:
+                st.error(f"❌ Error al conectar con DynamoDB: {str(e)}")
+                st.info("Usando almacenamiento local como fallback")
+                db = initialize_database("local")
+        else:
+            st.warning("Configuración de AWS incompleta. Usando almacenamiento local.")
+            db = initialize_database("local")
+    
+    # Cargar interfaz de gestión general
+    if db is not None:
+        try:
+            from database_manager import run_database_manager
+            run_database_manager(db)
+        except Exception as e:
+            st.error(f"Error al inicializar el gestor de base de datos: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.warning("No se pudo inicializar el sistema de almacenamiento.")
 
 if __name__ == "__main__":
     main()
