@@ -1,3 +1,4 @@
+# Tech Trends Explorer - Dependencias
 streamlit==1.35.0
 google-api-python-client==2.108.0
 nltk==3.8.1
@@ -12,3 +13,20 @@ kaleido>=0.2.1
 streamlit-folium==0.24.0
 serpapi==0.1.5
 google-search-results==2.4.2
+matplotlib==3.4.3
+seaborn==0.11.2
+openpyxl==3.0.10
+PyGithub>=1.55
+python-dotenv==1.0.0
+
+# AWS DynamoDB
+boto3==1.28.85
+botocore==1.31.85
+
+# Opcional para manejo de Excel avanzado
+xlsxwriter==3.1.9
+
+# Para desarrollo local
+python-decouple==3.8
+
+beautifulsoup4==4.13.4

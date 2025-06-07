@@ -1,24 +1,15 @@
 # src/main.py
 import streamlit as st
 import os
-from dotenv import load_dotenv
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-import base64
-import io
 import json
+from dotenv import load_dotenv
+import pandas as pd
 from datetime import datetime
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from io import BytesIO
-from analysis import QueryBuilder, ResultAnalyzer, NewsAnalyzer
 from config import CONFIG
+from utils.api_helpers import test_api_connection, load_config_from_file
+from trends_search import run_trend_search
+from hype_cycle import run_hype_cycle_analysis
+from s_curve import run_s_curve_analysis
 
 # Cargar variables de entorno
 load_dotenv()
@@ -53,726 +44,164 @@ st.markdown("""
             border-radius: 0.3rem;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        .welcome-card {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 5px solid #4e8df5;
+        }
+        .tab-subheader {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #1f77b4;
+        }
+        .api-config {
+            background-color: #f0f8ff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #cce5ff;
+        }
+        .aws-config {
+            background-color: #fff3cd;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ffeaa7;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-def get_formatted_topics():
+def initialize_session_state():
     """
-    Obtiene los topics del session state y los formatea correctamente
+    Inicializa variables en el session state
     """
-    formatted_topics = []
+    # Credenciales de API
+    if 'google_api_key' not in st.session_state:
+        st.session_state.google_api_key = os.getenv('GOOGLE_API_KEY', '')
+    if 'search_engine_id' not in st.session_state:
+        st.session_state.search_engine_id = os.getenv('SEARCH_ENGINE_ID', '')
+    if 'serp_api_key' not in st.session_state:
+        st.session_state.serp_api_key = os.getenv('SERP_API_KEY', '')
+    if 'scopus_api_key' not in st.session_state:
+        st.session_state.scopus_api_key = os.getenv('SCOPUS_API_KEY', '')
     
-    if 'topics_data' in st.session_state:
-        for topic_data in st.session_state.topics_data:
-            if 'value' in topic_data and topic_data['value'].strip():
-                formatted_topic = {
-                    'value': topic_data['value'].strip(),
-                    'operator': topic_data.get('operator', 'AND'),
-                    'exact_match': topic_data.get('exact_match', False)
-                }
-                formatted_topics.append(formatted_topic)
+    # Credenciales de AWS DynamoDB
+    if 'aws_access_key_id' not in st.session_state:
+        st.session_state.aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID', '')
+    if 'aws_secret_access_key' not in st.session_state:
+        st.session_state.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY', '')
+    if 'aws_region' not in st.session_state:
+        st.session_state.aws_region = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
     
-    return formatted_topics
+    # Estado para tópicos de búsqueda - específicos para cada módulo
+    if 'hype_topics_data' not in st.session_state:
+        st.session_state.hype_topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
+    if 'trends_topics_data' not in st.session_state:
+        st.session_state.trends_topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
+    if 'scurve_topics_data' not in st.session_state:
+        st.session_state.scurve_topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
     
-import streamlit as st
-
-def build_search_equation(topics):
-    """Construye la ecuación de búsqueda en base a los términos y operadores, sin operador al final."""
-    equation = ""
-    for i, topic in enumerate(topics):
-        # Escapamos los espacios si es una coincidencia exacta
-        if topic['exact_match']:
-            term = f'"{topic["value"]}"'
-        else:
-            term = topic['value']
-        
-        if i == len(topics) - 1:  # Si es el último término, no añadimos operador
-            equation += f"{term}"
-        else:  # Para todos los demás términos, agregamos operador
-            equation += f"{term} {topic['operator']} "
-    
-    return equation
-
-def manage_topics():
-    """Maneja la adición y eliminación de topics con opciones avanzadas."""
+    # Para compatibilidad con código existente
     if 'topics_data' not in st.session_state:
         st.session_state.topics_data = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
     
-    # Mostrar guía de búsqueda
-    with st.expander("📖 Guía de Búsqueda Avanzada", expanded=False):
-        st.markdown("""
-        ### Operadores de Búsqueda
-        - **AND**: Encuentra resultados que contienen TODOS los términos (Por defecto)
-        - **OR**: Encuentra resultados que contienen ALGUNO de los términos
-        
-        ### Opciones Adicionales
-        - **Coincidencia exacta** ("..."): Busca la frase exacta
-        - **Exclusión** (-): Excluye términos específicos
-        - **Comodín** (*): Busca variaciones de palabras
-        
-        ### Ejemplos
-        - `"machine learning" AND robotics`: Encuentra resultados que contengan exactamente "machine learning" Y también "robotics"
-        - `AI OR "artificial intelligence"`: Encuentra resultados que contengan "AI" O "artificial intelligence"
-        - `blockchain -crypto`: Encuentra resultados sobre blockchain pero excluye los que mencionan crypto
-        """)
+    # Estado para resultados actuales
+    if 'current_results' not in st.session_state:
+        st.session_state.current_results = None
+    if 'current_query_info' not in st.session_state:
+        st.session_state.current_query_info = None
+
+def show_welcome_screen():
+    """Muestra la pantalla de bienvenida"""
+    st.markdown('<p class="main-header">🔍 Tech Trends Explorer</p>', unsafe_allow_html=True)
     
-    topics = []
-    topics_to_remove = []
-
-    st.write("### 🔍 Construye tu búsqueda")
-
-    # Crear columnas para cada topic con opciones avanzadas
-    for topic in st.session_state.topics_data:
-        col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
-        
-        with col1:
-            value = st.text_input(
-                f"Término {topic['id'] + 1}",
-                value=topic.get('value', ''),
-                key=f"topic_{topic['id']}",
-                placeholder="Ej: 'artificial intelligence' OR robot*"
-            )
-            topic['value'] = value
-            topics.append({
-                'value': value,
-                'operator': topic.get('operator', 'AND'),
-                'exact_match': topic.get('exact_match', False)
-            })
-        
-        with col2:
-            operator = st.selectbox(
-                "Operador",
-                options=['AND', 'OR', 'NOT'],
-                index=['AND', 'OR', 'NOT'].index(topic['operator']),
-                key=f"operator_{topic['id']}"
-            )
-            topic['operator'] = operator  # Actualizamos el operador en el topic directamente
-        
-        with col3:
-            exact_match = st.checkbox(
-                "Coincidencia exacta",
-                value=topic.get('exact_match', False),
-                key=f"exact_{topic['id']}"
-            )
-            topic['exact_match'] = exact_match
-        
-        with col4:
-            if len(st.session_state.topics_data) > 1:
-                if st.button('❌', key=f"remove_{topic['id']}"):
-                    topics_to_remove.append(topic['id'])
-
-    # Remover topics marcados para eliminación
-    if topics_to_remove:
-        st.session_state.topics_data = [
-            topic for topic in st.session_state.topics_data 
-            if topic['id'] not in topics_to_remove
-        ]
-        st.rerun()
-
-    # Botón para añadir nuevo topic
-    if st.button("➕ Añadir otro término"):
-        new_id = max([t['id'] for t in st.session_state.topics_data]) + 1
-        st.session_state.topics_data.append({
-            'id': new_id,
-            'value': '',
-            'operator': 'AND',
-            'exact_match': False
-        })
-        st.rerun()
-
-    # Construir y mostrar la ecuación final
-    if topics:
-        equation = build_search_equation(topics)
-        st.write("### 📝 Ecuación de búsqueda")
-        st.code(equation)
-
-    return topics
-
-
-def process_topics(topics_data):
-    """
-    Procesa los topics antes de construir la query
+    # Tarjeta de bienvenida
+    st.markdown("""
+    <div class="welcome-card">
+        <h2>Bienvenido al Explorador de Tendencias Tecnológicas</h2>
+        <p>Esta herramienta te permite analizar y visualizar tendencias tecnológicas emergentes utilizando 
+        múltiples fuentes de datos. Selecciona una funcionalidad en las pestañas de arriba para comenzar.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    Args:
-        topics_data: Lista de topics con sus operadores y opciones
-    Returns:
-        Lista de diccionarios procesados
-    """
-    processed_topics = []
+    # Descripción de funcionalidades
+    st.markdown("### 🛠️ Funcionalidades Principales")
     
-    for topic in topics_data:
-        if topic['value'].strip():  # Solo procesar topics no vacíos
-            processed_topic = {
-                'value': topic['value'].strip(),
-                'operator': topic.get('operator', 'AND'),
-                'exact_match': topic.get('exact_match', False)
-            }
-            
-            # Si ya tiene comillas, desactivar exact_match
-            if processed_topic['value'].startswith('"') and processed_topic['value'].endswith('"'):
-                processed_topic['exact_match'] = False
-            
-            processed_topics.append(processed_topic)
-    
-    return processed_topics
-
-def reset_session_state():
-    """
-    Resetea el estado de la sesión manteniendo solo las credenciales
-    """
-    # Lista de keys que no queremos borrar
-    keys_to_keep = {
-        'api_key',
-        'search_engine_id', 
-        'serp_api_key',
-        'topics_data'
-    }
-    
-    # Borrar solo las keys que no queremos mantener
-    for key in list(st.session_state.keys()):
-        if key not in keys_to_keep:
-            del st.session_state[key]
-
-def test_api_connection(api_key, search_engine_id):
-    try:
-        print(f"Probando con API Key: {api_key[:10]}... y Search Engine ID: {search_engine_id}")
-        service = build("customsearch", "v1", developerKey=api_key)
-        print("Servicio creado exitosamente")
-        
-        result = service.cse().list(
-            q="test",
-            cx=search_engine_id,
-            num=1
-        ).execute()
-        print("Búsqueda ejecutada exitosamente")
-        print(f"Resultados obtenidos: {result.get('searchInformation', {}).get('totalResults', 'N/A')}")
-        
-        return True, "Conexión exitosa"
-    except HttpError as e:
-        error_details = str(e)
-        print(f"Error HTTP: {error_details}")
-        
-        if e.resp.status == 403:
-            return False, f"Error de autenticación (403): {error_details}"
-        elif e.resp.status == 400:
-            return False, f"Error en la configuración (400): {error_details}"
-        else:
-            return False, f"Error HTTP {e.resp.status}: {error_details}"
-    except Exception as e:
-        print(f"Error inesperado: {str(e)}")
-        return False, f"Error inesperado: {str(e)}"
-
-def perform_search(api_key, search_engine_id, query, content_types, max_results=100):
-    """
-    Realiza búsquedas en Google Custom Search respetando el límite de resultados especificado
-    """
-    try:
-        service = build("customsearch", "v1", developerKey=api_key)
-        all_results = []
-        
-        # Construir filtros basados en los tipos de contenido seleccionados
-        type_filters = []
-        base_query = query
-
-        if content_types.get('academic', False):
-            type_filters.append('site:scholar.google.com OR site:sciencedirect.com OR site:springer.com OR site:ieee.org')
-        if content_types.get('news', False):
-            type_filters.append('site:news.google.com OR site:reuters.com OR site:bloomberg.com')
-        if content_types.get('pdfs', False):
-            type_filters.append('filetype:pdf')
-        if not content_types.get('patents', False):
-            base_query += ' -patent -uspto.gov -espacenet'
-
-        # Combinar query con filtros
-        if type_filters:
-            final_query = f"({base_query}) AND ({' OR '.join(type_filters)})"
-        else:
-            final_query = base_query
-
-        # Calcular número total de páginas necesarias
-        total_pages = (max_results + 9) // 10
-        
-        # Debug: Mostrar información de la búsqueda
-        st.write(f"Buscando hasta {max_results} resultados en {total_pages} páginas")
-        
-        # Crear barra de progreso
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for page in range(total_pages):
-            start_index = (page * 10) + 1
-            
-            # Actualizar estado
-            progress = (page + 1) / total_pages
-            progress_bar.progress(progress)
-            status_text.text(f"Obteniendo resultados... Página {page + 1} de {total_pages} ({len(all_results)} resultados encontrados)")
-            
-            try:
-                result = service.cse().list(
-                    q=final_query,
-                    cx=search_engine_id,
-                    num=min(10, max_results - len(all_results)),  # No pedir más de los necesarios
-                    start=start_index
-                ).execute()
-                
-                items = result.get('items', [])
-                if not items:
-                    break
-                    
-                all_results.extend(items)
-                
-                # Verificar si ya tenemos suficientes resultados
-                if len(all_results) >= max_results:
-                    all_results = all_results[:max_results]
-                    break
-                
-            except Exception as e:
-                st.warning(f"Error en página {page + 1}: {str(e)}")
-                break  # Si hay error, detenemos la búsqueda
-        
-        # Limpiar indicadores de progreso
-        progress_bar.empty()
-        status_text.empty()
-        
-        # Informar resultados obtenidos
-        st.info(f"Búsqueda completada: {len(all_results)} resultados encontrados")
-        
-        return True, all_results
-    except Exception as e:
-        st.error(f"Error en la búsqueda: {str(e)}")
-        return False, str(e)
-
-def show_analysis_results(results, query_info, search_topics, content_types, hype_data=None, hype_figures=None):
-    # Crear instancia del analizador
-    analyzer = ResultAnalyzer()
-    processed_results, stats = analyzer.analyze_results(results, search_topics)
-    
-    # Función para determinar el tipo de resultado
-    def get_result_type(result):
-        url = result['link'].lower()
-        title = result['title'].lower()
-        
-        if any(term in url for term in ['.pdf', '/pdf/']):
-            return 'pdf'
-        elif any(term in url for term in ['patent', 'uspto.gov', 'espacenet']):
-            return 'patent'
-        elif any(term in url for term in ['scholar.google', 'sciencedirect', 'springer', 'ieee']):
-            return 'academic'
-        elif any(term in url for term in ['news.google', 'reuters', 'bloomberg']):
-            return 'news'
-        return 'web'
-
-    # Filtrar resultados según las selecciones del sidebar
-    filtered_results = []
-    for result in processed_results:
-        result_type = get_result_type(result)
-        
-        # Aplicar filtros según el tipo
-        if (
-            (result_type == 'pdf' and content_types.get('pdfs', True)) or
-            (result_type == 'academic' and content_types.get('academic', True)) or
-            (result_type == 'news' and content_types.get('news', True)) or
-            (result_type == 'patent' and content_types.get('patents', True)) or
-            (result_type == 'web')  # Web siempre se muestra
-        ):
-            filtered_results.append(result)
-
-    # Estados iniciales para la búsqueda en resultados
-    if 'search_query' not in st.session_state:
-        st.session_state.search_query = ''
-    if 'search_results' not in st.session_state:
-        st.session_state.search_results = filtered_results
-
-    # Función para actualizar resultados de búsqueda
-    def update_search():
-        if st.session_state.search_query:
-            st.session_state.search_results = [
-                result for result in filtered_results
-                if st.session_state.search_query.lower() in result['title'].lower()
-            ]
-        else:
-            st.session_state.search_results = filtered_results
-
-    # Mostrar ecuaciones de búsqueda
-    with st.expander("📝 Ver ecuaciones de búsqueda", expanded=True):
-        st.write("##### Ecuación de búsqueda en Google:")
-        st.code(query_info['google_query'])
-        st.write("##### Ecuación de búsqueda en Scopus:")
-        st.code(query_info['scopus_query'])
-
-
-    # Mostrar conteo de resultados
-    total_results = len(processed_results)
-    filtered_count = len(filtered_results)
-    search_count = len(st.session_state.search_results)
-
-    if filtered_count < total_results:
-        st.info(f"Mostrando {filtered_count} de {total_results} resultados (filtrados por tipo de contenido)")
-    
-    if st.session_state.search_query:
-        st.info(f"Encontrados {search_count} resultados que coinciden con la búsqueda")
-    
-    # Calcular distribución de tipos de contenido
-    content_distribution = {}
-    for result in filtered_results:
-        result_type = get_result_type(result).upper()
-        content_distribution[result_type] = content_distribution.get(result_type, 0) + 1
-
-    # Gráficos de distribución
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.write("### 📊 Distribución por tipo de contenido")
-        fig_type = px.pie(
-            values=list(content_distribution.values()),
-            names=list(content_distribution.keys()),
-            title=f"Distribución de {filtered_count} resultados por tipo"
-        )
-        fig_type.update_traces(
-            textposition='inside',
-            textinfo='percent+label+value',
-            marker_colors=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']  # Colores personalizados
-        )
-        fig_type.update_layout(
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig_type, use_container_width=True)
+        st.markdown("""
+        **📊 Búsqueda de Tendencias**
         
-        # Mostrar tabla de distribución bajo el gráfico
-        st.write("#### Detalle de distribución:")
-        distribution_data = pd.DataFrame(
-            {
-                'Tipo': list(content_distribution.keys()),
-                'Cantidad': list(content_distribution.values()),
-                'Porcentaje': [f"{(v/filtered_count)*100:.1f}%" for v in content_distribution.values()]
-            }
-        )
-        st.dataframe(distribution_data, hide_index=True)
+        Analiza tendencias tecnológicas usando Google Custom Search. Visualiza la distribución de resultados,
+        palabras clave frecuentes y evolución temporal.
+        
+        *Requiere: Google API Key & Search Engine ID*
+        """)
     
     with col2:
-        st.write("### 📈 Tendencia temporal")
-        if stats['by_year']:
-            fig_year = px.bar(
-                x=list(stats['by_year'].keys()),
-                y=list(stats['by_year'].values()),
-                title="Distribución por año"
-            )
-            fig_year.update_xaxes(title="Año")
-            fig_year.update_yaxes(title="Cantidad")
-            st.plotly_chart(fig_year, use_container_width=True)
-
-
-    # Métricas y gráficos...
-    # Gráfico de palabras clave
-    st.write("### 🏷️ Palabras clave más frecuentes")
-    if stats['common_keywords']:
-        keywords_df = pd.DataFrame(stats['common_keywords'], columns=['Keyword', 'Count'])
-        fig_keywords = px.bar(
-            keywords_df.head(10),
-            x='Keyword',
-            y='Count',
-            title="Términos más frecuentes en los resultados"
+        st.markdown("""
+        **📈 Análisis del Hype Cycle**
+        
+        Determina la posición de tecnologías dentro del ciclo de sobreexpectación de Gartner.
+        Identifica fases como "Disparador de Innovación" o "Meseta de Productividad".
+        
+        *Requiere: SerpAPI Key*
+        """)
+    
+    with col3:
+        st.markdown("""
+        **📉 Curvas en S**
+        
+        Analiza el ciclo de vida de tecnologías utilizando datos de publicaciones 
+        académicas de Scopus. Visualiza curvas S y determina la fase de adopción.
+        
+        *Requiere: Scopus API Key*
+        """)
+    
+    # Instrucciones de inicio
+    st.markdown("### 🚀 Cómo Comenzar")
+    st.markdown("""
+    1. Configura tus API keys en la barra lateral
+    2. Configura el almacenamiento de datos (Local o AWS DynamoDB)
+    3. Selecciona una funcionalidad en las pestañas superiores
+    4. Sigue las instrucciones específicas de cada módulo
+    
+    **Nuevo**: Ahora puedes guardar tus análisis en AWS DynamoDB para acceso desde cualquier lugar.
+    """)
+    
+    # Ejemplo de visualización
+    if st.checkbox("Mostrar ejemplo de visualización"):
+        import plotly.express as px
+        
+        # Datos de ejemplo
+        years = list(range(2010, 2025))
+        values = [5, 8, 12, 20, 35, 65, 120, 180, 220, 250, 270, 285, 290, 292, 293]
+        
+        # Crear un gráfico de ejemplo
+        fig = px.line(
+            x=years, 
+            y=values,
+            markers=True,
+            labels={"x": "Año", "y": "Número de Publicaciones"},
+            title="Ejemplo: Adopción de Inteligencia Artificial (2010-2024)"
         )
-        fig_keywords.update_layout(
-            xaxis_title="Palabras clave",
-            yaxis_title="Frecuencia",
-            showlegend=False
+        
+        # Personalizar el gráfico
+        fig.update_layout(
+            xaxis=dict(showgrid=True),
+            yaxis=dict(showgrid=True),
+            plot_bgcolor="white"
         )
-        st.plotly_chart(fig_keywords, use_container_width=True)
-    
-    # Botón de descarga
-    st.write("### 📥 Exportar Resultados")
-    
-    # Combinar todas las figuras
-    all_figures = {
-        "Distribución por Tipo": fig_type,
-        "Tendencia Temporal": fig_year,
-        "Palabras Clave": fig_keywords
-    }
-    
-    # Agregar figuras del Hype Cycle si existen
-    if hype_figures:
-        all_figures.update(hype_figures)
-    
-    # Usar session state para evitar recargas
-    if 'pdf_generated' not in st.session_state:
-        st.session_state.pdf_generated = False
-    
-    download_col1, download_col2 = st.columns([3, 1])
-    
-    with download_col1:
-        try:
-            pdf_data = export_to_pdf(
-                results=results,
-                query_info=query_info,
-                hype_data=hype_data,
-                figures=all_figures
-            )
-            
-            if st.download_button(
-                label="📥 Descargar Informe Completo (PDF)",
-                data=pdf_data,
-                file_name=f"analisis_tendencias_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                key=f"download_pdf_{datetime.now().timestamp()}",  # Key única
-                on_click=lambda: setattr(st.session_state, 'pdf_generated', True)
-            ):
-                pass  # No hacemos nada aquí para evitar recargas
-                
-        except Exception as e:
-            st.error(f"Error al generar el PDF: {str(e)}")
-    
-    with download_col2:
-        if st.session_state.pdf_generated:
-            st.success("✅ Listo!")
-
-    # Mostrar resultados
-    st.write("### 📑 Resultados detallados")
-    results_to_show = st.session_state.search_results
-    
-    if not results_to_show:
-        st.warning("No se encontraron resultados que coincidan con los filtros actuales")
-    else:
-        for result in results_to_show:
-            with st.expander(f"📄 {result['title']}", expanded=False):
-                col1, col2 = st.columns([2,1])
-                with col1:
-                    st.markdown("**Descripción:**")
-                    st.write(result['snippet'])
-                    st.markdown(f"🔗 [Ver documento completo]({result['link']})")
-                with col2:
-                    st.markdown("**Detalles:**")
-                    st.markdown(f"📅 **Año:** {result.get('year', 'No especificado')}")
-                    st.markdown(f"🌍 **País:** {result.get('country', 'No especificado')}")
-                    tipo = get_result_type(result).upper()
-                    st.markdown(f"📊 **Tipo:** {tipo}")
-
-def export_to_pdf(results, query_info, hype_data, figures, news_results=None):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-
-    # Estilos personalizados
-    styles.add(ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        spaceAfter=30
-    ))
-    
-    styles.add(ParagraphStyle(
-        'SectionTitle',
-        parent=styles['Heading2'],
-        fontSize=16,
-        spaceBefore=15,
-        spaceAfter=10
-    ))
-
-    # Título y fecha
-    story.append(Paragraph('Análisis de Tendencias Tecnológicas', styles['CustomTitle']))
-    story.append(Paragraph(f'Generado el {datetime.now().strftime("%d-%m-%Y %H:%M")}', styles['Normal']))
-    story.append(Spacer(1, 20))
-
-    # Ecuaciones de búsqueda
-    story.append(Paragraph('Ecuaciones de Búsqueda', styles['SectionTitle']))
-    story.append(Paragraph(f'<b>Google:</b> {query_info["google_query"]}', styles['Normal']))
-    story.append(Paragraph(f'<b>Scopus:</b> {query_info["scopus_query"]}', styles['Normal']))
-    story.append(Spacer(1, 20))
-
-    # Métricas y estadísticas
-    story.append(Paragraph('Estadísticas Generales', styles['SectionTitle']))
-    story.append(Paragraph(f'Total de resultados encontrados: {len(results)}', styles['Normal']))
-    story.append(Spacer(1, 12))
-
-    # Gráficos de análisis general
-    for name, fig in figures.items():
-        story.append(Paragraph(name, styles['SectionTitle']))
-        img_bytes = BytesIO()
-        fig.write_image(img_bytes, format='png', width=600, height=400)
-        img = Image(img_bytes, width=6*inch, height=4*inch)
-        story.append(img)
-        story.append(Spacer(1, 12))
-
-    # En la función export_to_pdf, después de los gráficos generales
-    if hype_data and isinstance(hype_data, dict):
-        story.append(Paragraph('Análisis del Hype Cycle de Gartner', styles['SectionTitle']))
-        story.append(Paragraph(f'<b>Fase Actual:</b> {hype_data["phase"]}', styles['Normal']))
         
-        # Agregar todos los gráficos relacionados con Gartner
-        for name, fig in figures.items():
-            if any(term in name.lower() for term in ['hype', 'menciones', 'sentimiento']):
-                story.append(Paragraph(name, styles['SectionTitle']))
-                img_bytes = BytesIO()
-                fig.write_image(img_bytes, format='png', width=600, height=400)
-                img = Image(img_bytes, width=6*inch, height=4*inch)
-                story.append(img)
-                story.append(Spacer(1, 12))
-                
-    # Análisis del Hype Cycle
-    if hype_data:
-        story.append(Paragraph('Análisis del Hype Cycle de Gartner', styles['SectionTitle']))
-        story.append(Paragraph(f'<b>Fase Actual:</b> {hype_data["phase"]}', styles['Normal']))
-        
-        # Descripción de la fase
-        phase_descriptions = {
-            "Innovation Trigger": """La tecnología está en su fase inicial de innovación, caracterizada por:
-            • Alto nivel de interés y especulación
-            • Pocos casos de implementación real
-            • Gran potencial percibido""",
-            "Peak of Inflated Expectations": """La tecnología está en su punto máximo de expectativas, donde se observa:
-            • Máxima cobertura mediática
-            • Altas expectativas de mercado
-            • Posible sobreestimación de capacidades""",
-            "Trough of Disillusionment": """La tecnología está atravesando una fase de desilusión, caracterizada por:
-            • Disminución del interés inicial
-            • Identificación de limitaciones reales
-            • Reevaluación de expectativas""",
-            "Slope of Enlightenment": """La tecnología está madurando hacia una comprensión realista, donde se observa:
-            • Casos de uso bien definidos
-            • Beneficios comprobados
-            • Adopción más estratégica""",
-            "Plateau of Productivity": """La tecnología ha alcanzado un nivel de madurez estable, caracterizada por:
-            • Adopción generalizada
-            • Beneficios claramente demostrados
-            • Implementación sistemática"""
-        }
-        story.append(Paragraph(phase_descriptions[hype_data['phase']], styles['Normal']))
-        story.append(Spacer(1, 12))
-        
-        # Métricas del Hype Cycle
-        if 'yearly_stats' in hype_data:
-            yearly_stats = hype_data['yearly_stats']
-            story.append(Paragraph('Métricas de Análisis', styles['SectionTitle']))
-            story.append(Paragraph(f"<b>Total de Menciones:</b> {yearly_stats['mention_count'].sum()}", styles['Normal']))
-            avg_sentiment = yearly_stats['sentiment_mean'].mean()
-            sentiment_label = "Positivo" if avg_sentiment > 0 else "Negativo"
-            story.append(Paragraph(f"<b>Sentimiento Promedio:</b> {avg_sentiment:.2f} ({sentiment_label})", styles['Normal']))
-            
-            trend = yearly_stats['mention_count'].pct_change().mean()
-            trend_label = "Creciente" if trend > 0 else "Decreciente"
-            story.append(Paragraph(f"<b>Tendencia:</b> {trend_label} ({trend:.1%})", styles['Normal']))
-
-    # Resultados detallados
-    story.append(Paragraph('Resultados Detallados', styles['SectionTitle']))
-    for result in results:
-        story.append(Paragraph(result['title'], styles['Heading3']))
-        story.append(Paragraph(result.get('snippet', 'No hay descripción disponible'), styles['Normal']))
-        story.append(Paragraph(f'<link href="{result["link"]}">{result["link"]}</link>', styles['Normal']))
-        if result.get('year'):
-            story.append(Paragraph(f'<b>Año:</b> {result["year"]}', styles['Normal']))
-        story.append(Spacer(1, 12))
-
-    # Construir PDF
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
-
-def test_serp_api_connection(api_key):
-    """
-    Prueba la conexión con SerpAPI
-    """
-    try:
-        import requests
-        
-        # Realizar una búsqueda simple de prueba
-        params = {
-            "api_key": api_key,
-            "q": "test",
-            "tbm": "nws",  # Búsqueda de noticias
-            "num": 1       # Solo un resultado para prueba
-        }
-        
-        response = requests.get("https://serpapi.com/search", params=params)
-        
-        # Verificar el código de respuesta
-        if response.status_code == 200:
-            data = response.json()
-            if "search_metadata" in data:
-                return True, "Conexión exitosa con SerpAPI"
-            else:
-                return False, "Respuesta inesperada de SerpAPI"
-        else:
-            error_message = response.json().get('error', 'Error desconocido')
-            return False, f"Error en SerpAPI ({response.status_code}): {error_message}"
-            
-    except requests.exceptions.RequestException as e:
-        return False, f"Error de conexión: {str(e)}"
-    except Exception as e:
-        return False, f"Error inesperado: {str(e)}"
-
-def test_api_connection(api_key, search_engine_id):
-    """
-    Prueba la conexión con Google Custom Search API
-    """
-    try:
-        from googleapiclient.discovery import build
-        from googleapiclient.errors import HttpError
-        
-        print(f"Probando con API Key: {api_key[:10]}... y Search Engine ID: {search_engine_id}")
-        service = build("customsearch", "v1", developerKey=api_key)
-        print("Servicio creado exitosamente")
-        
-        result = service.cse().list(
-            q="test",
-            cx=search_engine_id,
-            num=1
-        ).execute()
-        print("Búsqueda ejecutada exitosamente")
-        print(f"Resultados obtenidos: {result.get('searchInformation', {}).get('totalResults', 'N/A')}")
-        
-        return True, "Conexión exitosa"
-    except HttpError as e:
-        error_details = str(e)
-        print(f"Error HTTP: {error_details}")
-        
-        if e.resp.status == 403:
-            return False, f"Error de autenticación (403): {error_details}"
-        elif e.resp.status == 400:
-            return False, f"Error en la configuración (400): {error_details}"
-        else:
-            return False, f"Error HTTP {e.resp.status}: {error_details}"
-    except Exception as e:
-        print(f"Error inesperado: {str(e)}")
-        return False, f"Error inesperado: {str(e)}"
-
-def load_config_from_file(uploaded_file):
-    """
-    Carga la configuración desde un archivo subido
-    """
-    try:
-        # Leer el contenido del archivo
-        content = uploaded_file.read()
-        
-        # Decodificar el contenido
-        if uploaded_file.type == "application/json":
-            config_data = json.loads(content)
-        else:
-            st.error("Por favor, sube un archivo JSON válido")
-            return None
-            
-        # Validar la estructura del archivo
-        required_keys = ['GOOGLE_API_KEY', 'SEARCH_ENGINE_ID', 'SERP_API_KEY']
-        if not all(key in config_data for key in required_keys):
-            st.error("El archivo de configuración no contiene todas las claves necesarias")
-            return None
-            
-        # Actualizar session state
-        st.session_state.api_key = config_data['GOOGLE_API_KEY']
-        st.session_state.search_engine_id = config_data['SEARCH_ENGINE_ID']
-        st.session_state.serp_api_key = config_data['SERP_API_KEY']
-        
-        return True
-        
-    except json.JSONDecodeError:
-        st.error("El archivo no es un JSON válido")
-        return None
-    except Exception as e:
-        st.error(f"Error al cargar el archivo: {str(e)}")
-        return None
+        # Mostrar el gráfico
+        st.plotly_chart(fig, use_container_width=True)
 
 def sidebar_config():
+    """Configuración del sidebar con opciones para todas las APIs"""
     with st.sidebar:
         st.header("⚙️ Configuración")
         
@@ -781,372 +210,295 @@ def sidebar_config():
         uploaded_file = st.file_uploader(
             "Cargar archivo de configuración",
             type=['json'],
-            help="Sube un archivo JSON con tus credenciales"
+            help="Sube un archivo JSON con tus credenciales de API y AWS"
         )
         
         if uploaded_file is not None:
-            if load_config_from_file(uploaded_file):
+            config_data = load_config_from_file(uploaded_file)
+            if config_data:
+                # Actualizar session state con las claves de API
+                if 'GOOGLE_API_KEY' in config_data:
+                    st.session_state.google_api_key = config_data['GOOGLE_API_KEY']
+                if 'SEARCH_ENGINE_ID' in config_data:
+                    st.session_state.search_engine_id = config_data['SEARCH_ENGINE_ID']
+                if 'SERP_API_KEY' in config_data:
+                    st.session_state.serp_api_key = config_data['SERP_API_KEY']
+                if 'SCOPUS_API_KEY' in config_data:
+                    st.session_state.scopus_api_key = config_data['SCOPUS_API_KEY']
+                
+                # Actualizar credenciales de AWS
+                if 'AWS_ACCESS_KEY_ID' in config_data:
+                    st.session_state.aws_access_key_id = config_data['AWS_ACCESS_KEY_ID']
+                if 'AWS_SECRET_ACCESS_KEY' in config_data:
+                    st.session_state.aws_secret_access_key = config_data['AWS_SECRET_ACCESS_KEY']
+                if 'AWS_DEFAULT_REGION' in config_data:
+                    st.session_state.aws_region = config_data['AWS_DEFAULT_REGION']
+                
                 st.success("✅ Configuración cargada exitosamente")
         
         st.divider()
         
-        # API Keys (manual input como respaldo)
-        st.subheader("🔑 Configuración Manual")
-        api_key = st.text_input(
-            "Google API Key",
-            value=st.session_state.get('api_key', ''),
-            type="password"
-        )
-        st.session_state.api_key = api_key
-        
-        search_engine_id = st.text_input(
-            "Search Engine ID",
-            value=st.session_state.get('search_engine_id', ''),
-            type="password"
-        )
-        st.session_state.search_engine_id = search_engine_id
-        
-        serp_api_key = st.text_input(
-            "SerpAPI Key",
-            value=st.session_state.get('serp_api_key', ''),
-            type="password",
-            help="API key para SerpAPI (usado en análisis Hype Cycle)"
-        )
-        st.session_state.serp_api_key = serp_api_key
-        
-        # Botón de prueba
-        if st.button("🔄 Probar conexión"):
-            with st.spinner("Probando conexión..."):
-                # Probar Google API
-                success_google, message_google = test_api_connection(api_key, search_engine_id)
-                
-                # Probar SerpAPI
-                success_serp, message_serp = test_serp_api_connection(serp_api_key)
-                
-                if success_google and success_serp:
-                    st.success("Todas las conexiones exitosas")
-                else:
-                    if not success_google:
-                        st.error(f"Error en Google API: {message_google}")
-                    if not success_serp:
-                        st.error(f"Error en SerpAPI: {message_serp}")
-        
-        st.divider()
-        
-        # Configuración de búsqueda
-        st.subheader("🔍 Configuración de Búsqueda")
-        
-        # Número de resultados con mayor rango
-        col1, col2 = st.columns(2)
-        with col1:
-            max_results = st.number_input(
-                "Número de resultados",
-                min_value=10,
-                max_value=1000,
-                value=10,
-                step=10,
-                help="Número total de resultados a obtener"
+        # Sección de Google API
+        with st.expander("🔍 Google API (Búsqueda de Tendencias)", expanded=False):
+            st.markdown('<div class="api-config">', unsafe_allow_html=True)
+            google_api_key = st.text_input(
+                "Google API Key",
+                value=st.session_state.google_api_key,
+                type="password",
+                help="Necesaria para la búsqueda de tendencias"
             )
-        with col2:
-            st.info(f"Consultas API: {(max_results + 9) // 10}")
+            st.session_state.google_api_key = google_api_key
+            
+            search_engine_id = st.text_input(
+                "Search Engine ID",
+                value=st.session_state.search_engine_id,
+                type="password",
+                help="ID del motor de búsqueda personalizado"
+            )
+            st.session_state.search_engine_id = search_engine_id
+            
+            if st.button("🔄 Probar conexión Google", key="test_google"):
+                with st.spinner("Probando conexión con Google API..."):
+                    success, message = test_api_connection("google", google_api_key, search_engine_id)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        st.caption("⚠️ Cada 10 resultados = 1 consulta API")
+        # Sección de SerpAPI
+        with st.expander("📈 SerpAPI (Hype Cycle)", expanded=False):
+            st.markdown('<div class="api-config">', unsafe_allow_html=True)
+            serp_api_key = st.text_input(
+                "SerpAPI Key",
+                value=st.session_state.serp_api_key,
+                type="password",
+                help="Necesaria para el análisis del Hype Cycle"
+            )
+            st.session_state.serp_api_key = serp_api_key
+            
+            if st.button("🔄 Probar conexión SerpAPI", key="test_serp"):
+                with st.spinner("Probando conexión con SerpAPI..."):
+                    success, message = test_api_connection("serp", serp_api_key)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        # Filtros de contenido
-        st.subheader("📑 Tipos de Contenido")
-        content_types = {
-            'academic': st.checkbox("Artículos Académicos", value=True, help="Incluir resultados de Google Scholar y otros repositorios académicos"),
-            'news': st.checkbox("Noticias", value=True, help="Incluir artículos de noticias y medios"),
-            'pdfs': st.checkbox("PDFs", value=True, help="Incluir documentos PDF"),
-            'patents': st.checkbox("Patentes", value=True, help="Incluir patentes relacionadas")
-        }
+        # Sección de Scopus API
+        with st.expander("📉 Scopus API (Curvas en S)", expanded=False):
+            st.markdown('<div class="api-config">', unsafe_allow_html=True)
+            scopus_api_key = st.text_input(
+                "Scopus API Key",
+                value=st.session_state.scopus_api_key,
+                type="password",
+                help="Necesaria para el análisis de curvas en S"
+            )
+            st.session_state.scopus_api_key = scopus_api_key
+            
+            if st.button("🔄 Probar conexión Scopus", key="test_scopus"):
+                with st.spinner("Probando conexión con Scopus API..."):
+                    success, message = test_api_connection("scopus", scopus_api_key)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        # Filtros temporales
         st.divider()
-        st.subheader("📅 Filtros Temporales")
         
-        min_year = st.number_input(
-            "Año mínimo",
-            min_value=1970,
-            max_value=2025,
-            value=2014,
-            help="Año desde el cual buscar resultados"
-        )
+        # Sección de AWS DynamoDB
+        with st.expander("🗄️ AWS DynamoDB (Almacenamiento)", expanded=False):
+            st.markdown('<div class="aws-config">', unsafe_allow_html=True)
+            st.write("**Configuración de AWS para almacenamiento en DynamoDB**")
+            
+            aws_access_key = st.text_input(
+                "AWS Access Key ID",
+                value=st.session_state.aws_access_key_id,
+                type="password",
+                help="Tu Access Key ID de AWS"
+            )
+            st.session_state.aws_access_key_id = aws_access_key
+            
+            aws_secret_key = st.text_input(
+                "AWS Secret Access Key",
+                value=st.session_state.aws_secret_access_key,
+                type="password",
+                help="Tu Secret Access Key de AWS"
+            )
+            st.session_state.aws_secret_access_key = aws_secret_key
+            
+            aws_region = st.selectbox(
+                "AWS Region",
+                options=['us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-1'],
+                index=0,
+                help="Región donde están creadas las tablas DynamoDB"
+            )
+            st.session_state.aws_region = aws_region
+            
+            if st.button("🔄 Probar conexión AWS", key="test_aws"):
+                with st.spinner("Probando conexión con DynamoDB..."):
+                    try:
+                        from data_storage import DynamoDBStorage
+                        dynamo_storage = DynamoDBStorage(
+                            region_name=aws_region,
+                            aws_access_key_id=aws_access_key,
+                            aws_secret_access_key=aws_secret_key
+                        )
+                        st.success("✅ Conexión exitosa con DynamoDB")
+                    except Exception as e:
+                        st.error(f"❌ Error de conexión: {str(e)}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
-        api_usage = st.expander("ℹ️ Información de uso de API")
-        with api_usage:
+        
+        # Acerca de la aplicación
+        with st.expander("ℹ️ Acerca de", expanded=False):
             st.write("""
-            - Límite diario gratuito: 100 consultas
-            - Cada 10 resultados = 1 consulta
-            - Máximo 100 resultados por consulta
-            - Los resultados se obtienen en páginas de 10
+            **Tech Trends Explorer v2.0**
+            
+            **Nuevas características:**
+            - ✅ Almacenamiento en AWS DynamoDB
+            - ✅ Mejor gestión de datos
+            - ✅ Acceso desde cualquier dispositivo
+            - ❌ Eliminado: Almacenamiento en GitHub
+            
+            Esta aplicación te permite analizar tendencias tecnológicas 
+            utilizando múltiples fuentes de datos y métodos de análisis.
+            
+            © 2025 Todos los derechos reservados
             """)
-        
-        return {
-            'api_key': api_key,
-            'search_engine_id': search_engine_id,
-            'serp_api_key': serp_api_key,
-            'min_year': min_year,
-            'content_types': content_types,
-            'max_results': max_results
-        }
-        
-
-def perform_advanced_search(api_key, search_engine_id, query, config):
-    try:
-        service = build("customsearch", "v1", developerKey=api_key)
-        all_results = []
-        seen_urls = set()  # Para controlar duplicados
-        desired_results = config['desired_results']
-        
-        # Modificar query según tipos de contenido permitidos
-        content_filters = []
-        if config['content_types']['academic']:
-            content_filters.extend(['site:scholar.google.com OR site:sciencedirect.com OR site:springer.com OR site:ieee.org'])
-        if config['content_types']['news']:
-            content_filters.extend(['site:news.google.com OR site:reuters.com OR site:bloomberg.com'])
-        if config['content_types']['pdfs']:
-            content_filters.append('filetype:pdf')
-        if not config['content_types']['patents']:
-            content_filters.append('-patent')
-        
-        # Agregar filtros al query original
-        if content_filters:
-            query = f"({query}) AND ({' OR '.join(content_filters)})"
-        
-        # Iniciar barra de progreso
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        page = 1
-        total_requested = 0
-        
-        while len(all_results) < desired_results:
-            try:
-                start_index = ((page - 1) * 10) + 1
-                
-                status_text.text(f"Buscando resultados... (Página {page})")
-                
-                result = service.cse().list(
-                    q=query,
-                    cx=search_engine_id,
-                    num=10,
-                    start=start_index
-                ).execute()
-                
-                items = result.get('items', [])
-                if not items:
-                    break
-                
-                # Filtrar duplicados y procesar resultados
-                for item in items:
-                    url = item.get('link')
-                    if url not in seen_urls:
-                        # Verificar tipo de contenido
-                        content_type = classify_content_type(item)
-                        if should_include_content(content_type, config['content_types']):
-                            seen_urls.add(url)
-                            all_results.append(item)
-                
-                # Actualizar progreso
-                progress = min(len(all_results) / desired_results, 1.0)
-                progress_bar.progress(progress)
-                
-                page += 1
-                total_requested += 10
-                
-                # Evitar exceder límites de API
-                if total_requested >= 100:  # Límite de 100 resultados por consulta
-                    status_text.warning("Se alcanzó el límite de resultados por consulta")
-                    break
-                
-            except Exception as e:
-                status_text.error(f"Error en página {page}: {str(e)}")
-                break
-        
-        status_text.text(f"Búsqueda completada. Se encontraron {len(all_results)} resultados únicos.")
-        return True, all_results
-        
-    except Exception as e:
-        return False, str(e)
-
-def classify_content_type(item):
-    """Clasificar el tipo de contenido basado en la URL y metadata"""
-    url = item.get('link', '').lower()
-    title = item.get('title', '').lower()
-    
-    if 'pdf' in url or any(mime in item.get('mime', '') for mime in ['pdf', 'application/pdf']):
-        return 'PDF'
-    elif any(domain in url for domain in ['scholar.google', 'sciencedirect', 'springer', 'ieee']):
-        return 'Academic'
-    elif any(domain in url for domain in ['news.google', 'reuters', 'bloomberg']):
-        return 'News'
-    elif any(term in url for term in ['patent', 'uspto.gov', 'espacenet']):
-        return 'Patent'
-    else:
-        return 'Web Page'
-
-def should_include_content(content_type, content_types):
-    """Determinar si un tipo de contenido debe ser incluido según la configuración"""
-    mapping = {
-        'Web Page': 'web_pages',
-        'Academic': 'academic',
-        'News': 'news',
-        'PDF': 'pdfs',
-        'Patent': 'patents'
-    }
-    return content_types.get(mapping.get(content_type, 'web_pages'), False)
 
 def main():
-    #initialize_session_state()
+    """
+    Función principal que maneja la interfaz y flujo de la aplicación
+    """
+    # Inicializar estado de la sesión
+    initialize_session_state()
     
     # Configuración del sidebar
-    config = sidebar_config()
+    sidebar_config()
     
-    # Encabezado principal
-    st.markdown('<p class="main-header">🔍 Tech Trends Explorer</p>', unsafe_allow_html=True)
+    # Pestañas principales
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🏠 Inicio", 
+        "🔍 Búsqueda de Tendencias", 
+        "📈 Análisis del Hype Cycle",
+        "📉 Curvas en S",
+        "🗄️ Datos Guardados"
+    ])
     
-    # Verificar configuración
-    if not config['api_key'] or not config['search_engine_id'] or not config['serp_api_key']:
-        st.warning("⚠️ Por favor, configura todas las credenciales de API en el sidebar")
-        return
-
-    # Área de búsqueda
-    st.write("### 🎯 Define tus términos de búsqueda")
+    with tab1:
+        show_welcome_screen()
     
-    # Gestión de topics con la nueva función
-    topics = manage_topics()
+    with tab2:
+        if not st.session_state.google_api_key or not st.session_state.search_engine_id:
+            st.warning("⚠️ Para usar esta funcionalidad, configura tu Google API Key y Search Engine ID en el panel lateral")
+        else:
+            run_trend_search()
     
-    # Botón de análisis
-    if st.button("🔍 Analizar Tendencias", type="primary"):
-        reset_session_state()
+    with tab3:
+        if not st.session_state.serp_api_key:
+            st.warning("⚠️ Para usar esta funcionalidad, configura tu SerpAPI Key en el panel lateral")
+        else:
+            run_hype_cycle_analysis()
+    
+    with tab4:
+        if not st.session_state.scopus_api_key:
+            st.warning("⚠️ Para usar esta funcionalidad, configura tu Scopus API Key en el panel lateral")
+        else:
+            run_s_curve_analysis()
+    
+    with tab5:
+        st.title("🗄️ Gestión de Datos")
         
-        if not topics:
-            st.error("Por favor, ingresa al menos un tema para buscar")
-            return
-            
-        with st.spinner("🔄 Analizando tendencias tecnológicas..."):
-            # Inicializar analizadores
-            query_builder = QueryBuilder()
-            news_analyzer = NewsAnalyzer()
-            
-            # Construir query principal
-            processed_topics = process_topics(topics)
-            google_query = query_builder.build_google_query(
-                processed_topics,  # Usar los topics procesados
-                config['min_year'],
-                config['content_types']['patents']
+        # Configuración para datos guardados
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            # Selector para modo de almacenamiento
+            storage_mode = st.radio(
+                "Modo de almacenamiento",
+                options=["Local", "AWS DynamoDB"],
+                index=0,
+                help="Selecciona dónde guardar los datos de análisis"
             )
-            
-            # Crear objeto de información de queries
-            query_info = {
-                'google_query': google_query,  # La clave existente
-                'scopus_query': query_builder.build_scopus_query(topics, config['min_year']),
-                'search_query': google_query,  # Nueva clave para display_advanced_analysis
-                'time_range': f"{CONFIG['MIN_YEAR']}-{datetime.now().year}"
-            }
-            
-            # Crear pestañas
-            tab1, tab2 = st.tabs(["📊 Análisis General", "📈 Análisis Hype Cycle"])
-
-            with tab1:
-                # Realizar búsqueda general con Google API
-                success, general_results = perform_search(
-                    config['api_key'], 
-                    config['search_engine_id'], 
-                    google_query,
-                    config['content_types'],
-                    max_results=config['max_results']
+        
+        with col2:
+            # Mostrar información sobre el modo seleccionado
+            if storage_mode == "Local":
+                st.info("""
+                **Modo local activo**: Los datos se guardarán en archivos JSON locales.
+                
+                📂 Ubicación: `./data/`
+                
+                ⚠️ Estos datos solo están disponibles en tu computadora actual.
+                """)
+                
+                if st.button("📂 Abrir carpeta de datos", key="open_data_folder"):
+                    data_path = os.path.abspath("./data")
+                    os.makedirs(data_path, exist_ok=True)
+                    st.success(f"📁 Datos guardados en: {data_path}")
+            else:
+                # Configuración de DynamoDB
+                aws_configured = (
+                    st.session_state.aws_access_key_id and 
+                    st.session_state.aws_secret_access_key and 
+                    st.session_state.aws_region
                 )
                 
-                if success:
-                    # Mostrar resultados generales
-                    show_analysis_results(
-                        results=general_results,
-                        query_info=query_info,
-                        search_topics=topics,
-                        content_types=config['content_types']
-                    )
+                if not aws_configured:
+                    st.warning("⚠️ Configuración de AWS incompleta")
+                    st.info("""
+                    Para usar DynamoDB:
+                    1. Configura las credenciales en el panel lateral
+                    2. Asegúrate de que las tablas estén creadas:
+                       - tech-trends-analyses
+                       - tech-trends-categories
+                    """)
                 else:
-                    st.error("Error en la búsqueda general de tendencias")
-            
-            with tab2:
-                st.write("### 📈 Análisis del Hype Cycle")
-                
-                with st.spinner("Analizando datos con SerpAPI..."):
-                    # Realizar búsqueda específica para Hype Cycle
-                    serp_success, serp_results = news_analyzer.perform_news_search(
-                        serp_api_key=config['serp_api_key'],
-                        query=google_query
-                    )
+                    st.success("✅ Configuración de AWS disponible")
+                    st.info(f"""
+                    **Región**: {st.session_state.aws_region}
                     
-                    if serp_success and serp_results:
-                        # Análisis del Hype Cycle
-                        hype_data = news_analyzer.analyze_hype_cycle(serp_results)
-                        
-                        if hype_data:
-                            # Mostrar fase actual
-                            st.success(f"**Fase Actual:** {hype_data['phase']}")
-                            
-                            # Descripción de la fase
-                            phase_descriptions = {
-                                "Innovation Trigger": """
-                                    La tecnología está en su fase inicial de innovación. Se caracteriza por:
-                                    - Alto nivel de interés y especulación
-                                    - Pocos casos de implementación real
-                                    - Gran potencial percibido
-                                """,
-                                "Peak of Inflated Expectations": """
-                                    La tecnología está en su punto máximo de expectativas. Se observa:
-                                    - Máxima cobertura mediática
-                                    - Altas expectativas de mercado
-                                    - Posible sobreestimación de capacidades
-                                """,
-                                "Trough of Disillusionment": """
-                                    La tecnología está atravesando una fase de desilusión. Caracterizada por:
-                                    - Disminución del interés inicial
-                                    - Identificación de limitaciones reales
-                                    - Reevaluación de expectativas
-                                """,
-                                "Slope of Enlightenment": """
-                                    La tecnología está madurando hacia una comprensión realista. Se observa:
-                                    - Casos de uso bien definidos
-                                    - Beneficios comprobados
-                                    - Adopción más estratégica
-                                """,
-                                "Plateau of Productivity": """
-                                    La tecnología ha alcanzado un nivel de madurez estable. Caracterizada por:
-                                    - Adopción generalizada
-                                    - Beneficios claramente demostrados
-                                    - Implementación sistemática
-                                """
-                            }
-                            
-                            st.info(phase_descriptions[hype_data['phase']])
-                            
-                            # Mostrar gráfico del Hype Cycle
-                            fig = news_analyzer.plot_hype_cycle(hype_data, topics)
-                            st.plotly_chart(fig, use_container_width=True)
-
-                            # Análisis de puntos de inflexión
-                            st.write("### 📊 Análisis de Puntos de Inflexión")
-                            inflection_points = news_analyzer.analyze_gartner_points(hype_data['yearly_stats'])
-                            inflection_fig = news_analyzer.plot_gartner_analysis(
-                                hype_data['yearly_stats'], 
-                                inflection_points
-                            )
-                            st.plotly_chart(inflection_fig, use_container_width=True)
-                            
-                            
-                            # Mostrar resultados detallados
-                            news_analyzer.display_advanced_analysis(serp_results, query_info, st)
-                            news_analyzer.display_results(serp_results, st)
-                              
-                        else:
-                            st.warning("No se pudo generar el análisis del Hype Cycle con los datos disponibles")
-                    else:
-                        st.error("No se pudieron obtener datos de SerpAPI para el análisis del Hype Cycle")
+                    ☁️ Los datos se guardarán en DynamoDB y estarán disponibles desde cualquier dispositivo.
+                    """)
+        
+        # Inicializar sistema de almacenamiento
+        from data_storage import initialize_database
+        
+        if storage_mode == "Local":
+            db = initialize_database("local")
+        else:
+            if aws_configured:
+                try:
+                    db = initialize_database(
+                        "dynamodb",
+                        region_name=st.session_state.aws_region,
+                        aws_access_key_id=st.session_state.aws_access_key_id,
+                        aws_secret_access_key=st.session_state.aws_secret_access_key
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error al conectar con DynamoDB: {str(e)}")
+                    st.info("Usando almacenamiento local como fallback")
+                    db = initialize_database("local")
+            else:
+                st.warning("Configuración de AWS incompleta. Usando almacenamiento local.")
+                db = initialize_database("local")
+        
+        # Cargar interfaz de gestión
+        if db is not None:
+            try:
+                from database_manager import run_database_manager
+                run_database_manager(db)
+            except Exception as e:
+                st.error(f"Error al inicializar el gestor de base de datos: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+        else:
+            st.warning("No se pudo inicializar el sistema de almacenamiento.")
 
 if __name__ == "__main__":
     main()

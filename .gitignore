@@ -1,8 +1,142 @@
-venv/
-__pycache__/
-*.pyc
+# Tech Trends Explorer - Archivos a ignorar
+
+# Credenciales y configuración sensible
 .env
+config.json
+credentials.json
+aws_credentials.json
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Archivos de datos locales
+data/
+backup/
+*.json
+!requirements.json
+!package.json
+
+# Logs y archivos temporales
+*.log
+*.tmp
+temp/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# PDM
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
 .DS_Store
-data/cache/*
-data/exports/*
-data/database.sqlite
+.AppleDouble
+.LSOverride
+Icon
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# AWS específico
+.aws/
+aws-exports.js
+
+# Archivos de prueba
+test_*.json
+sample_*.json
+
+# Archivos de backup
+*.bak
+*.backup

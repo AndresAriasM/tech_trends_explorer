@@ -1,4 +1,4 @@
-# utils/search_utils.py
+# src/utils/search_utils.py
 from googleapiclient.discovery import build
 from datetime import datetime
 import nltk
@@ -6,11 +6,23 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.tag import pos_tag
 import pandas as pd
+import streamlit as st
 
 # Descargar recursos necesarios de NLTK
-nltk.download('punkt')
-nltk.download('averaged_perceptron_tagger')
-nltk.download('stopwords')
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('taggers/averaged_perceptron_tagger')
+except LookupError:
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords', quiet=True)
 
 class SearchProcessor:
     def __init__(self, api_key, search_engine_id):
@@ -25,16 +37,65 @@ class SearchProcessor:
         return base_query + time_filter
 
     def perform_search(self, query, **kwargs):
-        """Realiza la búsqueda en Google"""
+        """Realiza la búsqueda en Google con barra de progreso"""
         try:
-            results = self.service.cse().list(
-                q=query,
-                cx=self.search_engine_id,
-                num=100,  # Máximo permitido por página
-                **kwargs
-            ).execute()
-            return results.get('items', [])
+            # Crear barra de progreso si estamos en contexto de Streamlit
+            try:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                show_progress = True
+            except:
+                show_progress = False
+            
+            results = []
+            max_results = kwargs.get('max_results', 100)
+            pages_needed = (max_results + 9) // 10
+            
+            for page in range(pages_needed):
+                start_index = (page * 10) + 1
+                
+                # Actualizar estado si tenemos UI
+                if show_progress:
+                    progress = (page + 1) / pages_needed
+                    progress_bar.progress(progress)
+                    status_text.text(f"Página {page+1} de {pages_needed} ({len(results)} resultados)")
+                
+                # Preparar parámetros de la búsqueda
+                search_params = {
+                    'q': query,
+                    'cx': self.search_engine_id,
+                    'num': min(10, max_results - len(results)),
+                    'start': start_index,
+                    **{k: v for k, v in kwargs.items() if k != 'max_results'}
+                }
+                
+                # Ejecutar búsqueda
+                page_results = self.service.cse().list(**search_params).execute()
+                items = page_results.get('items', [])
+                
+                if not items:
+                    break
+                    
+                results.extend(items)
+                
+                # Verificar si ya tenemos suficientes resultados
+                if len(results) >= max_results:
+                    results = results[:max_results]
+                    break
+            
+            # Limpiar UI si existe
+            if show_progress:
+                progress_bar.empty()
+                status_text.empty()
+                
+            return results
+            
         except Exception as e:
+            # Mostrar error en UI si existe
+            try:
+                st.error(f"Error en la búsqueda: {str(e)}")
+            except:
+                pass
             raise Exception(f"Error en la búsqueda: {str(e)}")
 
     def extract_keywords(self, text):
@@ -127,6 +188,12 @@ class SearchProcessor:
             return 0
         
         # Calculamos la pendiente de la tendencia
-        from scipy import stats
-        slope, _ = stats.linregress(range(len(yearly_counts)), yearly_counts.values)[:2]
-        return slope
+        try:
+            from scipy import stats
+            slope, _ = stats.linregress(range(len(yearly_counts)), yearly_counts.values)[:2]
+            return slope
+        except:
+            # Si no tiene scipy, calcular una pendiente simple
+            first = yearly_counts.iloc[0]
+            last = yearly_counts.iloc[-1]
+            return (last - first) / len(yearly_counts)
