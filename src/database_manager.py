@@ -76,14 +76,15 @@ def show_saved_analyses(db):
     # Opciones de filtrado
     st.subheader("Filtrar Análisis")
     
-    # Por categoría
+    # Por categoría - KEY ÚNICA AÑADIDA
     category_options = {"Todas las categorías": "all"}
     category_options.update({cat["name"]: cat["id"] for cat in categories})
     
     selected_category = st.selectbox(
         "Categoría",
         options=list(category_options.keys()),
-        index=0
+        index=0,
+        key="db_manager_category_filter_selectbox"  # ← KEY ÚNICA AÑADIDA
     )
     selected_category_id = category_options[selected_category]
     
@@ -94,7 +95,8 @@ def show_saved_analyses(db):
             datetime.now().replace(year=datetime.now().year-1).date(),
             datetime.now().date()
         ],
-        help="Filtra análisis por fecha de ejecución"
+        help="Filtra análisis por fecha de ejecución",
+        key="db_manager_date_range_input"  # ← KEY ÚNICA AÑADIDA
     )
     
     # Aplicar filtros
@@ -192,9 +194,11 @@ def show_saved_analyses(db):
             analysis_name = analysis.get("name") or f"Análisis {analysis_id}"
             analysis_options[analysis_name] = analysis_id
         
+        # Selectbox para elegir análisis - KEY ÚNICA AÑADIDA
         selected_analysis_name = st.selectbox(
             "Selecciona un análisis para ver detalles",
-            options=list(analysis_options.keys())
+            options=list(analysis_options.keys()),
+            key="db_manager_analysis_details_selectbox"  # ← KEY ÚNICA AÑADIDA
         )
         
         selected_analysis_id = analysis_options[selected_analysis_name]
@@ -441,7 +445,7 @@ def manage_categories(db):
         # Formulario para crear nueva categoría
         st.subheader("Crear Nueva Categoría")
         
-        with st.form("new_category_form"):
+        with st.form("new_category_form_unique"):  # ← KEY ÚNICA AÑADIDA
             cat_name = st.text_input("Nombre de la categoría")
             cat_description = st.text_area("Descripción (opcional)")
             
@@ -484,14 +488,16 @@ def manage_categories(db):
     col1, col2 = st.columns(2)
     
     with col1:
+        # Selectbox para análisis - KEY ÚNICA AÑADIDA
         selected_analysis_name = st.selectbox(
             "Selecciona un análisis",
-            options=list(analysis_options.keys())
+            options=list(analysis_options.keys()),
+            key="db_manager_reassign_analysis_selectbox"  # ← KEY ÚNICA AÑADIDA
         )
         selected_analysis_id = analysis_options[selected_analysis_name]
     
     with col2:
-        # Selector de categoría destino
+        # Selector de categoría destino - KEY ÚNICA AÑADIDA
         category_mapping = {}
         for cat in categories:
             cat_id = cat.get("id") or cat.get("category_id")
@@ -500,12 +506,13 @@ def manage_categories(db):
         
         selected_category = st.selectbox(
             "Mover a categoría",
-            options=list(category_mapping.keys())
+            options=list(category_mapping.keys()),
+            key="db_manager_reassign_category_selectbox"  # ← KEY ÚNICA AÑADIDA
         )
         selected_category_id = category_mapping[selected_category]
     
-    # Botón para reasignar
-    if st.button("Reasignar Análisis", type="primary"):
+    # Botón para reasignar - KEY ÚNICA AÑADIDA
+    if st.button("Reasignar Análisis", type="primary", key="db_manager_reassign_button"):
         try:
             # Obtener el análisis seleccionado
             analysis = db.get_analysis_by_id(selected_analysis_id)

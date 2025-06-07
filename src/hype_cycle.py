@@ -86,21 +86,23 @@ def _show_analysis_interface():
         col1, col2 = st.columns(2)
         
         with col1:
-            # Modo de almacenamiento
+            # Modo de almacenamiento - KEY ÚNICA AÑADIDA
             storage_options = ["local", "dynamodb"]
             current_mode = st.selectbox(
                 "Modo de almacenamiento",
                 options=storage_options,
                 index=storage_options.index(storage_mode),
-                help="Selecciona dónde guardar los resultados del análisis"
+                help="Selecciona dónde guardar los resultados del análisis",
+                key="hype_analysis_storage_mode_selectbox"  # ← KEY ÚNICA AÑADIDA
             )
             st.session_state.hype_storage_mode = current_mode
             
-            # Auto-guardar
+            # Auto-guardar - KEY ÚNICA AÑADIDA
             auto_save = st.checkbox(
                 "Guardar automáticamente", 
                 value=True,
-                help="Guarda automáticamente cada análisis realizado"
+                help="Guarda automáticamente cada análisis realizado",
+                key="hype_analysis_auto_save_checkbox"  # ← KEY ÚNICA AÑADIDA
             )
         
         with col2:
@@ -110,20 +112,22 @@ def _show_analysis_interface():
                     categories = hype_storage.storage.get_all_categories()
                     category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
                     
+                    # Selectbox para categoría - KEY ÚNICA AÑADIDA
                     selected_category_name = st.selectbox(
                         "Categoría para guardar",
                         options=list(category_options.keys()),
-                        help="Selecciona la categoría donde guardar este análisis"
+                        help="Selecciona la categoría donde guardar este análisis",
+                        key="hype_analysis_category_selectbox"  # ← KEY ÚNICA AÑADIDA
                     )
                     
                     selected_category_id = category_options[selected_category_name]
                     
-                    # Opción para crear nueva categoría
-                    if st.checkbox("Crear nueva categoría"):
-                        new_cat_name = st.text_input("Nombre de la nueva categoría")
-                        new_cat_desc = st.text_area("Descripción (opcional)", height=60)
+                    # Opción para crear nueva categoría - KEY ÚNICA AÑADIDA
+                    if st.checkbox("Crear nueva categoría", key="hype_analysis_new_category_checkbox"):
+                        new_cat_name = st.text_input("Nombre de la nueva categoría", key="hype_analysis_new_cat_name_input")
+                        new_cat_desc = st.text_area("Descripción (opcional)", height=60, key="hype_analysis_new_cat_desc_textarea")
                         
-                        if st.button("Crear Categoría") and new_cat_name:
+                        if st.button("Crear Categoría", key="hype_analysis_create_category_btn") and new_cat_name:
                             try:
                                 new_cat_id = hype_storage.storage.add_category(new_cat_name, new_cat_desc)
                                 if new_cat_id:
@@ -167,14 +171,17 @@ def _show_analysis_interface():
                 min_value=2010,
                 max_value=2025,
                 value=reuse_query.get('search_parameters', {}).get('min_year', 2015) if reuse_query else 2015,
-                help="Año desde el cual buscar resultados"
+                help="Año desde el cual buscar resultados",
+                key="hype_analysis_min_year_input"  # ← KEY ÚNICA AÑADIDA
             )
         with col2:
+            # Multiselect para fuentes - KEY ÚNICA AÑADIDA
             sources_filter = st.multiselect(
                 "Filtrar fuentes",
                 options=["Tech News", "Business News", "Academic Sources", "Blogs"],
                 default=reuse_query.get('search_parameters', {}).get('sources_filter', ["Tech News", "Business News"]) if reuse_query else ["Tech News", "Business News"],
-                help="Tipos de fuentes a incluir en el análisis"
+                help="Tipos de fuentes a incluir en el análisis",
+                key="hype_analysis_sources_filter_multiselect"  # ← KEY ÚNICA AÑADIDA
             )
         
         # Configuración adicional para almacenamiento
@@ -185,13 +192,15 @@ def _show_analysis_interface():
                 min_value=50,
                 max_value=1000,
                 value=200,
-                help="Número máximo de resultados a obtener de la API"
+                help="Número máximo de resultados a obtener de la API",
+                key="hype_analysis_max_results_input"  # ← KEY ÚNICA AÑADIDA
             )
         with col4:
             analysis_notes = st.text_input(
                 "Notas del análisis",
                 placeholder="Ej: Análisis para Q1 2025, investigación de mercado...",
-                help="Notas que se guardarán con el análisis"
+                help="Notas que se guardarán con el análisis",
+                key="hype_analysis_notes_input"  # ← KEY ÚNICA AÑADIDA
             )
     
     # Mostrar información de consulta actual
@@ -200,7 +209,7 @@ def _show_analysis_interface():
         st.write("### 📝 Consulta actual")
         st.code(current_query)
     
-    # Botón de análisis
+    # Botón de análisis - KEY ÚNICA AÑADIDA
     if st.button("📊 Analizar Hype Cycle", type="primary", key="hype_analyze_main_btn"):
         if not topics:
             st.error("Por favor, ingresa al menos un tema para analizar")

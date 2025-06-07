@@ -275,22 +275,22 @@ def sidebar_config():
             st.markdown('<div class="hype-storage-config">', unsafe_allow_html=True)
             st.write("**Configuración para almacenamiento de análisis Hype Cycle**")
             
-            # Modo de almacenamiento
+            # Modo de almacenamiento - KEY ÚNICA AÑADIDA
             storage_mode = st.radio(
                 "Modo de almacenamiento",
                 options=["local", "dynamodb"],
                 index=0 if st.session_state.hype_storage_mode == "local" else 1,
                 help="Local: archivos JSON | DynamoDB: base de datos en la nube",
-                key="main_hype_storage_mode_radio"
+                key="main_hype_storage_mode_radio_unique"  # ← KEY ÚNICA AÑADIDA
             )
             st.session_state.hype_storage_mode = storage_mode
             
-            # Auto-guardar
+            # Auto-guardar - KEY ÚNICA AÑADIDA
             auto_save = st.checkbox(
                 "Guardar automáticamente",
                 value=st.session_state.hype_auto_save,
                 help="Guardar cada análisis automáticamente sin preguntar",
-                key="main_hype_auto_save_checkbox"
+                key="main_hype_auto_save_checkbox_unique"  # ← KEY ÚNICA AÑADIDA
             )
             st.session_state.hype_auto_save = auto_save
             
@@ -332,7 +332,7 @@ def sidebar_config():
             )
             st.session_state.search_engine_id = search_engine_id
             
-            if st.button("🔄 Probar conexión Google", key="test_google"):
+            if st.button("🔄 Probar conexión Google", key="test_google_unique"):
                 with st.spinner("Probando conexión con Google API..."):
                     success, message = test_api_connection("google", google_api_key, search_engine_id)
                     if success:
@@ -352,7 +352,7 @@ def sidebar_config():
             )
             st.session_state.serp_api_key = serp_api_key
             
-            if st.button("🔄 Probar conexión SerpAPI", key="test_serp"):
+            if st.button("🔄 Probar conexión SerpAPI", key="test_serp_unique"):
                 with st.spinner("Probando conexión con SerpAPI..."):
                     success, message = test_api_connection("serp", serp_api_key)
                     if success:
@@ -372,7 +372,7 @@ def sidebar_config():
             )
             st.session_state.scopus_api_key = scopus_api_key
             
-            if st.button("🔄 Probar conexión Scopus", key="test_scopus"):
+            if st.button("🔄 Probar conexión Scopus", key="test_scopus_unique"):
                 with st.spinner("Probando conexión con Scopus API..."):
                     success, message = test_api_connection("scopus", scopus_api_key)
                     if success:
@@ -404,16 +404,17 @@ def sidebar_config():
             )
             st.session_state.aws_secret_access_key = aws_secret_key
             
+            # AWS Region selectbox - KEY ÚNICA AÑADIDA
             aws_region = st.selectbox(
                 "AWS Region",
                 options=['us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-1'],
                 index=0,
                 help="Región donde están creadas las tablas DynamoDB",
-                key="main_aws_region_selectbox"
+                key="main_aws_region_selectbox_unique"  # ← KEY ÚNICA AÑADIDA
             )
             st.session_state.aws_region = aws_region
             
-            if st.button("🔄 Probar conexión AWS", key="test_aws"):
+            if st.button("🔄 Probar conexión AWS", key="test_aws_unique"):
                 with st.spinner("Probando conexión con DynamoDB..."):
                     try:
                         from data_storage import DynamoDBStorage
@@ -639,13 +640,13 @@ def _show_general_data_management():
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        # Selector para modo de almacenamiento general
+        # Selector para modo de almacenamiento general - KEY ÚNICA AÑADIDA
         storage_mode = st.radio(
             "Modo de almacenamiento",
             options=["Local", "AWS DynamoDB"],
             index=0,
             help="Selecciona dónde están guardados los otros análisis",
-            key="main_general_storage_mode_radio"
+            key="main_general_storage_mode_radio_unique"  # ← KEY ÚNICA AÑADIDA
         )
     
     with col2:
@@ -659,7 +660,7 @@ def _show_general_data_management():
             ⚠️ Estos datos solo están disponibles en tu computadora actual.
             """)
             
-            if st.button("📂 Abrir carpeta de datos", key="main_open_data_folder_btn"):
+            if st.button("📂 Abrir carpeta de datos", key="main_open_data_folder_btn_unique"):
                 data_path = os.path.abspath("./data")
                 os.makedirs(data_path, exist_ok=True)
                 st.success(f"📁 Datos guardados en: {data_path}")
