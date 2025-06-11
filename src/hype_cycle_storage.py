@@ -409,8 +409,9 @@ class HypeCycleStorage:
 class HypeCycleHistoryInterface:
     """Interfaz para gestionar el historial de consultas de Hype Cycle"""
     
-    def __init__(self, hype_storage: HypeCycleStorage):
+    def __init__(self, hype_storage: HypeCycleStorage, context_prefix: str = "default"):
         self.storage = hype_storage
+        self.context_prefix = context_prefix  # Añadir prefijo de contexto
     
     def show_history_interface(self):
         """Muestra la interfaz completa de historial"""
@@ -442,13 +443,13 @@ class HypeCycleHistoryInterface:
         except:
             categories = [{"id": "default", "name": "Sin categoría"}]
         
-        # Selector de categoría - AÑADIR KEY ÚNICA
+        # Selector de categoría - KEY ÚNICA CON CONTEXTO
         category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
         
         selected_category_name = st.selectbox(
             "Selecciona una categoría",
             options=list(category_options.keys()),
-            key="hype_history_category_explorer_selectbox"  # ← KEY ÚNICA AÑADIDA
+            key=f"{self.context_prefix}_hype_history_category_explorer_selectbox"  # ← USAR CONTEXTO
         )
         
         selected_category_id = category_options[selected_category_name]
@@ -465,158 +466,6 @@ class HypeCycleHistoryInterface:
         # Mostrar consultas
         for query in queries:
             self._display_query_card(query)
-    
-    def _show_summary_dashboard(self):
-        """Muestra dashboard de resumen"""
-        st.subheader("Dashboard de Resumen")
-        
-        # Obtener todas las consultas
-        all_queries = self.storage.get_all_hype_cycle_queries()
-        
-        if not all_queries:
-            st.info("No hay consultas de Hype Cycle guardadas")
-            return
-        
-        # Métricas generales
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Consultas", len(all_queries))
-        
-        with col2:
-            # Fases más comunes
-            phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in all_queries]
-            most_common_phase = max(set(phases), key=phases.count) if phases else "N/A"
-            st.metric("Fase Más Común", most_common_phase)
-        
-        with col3:
-            # Promedio de confianza
-            confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in all_queries]
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-            st.metric("Confianza Promedio", f"{avg_confidence:.2f}")
-        
-        with col4:
-            # Consultas este mes
-            current_month = datetime.now().strftime("%Y-%m")
-            recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
-            st.metric("Consultas Este Mes", len(recent_queries))
-        
-        # Gráfico de distribución de fases
-        st.subheader("Distribución de Fases del Hype Cycle")
-        
-        phase_counts = {}
-        for query in all_queries:
-            phase = query.get("hype_metrics", {}).get("phase", "Unknown")
-            phase_counts[phase] = phase_counts.get(phase, 0) + 1
-        
-        if phase_counts:
-            fig_phases = px.pie(
-                values=list(phase_counts.values()),
-                names=list(phase_counts.keys()),
-                title="Distribución de Tecnologías por Fase del Hype Cycle"
-            )
-            st.plotly_chart(fig_phases, use_container_width=True)
-        
-        # Timeline de consultas
-        st.subheader("Timeline de Consultas")
-        
-        # Preparar datos para timeline
-        timeline_data = []
-        for query in all_queries:
-            try:
-                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
-                timeline_data.append({
-                    "Fecha": date,
-                    "Consulta": query.get("search_query", "")[:30] + "...",
-                    "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
-                    "Confianza": query.get("hype_metrics", {}).get("confidence", 0)
-                })
-            except:
-                continue
-        
-        if timeline_data:
-            df_timeline = pd.DataFrame(timeline_data)
-            df_timeline = df_timeline.sort_values("Fecha")
-            
-            fig_timeline = px.scatter(
-                df_timeline,
-                x="Fecha",
-                y="Confianza",
-                color="Fase",
-                hover_data=["Consulta"],
-                title="Timeline de Consultas por Confianza y Fase"
-            )
-            st.plotly_chart(fig_timeline, use_container_width=True)
-    
-    def _show_query_manager(self):
-        """Interfaz para gestionar consultas"""
-        st.subheader("Gestionar Consultas")
-        
-        # Obtener todas las consultas
-        all_queries = self.storage.get_all_hype_cycle_queries()
-        
-        if not all_queries:
-            st.info("No hay consultas para gestionar")
-            return
-        
-        # Tabla de consultas para gestión
-        query_data = []
-        for query in all_queries:
-            try:
-                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
-                formatted_date = date.strftime("%Y-%m-%d %H:%M")
-            except:
-                formatted_date = "Fecha inválida"
-            
-            query_data.append({
-                "ID": query.get("query_id", query.get("analysis_id", "Unknown")),
-                "Consulta": query.get("search_query", "")[:50] + "...",
-                "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
-                "Fecha": formatted_date,
-                "Confianza": f"{query.get('hype_metrics', {}).get('confidence', 0):.2f}",
-                "Resultados": query.get("api_usage", {}).get("total_results", 0)
-            })
-        
-        df_queries = pd.DataFrame(query_data)
-        
-        # Mostrar tabla con selección
-        st.write("Selecciona consultas para gestionar:")
-        
-        event = st.dataframe(
-            df_queries,
-            use_container_width=True,
-            on_select="rerun",
-            selection_mode="multi-row"
-        )
-        
-        # Acciones sobre consultas seleccionadas
-        if event.selection.rows:
-            selected_indices = event.selection.rows
-            selected_queries = [all_queries[i] for i in selected_indices]
-            
-            st.write(f"**{len(selected_queries)} consulta(s) seleccionada(s)**")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("📊 Ver Detalles", key="hype_history_view_details_btn"):
-                    for query in selected_queries:
-                        self._display_query_details(query)
-            
-            with col2:
-                if st.button("📋 Comparar Fases", key="hype_history_compare_phases_btn"):
-                    self._compare_selected_queries(selected_queries)
-            
-            with col3:
-                if st.button("🗑️ Eliminar", type="secondary", key="hype_history_delete_btn"):
-                    if st.checkbox("Confirmar eliminación", key="hype_history_confirm_delete_checkbox"):
-                        for query in selected_queries:
-                            query_id = query.get("query_id", query.get("analysis_id"))
-                            if self.storage.delete_query(query_id):
-                                st.success(f"Consulta {query_id} eliminada")
-                            else:
-                                st.error(f"Error eliminando consulta {query_id}")
-                        st.rerun()
     
     def _display_query_card(self, query: Dict):
         """Muestra una tarjeta de consulta"""
@@ -661,10 +510,169 @@ class HypeCycleHistoryInterface:
                 except:
                     st.write("**Fecha:** No disponible")
             
-            # Botón para reutilizar consulta - KEY ÚNICA
-            if st.button(f"🔄 Reutilizar Consulta", key=f"hype_reuse_query_{query_id}"):
+            # Botón para reutilizar consulta - KEY ÚNICA CON CONTEXTO
+            if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_hype_reuse_query_{query_id}"):
                 self._reuse_query(query)
-    
+    def _show_summary_dashboard(self):
+        """Muestra dashboard de resumen"""
+        st.subheader("Dashboard de Resumen")
+        
+        # Obtener todas las consultas
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        
+        if not all_queries:
+            st.info("No hay consultas de Hype Cycle guardadas")
+            return
+        
+        # Métricas generales
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Consultas", len(all_queries))
+        
+        with col2:
+            # Fases más comunes
+            phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in all_queries]
+            most_common_phase = max(set(phases), key=phases.count) if phases else "N/A"
+            st.metric("Fase Más Común", most_common_phase)
+        
+        with col3:
+            # Promedio de confianza
+            confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in all_queries]
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            st.metric("Confianza Promedio", f"{avg_confidence:.2f}")
+        
+        with col4:
+            # Consultas este mes
+            current_month = datetime.now().strftime("%Y-%m")
+            recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
+            st.metric("Consultas Este Mes", len(recent_queries))
+        
+        # Gráfico de distribución de fases
+        st.subheader("Distribución de Fases del Hype Cycle")
+        
+        phase_counts = {}
+        for query in all_queries:
+            phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+            phase_counts[phase] = phase_counts.get(phase, 0) + 1
+        
+        if phase_counts:
+            import plotly.express as px
+            fig_phases = px.pie(
+                values=list(phase_counts.values()),
+                names=list(phase_counts.keys()),
+                title="Distribución de Tecnologías por Fase del Hype Cycle"
+            )
+            st.plotly_chart(fig_phases, use_container_width=True)
+        
+        # Timeline de consultas
+        st.subheader("Timeline de Consultas")
+        
+        # Preparar datos para timeline
+        timeline_data = []
+        for query in all_queries:
+            try:
+                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
+                timeline_data.append({
+                    "Fecha": date,
+                    "Consulta": query.get("search_query", "")[:30] + "...",
+                    "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
+                    "Confianza": query.get("hype_metrics", {}).get("confidence", 0)
+                })
+            except:
+                continue
+        
+        if timeline_data:
+            import pandas as pd
+            import plotly.express as px
+            df_timeline = pd.DataFrame(timeline_data)
+            df_timeline = df_timeline.sort_values("Fecha")
+            
+            fig_timeline = px.scatter(
+                df_timeline,
+                x="Fecha",
+                y="Confianza",
+                color="Fase",
+                hover_data=["Consulta"],
+                title="Timeline de Consultas por Confianza y Fase"
+            )
+            st.plotly_chart(fig_timeline, use_container_width=True)
+
+    def _show_query_manager(self):
+        """Interfaz para gestionar consultas"""
+        st.subheader("Gestionar Consultas")
+        
+        # Obtener todas las consultas
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        
+        if not all_queries:
+            st.info("No hay consultas para gestionar")
+            return
+        
+        # Tabla de consultas para gestión
+        query_data = []
+        for query in all_queries:
+            try:
+                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
+                formatted_date = date.strftime("%Y-%m-%d %H:%M")
+            except:
+                formatted_date = "Fecha inválida"
+            
+            query_data.append({
+                "ID": query.get("query_id", query.get("analysis_id", "Unknown")),
+                "Consulta": query.get("search_query", "")[:50] + "...",
+                "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
+                "Fecha": formatted_date,
+                "Confianza": f"{query.get('hype_metrics', {}).get('confidence', 0):.2f}",
+                "Resultados": query.get("api_usage", {}).get("total_results", 0)
+            })
+        
+        import pandas as pd
+        df_queries = pd.DataFrame(query_data)
+        
+        # Mostrar tabla con selección
+        st.write("Selecciona consultas para gestionar:")
+        
+        # Mostrar tabla simple (sin selection ya que puede causar problemas)
+        st.dataframe(df_queries, use_container_width=True)
+        
+        # Selector manual para gestión
+        query_options = {}
+        for i, query in enumerate(all_queries):
+            query_id = query.get("query_id", query.get("analysis_id", f"query_{i}"))
+            query_name = f"{query.get('search_query', '')[:30]}... ({query.get('hype_metrics', {}).get('phase', 'Unknown')})"
+            query_options[query_name] = query_id
+        
+        if query_options:
+            selected_query_name = st.selectbox(
+                "Selecciona una consulta para gestionar:",
+                options=list(query_options.keys()),
+                key=f"{self.context_prefix}_query_manager_selectbox"
+            )
+            
+            selected_query_id = query_options[selected_query_name]
+            selected_query = next((q for q in all_queries if q.get("query_id") == selected_query_id or q.get("analysis_id") == selected_query_id), None)
+            
+            if selected_query:
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("📊 Ver Detalles", key=f"{self.context_prefix}_view_details_btn"):
+                        self._display_query_details(selected_query)
+                
+                with col2:
+                    if st.button("🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_btn"):
+                        self._reuse_query(selected_query)
+                
+                with col3:
+                    if st.button("🗑️ Eliminar", type="secondary", key=f"{self.context_prefix}_delete_btn"):
+                        if st.checkbox("Confirmar eliminación", key=f"{self.context_prefix}_confirm_delete"):
+                            if self.storage.delete_query(selected_query_id):
+                                st.success(f"Consulta {selected_query_id} eliminada")
+                                st.rerun()
+                            else:
+                                st.error(f"Error eliminando consulta {selected_query_id}")
+
     def _display_query_details(self, query: Dict):
         """Muestra detalles completos de una consulta"""
         st.subheader(f"Detalles de Consulta: {query.get('search_query', 'Sin nombre')[:50]}...")
@@ -699,6 +707,7 @@ class HypeCycleHistoryInterface:
         yearly_stats = query.get('yearly_stats', [])
         if yearly_stats:
             st.subheader("Estadísticas Anuales")
+            import pandas as pd
             df_yearly = pd.DataFrame(yearly_stats)
             st.dataframe(df_yearly)
         
@@ -712,40 +721,7 @@ class HypeCycleHistoryInterface:
                     st.write(f"**Fecha:** {result.get('date', 'No especificada')}")
                     st.write(f"**Sentimiento:** {result.get('sentiment', 'No calculado')}")
                     st.write(f"**Link:** {result.get('link', 'No disponible')}")
-    
-    def _compare_selected_queries(self, queries: List[Dict]):
-        """Compara las fases del Hype Cycle entre consultas seleccionadas"""
-        st.subheader("Comparación de Fases del Hype Cycle")
-        
-        # Crear datos para comparación
-        comparison_data = []
-        for query in queries:
-            hype_metrics = query.get('hype_metrics', {})
-            comparison_data.append({
-                "Consulta": query.get('search_query', 'Sin nombre')[:30] + "...",
-                "Fase": hype_metrics.get('phase', 'Unknown'),
-                "Confianza": hype_metrics.get('confidence', 0),
-                "Total Menciones": hype_metrics.get('total_mentions', 0),
-                "Año Pico": hype_metrics.get('peak_year', 'N/A'),
-                "Fecha Análisis": query.get('execution_date', '')[:10]  # Solo fecha
-            })
-        
-        df_comparison = pd.DataFrame(comparison_data)
-        
-        # Mostrar tabla comparativa
-        st.dataframe(df_comparison, use_container_width=True)
-        
-        # Gráfico de comparación
-        fig_comparison = px.scatter(
-            df_comparison,
-            x="Confianza",
-            y="Total Menciones",
-            color="Fase",
-            hover_data=["Consulta"],
-            title="Comparación de Consultas: Confianza vs Menciones por Fase"
-        )
-        st.plotly_chart(fig_comparison, use_container_width=True)
-    
+
     def _reuse_query(self, query: Dict):
         """Permite reutilizar una consulta existente"""
         st.info("**Consulta seleccionada para reutilizar:**")
@@ -765,6 +741,6 @@ def initialize_hype_cycle_storage(db_storage):
     """Inicializa el sistema de almacenamiento de Hype Cycle"""
     return HypeCycleStorage(db_storage)
 
-def create_hype_cycle_interface(hype_storage):
+def create_hype_cycle_interface(hype_storage, context_prefix: str = "default"):
     """Crea la interfaz completa de historial de Hype Cycle"""
-    return HypeCycleHistoryInterface(hype_storage)
+    return HypeCycleHistoryInterface(hype_storage, context_prefix)

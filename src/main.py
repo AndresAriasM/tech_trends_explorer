@@ -620,7 +620,7 @@ def _show_hype_cycle_data_management():
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
-            history_interface = create_hype_cycle_interface(hype_storage)
+            history_interface = create_hype_cycle_interface(hype_storage, "main_data_mgmt")  # ← CONTEXTO ÚNICO
             
             # Mostrar interfaz de historial
             history_interface.show_history_interface()

@@ -418,7 +418,10 @@ def _show_history_interface():
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
-            history_interface = create_hype_cycle_interface(hype_storage)
+            history_interface = create_hype_cycle_interface(hype_storage, "hype_analysis")  # ← CONTEXTO ÚNICO
+            
+            # Mostrar interfaz completa de historial
+            history_interface.show_history_interface()
             
             # Mostrar consulta específica si se solicita
             show_query_id = st.session_state.get('hype_show_query_id')
