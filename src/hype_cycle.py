@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import requests
 from datetime import datetime
 from analysis import NewsAnalyzer, QueryBuilder
+from category_admin import CategoryAdminInterface
 from config import CONFIG
 
 # Importar el nuevo sistema de almacenamiento
@@ -20,19 +21,71 @@ from data_storage import initialize_database
 
 def run_hype_cycle_analysis():
     """
-    Ejecuta el análisis del Hype Cycle utilizando la API de SerpAPI
-    Con sistema de almacenamiento automático en DynamoDB
+    Ejecuta el análisis del Hype Cycle con nueva pestaña de administración
     """
     st.markdown('<p class="tab-subheader">📈 Análisis del Hype Cycle</p>', unsafe_allow_html=True)
     
-    # Pestañas para análisis y historial
-    tab_analysis, tab_history = st.tabs(["🔍 Nuevo Análisis", "📚 Historial"])
+    # NUEVAS PESTAÑAS - AÑADIR LA TERCERA
+    tab_analysis, tab_history, tab_admin = st.tabs([
+        "🔍 Nuevo Análisis", 
+        "📚 Historial",
+        "🏷️ Administrar Categorías"  # NUEVA PESTAÑA
+    ])
     
     with tab_analysis:
         _show_analysis_interface()
     
     with tab_history:
         _show_history_interface()
+    
+    with tab_admin:  
+        _show_admin_interface()
+
+def _show_admin_interface():
+    """Interfaz para administrar categorías y tecnologías"""
+    try:
+        # Inicializar sistema de almacenamiento
+        storage_mode = st.session_state.get('hype_storage_mode', 'local')
+        
+        if storage_mode == 'local':
+            db = initialize_database("local")
+        else:
+            aws_configured = (
+                st.session_state.get('aws_access_key_id') and 
+                st.session_state.get('aws_secret_access_key') and 
+                st.session_state.get('aws_region')
+            )
+            
+            if aws_configured:
+                db = initialize_database(
+                    "dynamodb",
+                    region_name=st.session_state.aws_region,
+                    aws_access_key_id=st.session_state.aws_access_key_id,
+                    aws_secret_access_key=st.session_state.aws_secret_access_key
+                )
+            else:
+                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
+                db = initialize_database("local")
+        
+        if db:
+            hype_storage = initialize_hype_cycle_storage(db.storage)
+            
+            # IMPORTAR LA NUEVA CLASE
+            from category_admin import CategoryAdminInterface
+            
+            # USAR CONTEXTO ÚNICO
+            import time
+            unique_context = f"hype_admin_{int(time.time())}"
+            
+            admin_interface = CategoryAdminInterface(hype_storage, unique_context)
+            admin_interface.show_admin_interface()
+        else:
+            st.error("No se pudo inicializar el sistema de almacenamiento")
+            
+    except Exception as e:
+        st.error(f"Error en la interfaz de administración: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 def _show_analysis_interface():
     """Interfaz para realizar nuevos análisis"""
@@ -143,6 +196,32 @@ def _show_analysis_interface():
             else:
                 selected_category_id = "default"
                 st.info("Sistema de almacenamiento no disponible")
+
+    # ==========================================
+    # 🆕 NUEVA SECCIÓN: Configuración de la tecnología
+    # ==========================================
+    st.write("### 🔬 Información de la Tecnología")
+    with st.expander("📝 Detalles de la tecnología (opcional)", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            technology_name = st.text_input(
+                "Nombre de la tecnología",
+                placeholder="ej: Inteligencia Artificial, Blockchain, etc.",
+                help="Nombre simplificado que aparecerá en las gráficas",
+                key="hype_technology_name_input"
+            )
+        
+        with col2:
+            technology_description = st.text_area(
+                "Descripción (opcional)",
+                placeholder="Breve descripción de la tecnología...",
+                height=60,
+                key="hype_technology_description_textarea"
+            )
+    # ==========================================
+    # FIN DE NUEVA SECCIÓN
+    # ==========================================
     
     # Configuración de búsqueda
     st.write("### 🎯 Define los términos para el análisis")
@@ -318,7 +397,9 @@ def _show_analysis_interface():
                     if inflection_fig:
                         st.plotly_chart(inflection_fig, use_container_width=True)
                     
-                    # Guardar automáticamente si está habilitado
+                    # ==========================================
+                    # 🔄 MODIFICACIÓN: Guardar automáticamente con technology_name
+                    # ==========================================
                     if auto_save and hype_storage:
                         with st.spinner("💾 Guardando análisis..."):
                             try:
@@ -329,7 +410,9 @@ def _show_analysis_interface():
                                     news_results=serp_results,
                                     category_id=selected_category_id,
                                     search_parameters=search_parameters,
-                                    notes=analysis_notes
+                                    notes=analysis_notes,
+                                    technology_name=technology_name,  # 🆕 NUEVO PARÁMETRO
+                                    technology_description=technology_description  # 🆕 NUEVO PARÁMETRO
                                 )
                                 
                                 if query_id:
@@ -343,7 +426,9 @@ def _show_analysis_interface():
                             except Exception as e:
                                 st.error(f"❌ Error guardando análisis: {str(e)}")
                     
-                    # Opción manual de guardado si auto-save está deshabilitado
+                    # ==========================================
+                    # 🔄 MODIFICACIÓN: Opción manual de guardado con technology_name
+                    # ==========================================
                     elif hype_storage and not auto_save:
                         st.write("### 💾 Guardar Análisis")
                         
@@ -357,7 +442,9 @@ def _show_analysis_interface():
                                         news_results=serp_results,
                                         category_id=selected_category_id,
                                         search_parameters=search_parameters,
-                                        notes=analysis_notes
+                                        notes=analysis_notes,
+                                        technology_name=technology_name,  # 🆕 NUEVO PARÁMETRO
+                                        technology_description=technology_description  # 🆕 NUEVO PARÁMETRO
                                     )
                                     
                                     if query_id:
@@ -365,6 +452,9 @@ def _show_analysis_interface():
                                         
                                 except Exception as e:
                                     st.error(f"❌ Error guardando análisis: {str(e)}")
+                    # ==========================================
+                    # FIN DE MODIFICACIONES
+                    # ==========================================
                     
                     # Mostrar análisis detallado
                     news_analyzer.display_advanced_analysis(serp_results, query_info, st)
@@ -418,7 +508,12 @@ def _show_history_interface():
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
-            history_interface = create_hype_cycle_interface(hype_storage, "hype_analysis")  # ← CONTEXTO ÚNICO
+            
+            # USAR CONTEXTO ÚNICO CON TIMESTAMP
+            import time
+            unique_context = f"hype_history_{int(time.time())}"
+            
+            history_interface = create_hype_cycle_interface(hype_storage, unique_context)
             
             # Mostrar interfaz completa de historial
             history_interface.show_history_interface()
@@ -433,12 +528,9 @@ def _show_history_interface():
                 else:
                     st.error("No se encontró la consulta especificada")
                 
-                if st.button("Volver al historial", key="hype_back_to_history_btn"):
+                if st.button("Volver al historial", key=f"back_to_history_{unique_context}"):
                     del st.session_state.hype_show_query_id
                     st.rerun()
-            else:
-                # Mostrar interfaz completa de historial
-                history_interface.show_history_interface()
         else:
             st.error("No se pudo inicializar el sistema de almacenamiento")
             
@@ -449,7 +541,8 @@ def _show_history_interface():
 
 # Funciones auxiliares reutilizadas del script principal
 def manage_topics(prefix="hype", preset_topics=None):
-    """Maneja la adición y eliminación de topics con opciones avanzadas."""
+    """Maneja la adición y eliminación de topics SIN recargas molestas."""
+    
     # Usar un estado específico para este módulo
     state_key = f"{prefix}_topics_data"
     
@@ -478,75 +571,102 @@ def manage_topics(prefix="hype", preset_topics=None):
         """)
     
     topics = []
-    topics_to_remove = []
-
+    
     st.write("### 🔍 Construye tu búsqueda")
-
-    # Crear columnas para cada topic con opciones avanzadas
-    for topic in st.session_state[state_key]:  # Usar el state_key específico
-        col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
+    
+    # USAR FORM para evitar recargas automáticas
+    with st.form(key=f"{prefix}_topics_form"):
+        # Crear columnas para cada topic
+        for topic in st.session_state[state_key]:
+            col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
+            
+            with col1:
+                value = st.text_input(
+                    f"Término {topic['id'] + 1}",
+                    value=topic.get('value', ''),
+                    key=f"{prefix}_topic_{topic['id']}",
+                    placeholder="Ej: 'artificial intelligence' OR robot*"
+                )
+                topic['value'] = value
+            
+            with col2:
+                operator = st.selectbox(
+                    "Operador",
+                    options=['AND', 'OR', 'NOT'],
+                    index=['AND', 'OR', 'NOT'].index(topic.get('operator', 'AND')),
+                    key=f"{prefix}_operator_{topic['id']}"
+                )
+                topic['operator'] = operator
+            
+            with col3:
+                exact_match = st.checkbox(
+                    "Coincidencia exacta",
+                    value=topic.get('exact_match', False),
+                    key=f"{prefix}_exact_{topic['id']}"
+                )
+                topic['exact_match'] = exact_match
+            
+            with col4:
+                # Marcar para eliminar (en lugar de botón que recarga)
+                if len(st.session_state[state_key]) > 1:
+                    remove = st.checkbox(
+                        "❌", 
+                        key=f"{prefix}_remove_{topic['id']}",
+                        help="Marcar para eliminar"
+                    )
+                    topic['_remove'] = remove
+        
+        # Botones dentro del form (no causan recarga)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            value = st.text_input(
-                f"Término {topic['id'] + 1}",
-                value=topic.get('value', ''),
-                key=f"{prefix}_topic_{topic['id']}",
-                placeholder="Ej: 'artificial intelligence' OR robot*"
-            )
-            topic['value'] = value
-            topics.append({
-                'value': value,
-                'operator': topic.get('operator', 'AND'),
-                'exact_match': topic.get('exact_match', False)
-            })
+            add_topic = st.form_submit_button("➕ Añadir Término")
         
         with col2:
-            operator = st.selectbox(
-                "Operador",
-                options=['AND', 'OR', 'NOT'],
-                index=['AND', 'OR', 'NOT'].index(topic['operator']),
-                key=f"{prefix}_operator_{topic['id']}"
-            )
-            topic['operator'] = operator  # Actualizamos el operador en el topic directamente
+            remove_topics = st.form_submit_button("🗑️ Eliminar Marcados")
         
         with col3:
-            exact_match = st.checkbox(
-                "Coincidencia exacta",
-                value=topic.get('exact_match', False),
-                key=f"{prefix}_exact_{topic['id']}"
-            )
-            topic['exact_match'] = exact_match
-        
-        with col4:
-            if len(st.session_state[state_key]) > 1:  # Usar el state_key específico
-                if st.button('❌', key=f"{prefix}_remove_{topic['id']}"):
-                    topics_to_remove.append(topic['id'])
-
-    # Remover topics marcados para eliminación
-    if topics_to_remove:
-        st.session_state[state_key] = [  # Usar el state_key específico
-            topic for topic in st.session_state[state_key] 
-            if topic['id'] not in topics_to_remove
-        ]
-        st.rerun()
-
-    # Botón para añadir nuevo topic
-    if st.button("➕ Añadir otro término", key=f"{prefix}_add_topic"):
-        new_id = max([t['id'] for t in st.session_state[state_key]]) + 1  # Usar el state_key específico
-        st.session_state[state_key].append({  # Usar el state_key específico
+            clear_all = st.form_submit_button("🧹 Limpiar Todo")
+    
+    # Procesar acciones DESPUÉS del form
+    if add_topic:
+        new_id = max([t['id'] for t in st.session_state[state_key]]) + 1
+        st.session_state[state_key].append({
             'id': new_id,
             'value': '',
             'operator': 'AND',
             'exact_match': False
         })
         st.rerun()
-
+    
+    if remove_topics:
+        st.session_state[state_key] = [
+            topic for topic in st.session_state[state_key] 
+            if not topic.get('_remove', False)
+        ]
+        # Asegurar que quede al menos uno
+        if not st.session_state[state_key]:
+            st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
+        st.rerun()
+    
+    if clear_all:
+        st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
+        st.rerun()
+    
+    # Construir lista de topics para retornar
+    for topic in st.session_state[state_key]:
+        topics.append({
+            'value': topic.get('value', ''),
+            'operator': topic.get('operator', 'AND'),
+            'exact_match': topic.get('exact_match', False)
+        })
+    
     # Construir y mostrar la ecuación final
-    if topics:
+    if any(t['value'].strip() for t in topics):
         equation = build_search_equation(topics)
         st.write("### 📝 Ecuación de búsqueda")
         st.code(equation)
-
+    
     return topics
 
 def build_search_equation(topics):

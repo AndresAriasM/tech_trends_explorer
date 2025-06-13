@@ -5,6 +5,7 @@ import time
 import json
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional, Any
 import plotly.graph_objects as go
 import plotly.express as px
@@ -30,6 +31,13 @@ class HypeCycleMetrics:
     latest_year: int
     sentiment_avg: float
     sentiment_trend: float
+    
+    # NUEVOS CAMPOS para posicionamiento en gráfica
+    hype_cycle_position_x: float = 50.0  # Posición X en la curva (0-100)
+    hype_cycle_position_y: float = 50.0  # Posición Y en la curva (expectativas)
+    time_to_plateau: str = "N/A"         # Tiempo estimado hasta plateau
+    
+    # Campos existentes
     innovation_trigger_year: Optional[int] = None
     peak_year: Optional[int] = None
     trough_year: Optional[int] = None
@@ -55,6 +63,13 @@ class HypeCycleQuery:
     data_quality: Dict  # Métricas de calidad de datos
     processing_time: float  # Tiempo de procesamiento
     
+    # NUEVOS CAMPOS para administración
+    technology_name: str = ""     # Nombre simplificado para mostrar en gráfica
+    category_name: str = ""       # Nombre de la categoría (para referencia rápida)
+    last_updated: str = ""        # Última actualización
+    is_active: bool = True        # Si debe mostrarse en gráficas activas
+    technology_description: str = ""  # Descripción opcional
+    
     # Para versionado y auditoría
     created_by: str = "system"
     version: str = "1.0"
@@ -66,9 +81,6 @@ class HypeCycleStorage:
     def __init__(self, db_storage):
         """
         Inicializa con el storage de DynamoDB existente
-        
-        Args:
-            db_storage: Instancia de DynamoDBStorage o LocalStorage
         """
         self.storage = db_storage
         self.table_name = "hype-cycle-queries"
@@ -76,6 +88,51 @@ class HypeCycleStorage:
         # Si es DynamoDB, asegurar que existe la tabla específica
         if hasattr(db_storage, 'dynamodb'):
             self._ensure_hype_cycle_table()
+    
+    def _convert_floats_to_decimal(self, obj):
+        """
+        Convierte recursivamente todos los floats a Decimal para DynamoDB
+        
+        Args:
+            obj: Objeto a convertir (dict, list, float, etc.)
+            
+        Returns:
+            Objeto con floats convertidos a Decimal
+        """
+        if isinstance(obj, dict):
+            return {k: self._convert_floats_to_decimal(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_floats_to_decimal(item) for item in obj]
+        elif isinstance(obj, float):
+            # Convertir float a Decimal con precisión limitada
+            return Decimal(str(round(obj, 6)))
+        elif isinstance(obj, (int, str, bool)) or obj is None:
+            return obj
+        elif hasattr(obj, 'item'):  # Objetos numpy
+            return Decimal(str(round(float(obj.item()), 6)))
+        else:
+            # Para otros tipos, intentar convertir a string
+            return str(obj)
+    
+    def _convert_dataclass_to_dict(self, dataclass_obj):
+        """
+        Convierte dataclass a diccionario y maneja floats
+        
+        Args:
+            dataclass_obj: Objeto dataclass
+            
+        Returns:
+            Diccionario con valores convertidos
+        """
+        if hasattr(dataclass_obj, '__dict__'):
+            # Es un dataclass o objeto similar
+            obj_dict = {}
+            for key, value in dataclass_obj.__dict__.items():
+                obj_dict[key] = self._convert_floats_to_decimal(value)
+            return obj_dict
+        else:
+            # No es un dataclass, convertir directamente
+            return self._convert_floats_to_decimal(dataclass_obj)
     
     def _ensure_hype_cycle_table(self):
         """Asegura que existe la tabla específica para Hype Cycle en DynamoDB"""
@@ -95,28 +152,37 @@ class HypeCycleStorage:
                              news_results: List[Dict],
                              category_id: str = "default",
                              search_parameters: Dict = None,
-                             notes: str = "") -> str:
+                             notes: str = "",
+                             technology_name: str = None,
+                             technology_description: str = "") -> str:
         """
-        Guarda una consulta completa de Hype Cycle
-        
-        Args:
-            search_query: Query de búsqueda utilizada
-            search_terms: Lista de términos con operadores
-            hype_analysis_results: Resultados del análisis de Hype Cycle
-            news_results: Resultados completos de la búsqueda de noticias
-            category_id: ID de la categoría
-            search_parameters: Parámetros de búsqueda utilizados
-            notes: Notas adicionales sobre la consulta
-            
-        Returns:
-            str: ID de la consulta guardada
+        Guarda una consulta completa de Hype Cycle con soporte completo para DynamoDB
         """
         try:
+            # Importar el positioner
+            from hype_cycle_positioning import HypeCyclePositioner
+            positioner = HypeCyclePositioner()
+            
             # Generar ID único
             query_id = f"hype_{int(time.time())}_{str(uuid.uuid4())[:8]}"
             
             # Procesar métricas del Hype Cycle
             hype_metrics = self._extract_hype_metrics(hype_analysis_results)
+            
+            # Calcular posición en la gráfica
+            pos_x, pos_y = positioner.calculate_position(
+                hype_metrics.phase, 
+                hype_metrics.confidence,
+                hype_metrics.total_mentions
+            )
+            hype_metrics.hype_cycle_position_x = pos_x
+            hype_metrics.hype_cycle_position_y = pos_y
+            
+            # Estimar tiempo al plateau
+            hype_metrics.time_to_plateau = positioner.estimate_time_to_plateau(
+                hype_metrics.phase, 
+                hype_metrics.confidence
+            )
             
             # Procesar estadísticas anuales
             yearly_stats = self._process_yearly_stats(hype_analysis_results.get('yearly_stats', []))
@@ -124,13 +190,24 @@ class HypeCycleStorage:
             # Calcular métricas de calidad de datos
             data_quality = self._calculate_data_quality(news_results, yearly_stats)
             
-            # Estimar uso de API (basado en número de resultados)
+            # Estimar uso de API
             api_usage = {
-                "estimated_requests": len(news_results) // 10 + 1,  # Estimación basada en resultados
+                "estimated_requests": len(news_results) // 10 + 1,
                 "total_results": len(news_results),
                 "search_timestamp": datetime.now(timezone.utc).isoformat(),
                 "api_provider": "SerpAPI"
             }
+            
+            # Obtener información de categoría
+            try:
+                category = self.storage.get_category_by_id(category_id)
+                category_name = category.get("name") if category else "Sin categoría"
+            except:
+                category_name = "Sin categoría"
+            
+            # Generar nombre de tecnología si no se proporciona
+            if not technology_name:
+                technology_name = self._extract_technology_name(search_query, search_terms)
             
             # Crear objeto de consulta
             hype_query = HypeCycleQuery(
@@ -145,19 +222,29 @@ class HypeCycleStorage:
                 news_results=self._sanitize_news_results(news_results),
                 search_parameters=search_parameters or {},
                 data_quality=data_quality,
-                processing_time=time.time(),  # Se actualizará al final
-                notes=notes
+                processing_time=time.time(),
+                notes=notes,
+                technology_name=technology_name,
+                category_name=category_name,
+                last_updated=datetime.now(timezone.utc).isoformat(),
+                is_active=True,
+                technology_description=technology_description
             )
             
-            # Convertir a diccionario para almacenamiento
+            # Convertir a diccionario y preparar para almacenamiento
             query_dict = self._prepare_for_storage(hype_query)
+            
+            # NUEVO: Convertir floats a Decimal para DynamoDB
+            if hasattr(self.storage, 'analyses_table'):
+                # Es DynamoDB - convertir floats a Decimal
+                query_dict = self._convert_floats_to_decimal(query_dict)
             
             # Guardar en el storage
             if hasattr(self.storage, 'analyses_table'):
                 # DynamoDB
                 self.storage.analyses_table.put_item(Item=query_dict)
             else:
-                # Storage local
+                # Storage local - los floats están bien aquí
                 if "hype_cycle_queries" not in self.storage.data:
                     self.storage.data["hype_cycle_queries"] = []
                 self.storage.data["hype_cycle_queries"].append(query_dict)
@@ -295,21 +382,38 @@ class HypeCycleStorage:
             return {"quality_score": 0, "error": str(e)}
     
     def _prepare_for_storage(self, hype_query: HypeCycleQuery) -> Dict:
-        """Prepara el objeto para almacenamiento en DynamoDB"""
-        # Convertir a diccionario
-        query_dict = asdict(hype_query)
+        """Prepara el objeto para almacenamiento - VERSIÓN MEJORADA"""
         
-        # Agregar campos necesarios para DynamoDB
+        # Convertir dataclass a diccionario manejando floats
+        if hasattr(hype_query, '__dict__'):
+            query_dict = {}
+            for key, value in hype_query.__dict__.items():
+                if hasattr(value, '__dict__') and hasattr(value, '__dataclass_fields__'):
+                    # Es un dataclass (como HypeCycleMetrics)
+                    query_dict[key] = self._convert_dataclass_to_dict(value)
+                elif isinstance(value, (list, dict)):
+                    # Es una lista o diccionario
+                    query_dict[key] = self._convert_floats_to_decimal(value)
+                else:
+                    # Es un valor simple
+                    query_dict[key] = self._convert_floats_to_decimal(value)
+        else:
+            # No es un objeto con __dict__, usar asdict
+            from dataclasses import asdict
+            query_dict = asdict(hype_query)
+        
+        # Agregar campos necesarios para compatibilidad
         query_dict.update({
-            "analysis_id": hype_query.query_id,  # Para compatibilidad con tabla general
+            "analysis_id": hype_query.query_id,
             "timestamp": hype_query.execution_date,
             "analysis_type": "hype_cycle",
             "query": hype_query.search_query,
-            "name": f"Hype Cycle: {hype_query.search_query[:50]}..."
+            "name": f"Hype Cycle: {hype_query.technology_name or hype_query.search_query[:50]}..."
         })
         
         # Actualizar tiempo de procesamiento
-        query_dict["processing_time"] = time.time() - query_dict["processing_time"]
+        processing_start = query_dict.get("processing_time", time.time())
+        query_dict["processing_time"] = time.time() - processing_start
         
         return query_dict
     
@@ -405,19 +509,122 @@ class HypeCycleStorage:
         except Exception as e:
             st.error(f"Error eliminando consulta: {str(e)}")
             return False
+    def _extract_technology_name(self, search_query: str, search_terms: List[Dict]) -> str:
+        """Extrae un nombre de tecnología limpio de la consulta"""
+        # Priorizar el primer término más significativo
+        for term in search_terms:
+            value = term.get('value', '').strip().strip('"')
+            if len(value) > 2 and value.lower() not in ['and', 'or', 'not']:
+                return value.title()
+        
+        # Fallback: limpiar la query
+        clean_query = search_query.replace('"', '').replace(' AND ', ' ').replace(' OR ', ' ')
+        clean_query = clean_query.replace(' NOT ', ' ').replace('after:', '').replace('before:', '')
+        words = [w for w in clean_query.split() if not w.isdigit() and len(w) > 2]
+        return ' '.join(words[:2]).title() if words else "Tecnología"
+
+    def _extract_hype_metrics(self, hype_results: Dict) -> HypeCycleMetrics:
+        """Extrae métricas específicas del análisis de Hype Cycle - VERSIÓN SIN FLOATS"""
+        try:
+            metrics_data = hype_results.get('metrics', {})
+            inflection_points = hype_results.get('inflection_points', {})
+            
+            # Extraer años de puntos de inflexión
+            innovation_year = None
+            peak_year = None
+            trough_year = None
+            
+            if inflection_points:
+                if inflection_points.get('innovation_trigger'):
+                    innovation_year = inflection_points['innovation_trigger'].get('year')
+                if inflection_points.get('peak'):
+                    peak_year = inflection_points['peak'].get('year')
+                if inflection_points.get('trough'):
+                    trough_year = inflection_points['trough'].get('year')
+            
+            # Calcular sentiment promedio
+            sentiment_avg = 0.0
+            yearly_stats = hype_results.get('yearly_stats')
+            if yearly_stats is not None:
+                try:
+                    if hasattr(yearly_stats, 'sentiment_mean'):
+                        sentiment_avg = float(yearly_stats['sentiment_mean'].mean())
+                    elif isinstance(yearly_stats, list):
+                        sentiments = [float(stat.get('sentiment_mean', 0)) for stat in yearly_stats]
+                        sentiment_avg = sum(sentiments) / len(sentiments) if sentiments else 0.0
+                except:
+                    sentiment_avg = 0.0
+            
+            # Crear métricas sin floats (se convertirán después)
+            return HypeCycleMetrics(
+                phase=hype_results.get('phase', 'Unknown'),
+                confidence=float(hype_results.get('confidence', 0.0)),
+                total_mentions=int(metrics_data.get('total_mentions', 0)),
+                peak_mentions=int(metrics_data.get('peak_mentions', 0)),
+                latest_year=int(metrics_data.get('latest_year', datetime.now().year)),
+                sentiment_avg=sentiment_avg,
+                sentiment_trend=0.0,
+                innovation_trigger_year=innovation_year,
+                peak_year=peak_year,
+                trough_year=trough_year,
+                inflection_points=inflection_points,
+                hype_cycle_position_x=50.0,  # Se actualizará después
+                hype_cycle_position_y=50.0,  # Se actualizará después
+                time_to_plateau="N/A"        # Se actualizará después
+            )
+            
+        except Exception as e:
+            st.warning(f"Error extrayendo métricas: {str(e)}")
+            return HypeCycleMetrics(
+                phase="Unknown",
+                confidence=0.0,
+                total_mentions=0,
+                peak_mentions=0,
+                latest_year=datetime.now().year,
+                sentiment_avg=0.0,
+                sentiment_trend=0.0,
+                hype_cycle_position_x=50.0,
+                hype_cycle_position_y=50.0,
+                time_to_plateau="N/A"
+            )
+
+    def _prepare_for_storage(self, hype_query: HypeCycleQuery) -> Dict:
+        """Prepara el objeto para almacenamiento en DynamoDB - VERSIÓN ACTUALIZADA"""
+        # Convertir a diccionario
+        query_dict = asdict(hype_query)
+        
+        # Agregar campos necesarios para DynamoDB
+        query_dict.update({
+            "analysis_id": hype_query.query_id,  # Para compatibilidad con tabla general
+            "timestamp": hype_query.execution_date,
+            "analysis_type": "hype_cycle",
+            "query": hype_query.search_query,
+            "name": f"Hype Cycle: {hype_query.technology_name or hype_query.search_query[:50]}..."
+        })
+        
+        # Actualizar tiempo de procesamiento
+        query_dict["processing_time"] = time.time() - query_dict["processing_time"]
+        
+        return query_dict
+
+# REEMPLAZAR la clase HypeCycleHistoryInterface en hype_cycle_storage.py
 
 class HypeCycleHistoryInterface:
     """Interfaz para gestionar el historial de consultas de Hype Cycle"""
     
-    def __init__(self, hype_storage: HypeCycleStorage, context_prefix: str = "default"):
+    def __init__(self, hype_storage, context_prefix: str = "default"):
         self.storage = hype_storage
         self.context_prefix = context_prefix  # Añadir prefijo de contexto
+        
+        # GENERAR TIMESTAMP ÚNICO para evitar conflictos
+        import time
+        self.unique_id = str(int(time.time()))[-6:]  # Últimos 6 dígitos del timestamp
     
     def show_history_interface(self):
         """Muestra la interfaz completa de historial"""
         st.header("📚 Historial de Consultas de Hype Cycle")
         
-        # Pestañas para diferentes vistas
+        # Pestañas para diferentes vistas - KEYS ÚNICAS
         tab1, tab2, tab3 = st.tabs([
             "🔍 Explorar por Categoría", 
             "📊 Vista de Resumen", 
@@ -443,13 +650,13 @@ class HypeCycleHistoryInterface:
         except:
             categories = [{"id": "default", "name": "Sin categoría"}]
         
-        # Selector de categoría - KEY ÚNICA CON CONTEXTO
+        # Selector de categoría - KEY ÚNICA CON TIMESTAMP
         category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
         
         selected_category_name = st.selectbox(
             "Selecciona una categoría",
             options=list(category_options.keys()),
-            key=f"{self.context_prefix}_hype_history_category_explorer_selectbox"  # ← USAR CONTEXTO
+            key=f"{self.context_prefix}_history_category_explorer_{self.unique_id}"  # ← KEY ÚNICA
         )
         
         selected_category_id = category_options[selected_category_name]
@@ -464,10 +671,10 @@ class HypeCycleHistoryInterface:
         st.write(f"**{len(queries)} consultas encontradas en '{selected_category_name}'**")
         
         # Mostrar consultas
-        for query in queries:
-            self._display_query_card(query)
+        for i, query in enumerate(queries):
+            self._display_query_card(query, i)  # Pasar índice para keys únicas
     
-    def _display_query_card(self, query: Dict):
+    def _display_query_card(self, query: Dict, index: int):
         """Muestra una tarjeta de consulta"""
         query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
         
@@ -510,9 +717,10 @@ class HypeCycleHistoryInterface:
                 except:
                     st.write("**Fecha:** No disponible")
             
-            # Botón para reutilizar consulta - KEY ÚNICA CON CONTEXTO
-            if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_hype_reuse_query_{query_id}"):
+            # Botón para reutilizar consulta - KEY ÚNICA
+            if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_{self.unique_id}_{index}"):
                 self._reuse_query(query)
+    
     def _show_summary_dashboard(self):
         """Muestra dashboard de resumen"""
         st.subheader("Dashboard de Resumen")
@@ -647,7 +855,7 @@ class HypeCycleHistoryInterface:
             selected_query_name = st.selectbox(
                 "Selecciona una consulta para gestionar:",
                 options=list(query_options.keys()),
-                key=f"{self.context_prefix}_query_manager_selectbox"
+                key=f"query_manager_selectbox_{self.unique_id}"  
             )
             
             selected_query_id = query_options[selected_query_name]
@@ -657,16 +865,16 @@ class HypeCycleHistoryInterface:
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    if st.button("📊 Ver Detalles", key=f"{self.context_prefix}_view_details_btn"):
+                    if st.button("📊 Ver Detalles", key=f"view_details_{self.unique_id}"):
                         self._display_query_details(selected_query)
                 
                 with col2:
-                    if st.button("🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_btn"):
+                    if st.button("🔄 Reutilizar Consulta", key=f"reuse_query_{self.unique_id}"):
                         self._reuse_query(selected_query)
                 
                 with col3:
-                    if st.button("🗑️ Eliminar", type="secondary", key=f"{self.context_prefix}_delete_btn"):
-                        if st.checkbox("Confirmar eliminación", key=f"{self.context_prefix}_confirm_delete"):
+                    if st.button("🗑️ Eliminar", type="secondary", key=f"delete_{self.unique_id}"):
+                        if st.checkbox("Confirmar eliminación", key=f"confirm_delete_{self.unique_id}"):
                             if self.storage.delete_query(selected_query_id):
                                 st.success(f"Consulta {selected_query_id} eliminada")
                                 st.rerun()
@@ -734,7 +942,7 @@ class HypeCycleHistoryInterface:
             'search_parameters': query.get('search_parameters', {})
         }
         
-        st.success("✅ Consulta cargada. Ve a la pestaña 'Análisis del Hype Cycle' para ejecutarla nuevamente o modificarla.")
+        st.success("✅ Consulta cargada. Ve a la pestaña 'Nuevo Análisis' para ejecutarla nuevamente o modificarla.")
 
 # Función para integrar con el sistema existente
 def initialize_hype_cycle_storage(db_storage):

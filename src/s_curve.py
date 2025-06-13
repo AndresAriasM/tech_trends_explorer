@@ -718,253 +718,112 @@ class TechnologyAnalyzer:
                 key=f"download_csv_{filename_prefix}_{int(time.time())}"  # ← KEY ÚNICO AGREGADO
             )
 
-
-class GooglePatentsAnalyzer:
+class OptimizedGooglePatentsAnalyzer:
     """
-    Clase para conectarse a Google Patents vía SerpAPI y analizar patentes por año
-    para crear una curva en S.
+    Analizador optimizado de Google Patents que minimiza el consumo de tokens
+    mediante estrategias inteligentes de búsqueda.
     """
     
     def __init__(self, api_key=None):
-        """
-        Inicializa el analizador de patentes.
-        
-        Args:
-            api_key: La clave API de SerpAPI.
-        """
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
         self.patents_by_year = {}
+        self.cache = {}  # Cache para evitar búsquedas duplicadas
         
-    def search_patents(self, query, max_results=1000, start_year=None, end_year=None):
+    def analyze_patents_optimized(self, query, start_year=None, end_year=None, max_tokens=50):
         """
-        Busca patentes en Google Patents utilizando búsquedas por año individual.
-        Versión mejorada con mejor manejo de errores para evitar error 400.
-        """
-        # Construir query específica para patentes
-        patents_query = self._build_patents_query(query)
-        
-        # Mostrar ecuación de búsqueda con debugging
-        st.info(f"📝 Ecuación de búsqueda (Patentes): `{patents_query}`")
-        st.caption(f"🔧 Query original Scopus: {query[:100]}...")
-        
-        # Determinar rango de años
-        current_year = datetime.now().year
-        if not start_year:
-            start_year = current_year - 15
-        if not end_year:
-            end_year = current_year
-        
-        # Verificar que el rango sea válido
-        if start_year > end_year:
-            st.error("❌ El año inicial no puede ser mayor que el año final")
-            return None
-        
-        total_years = end_year - start_year + 1
-        st.info(f"🗓️ Analizando {total_years} años: {start_year} - {end_year}")
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        patents_by_year = {}
-        total_patents_found = 0
-        successful_years = 0
-        failed_years = []
-        
-        try:
-            # Hacer una búsqueda de prueba inicial MUY SIMPLE
-            status_text.text("🔍 Verificando conectividad con Google Patents...")
-            
-            # Test con query ultra-simple para evitar error 400
-            test_params = {
-                "engine": "google_patents",
-                "q": "patent",  # Query de prueba ultra-simple
-                "api_key": self.api_key,
-                "num": 10
-            }
-            
-            response = requests.get(self.base_url, params=test_params, timeout=30)
-            
-            st.write(f"🔧 Debug - Test response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                st.error(f"❌ Error de conectividad: {response.status_code}")
-                try:
-                    error_data = response.json()
-                    st.code(f"Error details: {error_data}")
-                except:
-                    st.code(f"Response content: {response.text}")
-                return None
-            
-            test_data = response.json()
-            if "error" in test_data:
-                st.error(f"❌ Error de SerpAPI: {test_data['error']}")
-                return None
-            
-            st.success("✅ Conectividad verificada. Iniciando búsqueda por años...")
-            
-            # Ahora probar con la query real
-            status_text.text(f"🧪 Probando query real: {patents_query}")
-            
-            real_test_params = {
-                "engine": "google_patents",
-                "q": patents_query,
-                "api_key": self.api_key,
-                "num": 10
-            }
-            
-            response = requests.get(self.base_url, params=real_test_params, timeout=30)
-            
-            if response.status_code != 200:
-                st.warning(f"⚠️ Query original falló ({response.status_code}), usando query simple")
-                patents_query = "technology patent"  # Fallback
-                st.info(f"📝 Usando query simplificada: {patents_query}")
-            else:
-                test_data = response.json()
-                if "error" in test_data:
-                    st.warning(f"⚠️ Query original con error: {test_data['error']}")
-                    patents_query = "technology patent"  # Fallback
-                    st.info(f"📝 Usando query simplificada: {patents_query}")
-            
-            # Iterar por cada año
-            for i, year in enumerate(range(start_year, end_year + 1)):
-                # Actualizar progreso
-                progress = (i + 1) / total_years
-                progress_bar.progress(progress)
-                status_text.text(f"📅 Analizando año {year}... ({i+1}/{total_years})")
-                
-                try:
-                    # Construir query específica para este año
-                    year_query = f"{patents_query} after:{year-1}-12-31 before:{year+1}-01-01"
-                    
-                    # Parámetros para búsqueda anual
-                    year_params = {
-                        "engine": "google_patents",
-                        "q": year_query,
-                        "api_key": self.api_key,
-                        "num": 10  # Solo necesitamos el total_results, no los datos
-                    }
-                    
-                    # Hacer request para este año
-                    response = requests.get(self.base_url, params=year_params, timeout=30)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        if "error" in data:
-                            st.warning(f"⚠️ Error en año {year}: {data['error']}")
-                            failed_years.append(year)
-                            patents_by_year[year] = 0
-                            continue
-                        
-                        # Extraer número total de resultados
-                        search_info = data.get("search_information", {})
-                        year_total = search_info.get("total_results", 0)
-                        
-                        # Convertir a entero si viene como string
-                        try:
-                            year_total = int(str(year_total).replace(",", ""))
-                        except (ValueError, AttributeError):
-                            year_total = 0
-                        
-                        patents_by_year[year] = year_total
-                        total_patents_found += year_total
-                        successful_years += 1
-                        
-                        # Mostrar progreso detallado cada 5 años o si hay muchos resultados
-                        if year % 5 == 0 or year_total > 1000:
-                            status_text.text(f"📅 Año {year}: {year_total:,} patentes encontradas")
-                    
-                    else:
-                        st.warning(f"⚠️ Error HTTP {response.status_code} en año {year}")
-                        failed_years.append(year)
-                        patents_by_year[year] = 0
-                    
-                    # Pausa entre requests para respetar rate limits
-                    time.sleep(0.3)  # 300ms entre años
-                    
-                except Exception as year_error:
-                    st.warning(f"⚠️ Error procesando año {year}: {str(year_error)}")
-                    failed_years.append(year)
-                    patents_by_year[year] = 0
-                    continue
-            
-            # Limpiar indicadores de progreso
-            progress_bar.empty()
-            
-            # Mostrar resumen final
-            if successful_years > 0:
-                status_text.text(f"✅ Búsqueda completada: {total_patents_found:,} patentes en {successful_years} años")
-                
-                # Mostrar estadísticas detalladas
-                with st.expander("📊 Estadísticas Detalladas", expanded=True):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("Total de Patentes", f"{total_patents_found:,}")
-                        st.metric("Años Analizados", f"{successful_years}/{total_years}")
-                    
-                    with col2:
-                        if patents_by_year:
-                            max_year = max(patents_by_year, key=patents_by_year.get)
-                            max_count = patents_by_year[max_year]
-                            st.metric("Año Pico", f"{max_year}")
-                            st.metric("Patentes en Pico", f"{max_count:,}")
-                    
-                    with col3:
-                        avg_per_year = total_patents_found / successful_years if successful_years > 0 else 0
-                        st.metric("Promedio Anual", f"{avg_per_year:.0f}")
-                        if failed_years:
-                            st.metric("Años con Error", len(failed_years))
-                    
-                    # Mostrar años con errores si los hay
-                    if failed_years:
-                        st.warning(f"⚠️ Años con errores: {', '.join(map(str, failed_years))}")
-                    
-                    # Mostrar top 5 años
-                    if patents_by_year:
-                        top_years = sorted(patents_by_year.items(), key=lambda x: x[1], reverse=True)[:5]
-                        st.write("**Top 5 años con más patentes:**")
-                        for year, count in top_years:
-                            st.write(f"- {year}: {count:,} patentes")
-                
-                return patents_by_year
-            else:
-                status_text.text("❌ No se pudieron obtener datos de ningún año")
-                return None
-                
-        except Exception as e:
-            st.error(f"❌ Error general en búsqueda por años: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
-            return None
-        
-        finally:
-            # Limpiar elementos de UI
-            try:
-                progress_bar.empty()
-                status_text.empty()
-            except:
-                pass
-
-    def get_patents_summary_stats(self, query):
-        """
-        Obtiene estadísticas rápidas sin análisis completo.
-        Útil para verificar si vale la pena hacer el análisis completo.
+        Análisis optimizado que minimiza el consumo de tokens usando múltiples estrategias.
         
         Args:
-            query: Consulta de búsqueda
+            query: Query de búsqueda original
+            start_year: Año inicial (default: current_year - 25)
+            end_year: Año final (default: current_year)
+            max_tokens: Máximo número de requests permitidos
             
         Returns:
-            Dict con estadísticas básicas
+            dict: Patentes por año {año: cantidad}
         """
-        try:
-            patents_query = self._build_patents_query(query)
+        current_year = datetime.now().year
+        if not start_year:
+            start_year = current_year - 25
+        if not end_year:
+            end_year = current_year
             
-            # Búsqueda general para obtener total
+        st.info(f"🎯 **Estrategia Optimizada**: Máximo {max_tokens} requests para {end_year - start_year + 1} años")
+        
+        # PASO 1: Validar que la query funciona
+        simplified_query = self._create_ultra_simple_query(query)
+        if not self._validate_query_works(simplified_query):
+            return None
+            
+        # PASO 2: Estrategia híbrida basada en rangos de años
+        patents_by_year = {}
+        tokens_used = 0
+        
+        # Definir estrategias por época
+        strategies = [
+            {
+                'name': 'Época Antigua', 
+                'range': (start_year, min(1999, end_year)),
+                'strategy': 'bulk_search',  # Búsqueda masiva + procesamiento
+                'batch_size': 20  # años por búsqueda
+            },
+            {
+                'name': 'Época Moderna Temprana',
+                'range': (max(2000, start_year), min(2009, end_year)),
+                'strategy': 'decade_search',  # Por décadas
+                'batch_size': 10
+            },
+            {
+                'name': 'Época Reciente',
+                'range': (max(2010, start_year), end_year),
+                'strategy': 'smart_sampling',  # Muestreo inteligente
+                'batch_size': 5
+            }
+        ]
+        
+        for strategy_info in strategies:
+            if tokens_used >= max_tokens:
+                st.warning(f"⚠️ Límite de tokens alcanzado ({max_tokens}). Deteniendo búsqueda.")
+                break
+                
+            range_start, range_end = strategy_info['range']
+            if range_start > range_end:
+                continue
+                
+            st.write(f"### 📊 {strategy_info['name']} ({range_start}-{range_end})")
+            
+            strategy_result, tokens_consumed = self._execute_strategy(
+                simplified_query, 
+                range_start, 
+                range_end, 
+                strategy_info,
+                max_tokens - tokens_used
+            )
+            
+            if strategy_result:
+                patents_by_year.update(strategy_result)
+                tokens_used += tokens_consumed
+                
+            st.caption(f"✅ Tokens usados en esta época: {tokens_consumed} | Total: {tokens_used}/{max_tokens}")
+        
+        # PASO 3: Completar años faltantes con interpolación/extrapolación
+        if patents_by_year:
+            patents_by_year = self._fill_missing_years(patents_by_year, start_year, end_year)
+            
+        # PASO 4: Mostrar resumen de optimización
+        self._show_optimization_summary(patents_by_year, tokens_used, max_tokens)
+        
+        return patents_by_year
+    
+    def _validate_query_works(self, query):
+        """Valida que la query funciona con una búsqueda simple."""
+        st.text("🔍 Validando query...")
+        
+        try:
             params = {
                 "engine": "google_patents",
-                "q": patents_query,
+                "q": query,
                 "api_key": self.api_key,
                 "num": 10
             }
@@ -973,274 +832,431 @@ class GooglePatentsAnalyzer:
             
             if response.status_code == 200:
                 data = response.json()
-                
                 if "error" not in data:
-                    search_info = data.get("search_information", {})
-                    total_results = search_info.get("total_results", 0)
+                    total_results = data.get("search_information", {}).get("total_results", 0)
+                    total_results = int(str(total_results).replace(",", "")) if total_results else 0
                     
-                    # Convertir a entero
-                    try:
-                        total_results = int(str(total_results).replace(",", ""))
-                    except:
-                        total_results = 0
-                    
-                    return {
-                        "total_patents": total_results,
-                        "query_used": patents_query,
-                        "worth_analyzing": total_results > 10,
-                        "estimated_time": f"{total_results // 1000 * 2} segundos" if total_results > 1000 else "< 30 segundos"
-                    }
-            
-            return None
-            
-        except Exception as e:
-            st.error(f"Error obteniendo estadísticas: {str(e)}")
-            return None
-    
-    def _build_patents_query(self, scopus_query):
-        """
-        Convierte una ecuación de Scopus a formato SIMPLE compatible con Google Patents.
-        Implementación mejorada para evitar error 400.
-        
-        Args:
-            scopus_query: Query en formato Scopus
-            
-        Returns:
-            str: Query simplificada para Google Patents
-        """
-        try:
-            # Paso 1: Extraer términos principales entre comillas
-            quoted_terms = re.findall(r'"([^"]+)"', scopus_query)
-            
-            # Paso 2: Si no hay términos entre comillas, extraer de campos Scopus
-            if not quoted_terms:
-                # Extraer de campos TITLE, ABS, KEY
-                title_terms = re.findall(r'TITLE\(([^)]+)\)', scopus_query)
-                abs_terms = re.findall(r'ABS\(([^)]+)\)', scopus_query)
-                key_terms = re.findall(r'KEY\(([^)]+)\)', scopus_query)
-                titleabs_terms = re.findall(r'TITLE-ABS-KEY\(([^)]+)\)', scopus_query)
-                
-                # Combinar todos los términos encontrados
-                all_terms = title_terms + abs_terms + key_terms + titleabs_terms
-                
-                # Limpiar términos (quitar comillas si las tienen)
-                for term in all_terms:
-                    clean_term = term.strip().strip('"').strip("'")
-                    if clean_term and len(clean_term) > 2:
-                        quoted_terms.append(clean_term)
-            
-            # Paso 3: Si aún no hay términos, extraer palabras importantes
-            if not quoted_terms:
-                # Limpiar la query de campos Scopus
-                clean_query = re.sub(r'(TITLE|ABS|KEY|TITLE-ABS-KEY|AUTH|AFFIL|PUBYEAR|DOCTYPE|SUBJAREA)\([^)]*\)', '', scopus_query)
-                clean_query = re.sub(r'[()><=]', ' ', clean_query)
-                clean_query = re.sub(r'\b(AND|OR|NOT)\b', ' ', clean_query)
-                
-                # Extraer palabras significativas (3+ caracteres, solo letras)
-                words = re.findall(r'\b[a-zA-Z]{3,}\b', clean_query)
-                
-                # Filtrar palabras muy comunes
-                stop_words = {
-                    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'who', 'boy', 'did', 'man', 'men', 'put', 'say', 'she', 'too', 'use', 'way', 'will', 'with', 'been', 'call', 'come', 'each', 'find', 'have', 'here', 'into', 'just', 'like', 'long', 'look', 'made', 'make', 'many', 'more', 'over', 'part', 'said', 'than', 'that', 'them', 'they', 'this', 'time', 'very', 'well', 'were', 'what', 'when', 'word', 'work', 'your'
-                }
-                
-                # Mantener solo palabras relevantes
-                quoted_terms = [word for word in words if word.lower() not in stop_words and len(word) >= 4]
-            
-            # Paso 4: Limitar a máximo 2 términos principales para evitar complejidad
-            if len(quoted_terms) > 2:
-                # Priorizar términos más largos (más específicos)
-                quoted_terms = sorted(quoted_terms, key=len, reverse=True)[:2]
-            
-            # Paso 5: Construir query ultra-simple para Google Patents
-            if len(quoted_terms) == 0:
-                # Fallback absoluto
-                simple_query = "technology"
-            elif len(quoted_terms) == 1:
-                # Un solo término entre comillas
-                simple_query = f'"{quoted_terms[0]}"'
-            else:
-                # Máximo dos términos con AND simple
-                simple_query = f'"{quoted_terms[0]}" AND "{quoted_terms[1]}"'
-            
-            # Paso 6: NO agregar filtros temporales aquí (se manejan por año individualmente)
-            # Esto evita queries complejas que causan error 400
-            
-            # Paso 7: Validar longitud final (Google Patents tiene límite ~80 caracteres)
-            if len(simple_query) > 80:
-                # Usar solo el primer término si es muy larga
-                if quoted_terms:
-                    simple_query = f'"{quoted_terms[0]}"'
+                    if total_results > 0:
+                        st.success(f"✅ Query válida: {total_results:,} resultados totales")
+                        return True
+                    else:
+                        st.warning(f"⚠️ Query muy específica: 0 resultados. Usando query ultra-simple.")
+                        return False
                 else:
-                    simple_query = "patent"
-            
-            return simple_query
-            
+                    st.error(f"❌ Error en query: {data.get('error', 'Unknown')}")
+                    return False
+            else:
+                st.error(f"❌ Error HTTP: {response.status_code}")
+                return False
+                
         except Exception as e:
-            st.warning(f"Error simplificando query: {str(e)}")
-            # Fallback de emergencia ultra-simple
-            return "technology"
-
-    def _extract_core_concept(self, scopus_query):
-        """
-        Extrae el concepto central de una query compleja de Scopus.
-        
-        Args:
-            scopus_query: Query original de Scopus
-            
-        Returns:
-            str: Concepto central identificado
-        """
-        # Patrones para identificar conceptos tecnológicos centrales
-        tech_patterns = [
-            r'"([^"]*(?:AI|artificial intelligence|machine learning)[^"]*)"',
-            r'"([^"]*(?:blockchain|crypto|bitcoin)[^"]*)"',
-            r'"([^"]*(?:quantum|qubit)[^"]*)"',
-            r'"([^"]*(?:CRISPR|gene editing)[^"]*)"',
-            r'"([^"]*(?:graphene|nanotube)[^"]*)"',
-            r'"([^"]*(?:solar|photovoltaic|battery)[^"]*)"',
-            r'"([^"]*(?:robot|automation)[^"]*)"',
-            r'"([^"]*(?:biotech|pharmaceutical)[^"]*)"'
-        ]
-        
-        for pattern in tech_patterns:
-            match = re.search(pattern, scopus_query, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        
-        # Si no encuentra patrones específicos, usar el primer término entre comillas
-        quoted = re.findall(r'"([^"]+)"', scopus_query)
-        if quoted:
-            return quoted[0]
-        
-        return None
+            st.error(f"❌ Error validando query: {str(e)}")
+            return False
     
-    def categorize_by_year(self, results):
-        """
-        Categoriza las patentes por año y completa los años faltantes con ceros.
+    def _execute_strategy(self, query, start_year, end_year, strategy_info, max_tokens):
+        """Ejecuta una estrategia específica de búsqueda."""
+        strategy = strategy_info['strategy']
         
-        Args:
-            results: Lista de resultados de la búsqueda
-            
-        Returns:
-            Diccionario con el recuento por año
+        if strategy == 'bulk_search':
+            return self._bulk_search_strategy(query, start_year, end_year, max_tokens)
+        elif strategy == 'decade_search':
+            return self._decade_search_strategy(query, start_year, end_year, max_tokens)
+        elif strategy == 'smart_sampling':
+            return self._smart_sampling_strategy(query, start_year, end_year, max_tokens)
+        else:
+            return {}, 0
+    
+    def _bulk_search_strategy(self, query, start_year, end_year, max_tokens):
+        """
+        Estrategia de búsqueda masiva: Obtiene muchos resultados de una vez
+        y extrae los años de los metadatos.
         """
         patents_by_year = {}
+        tokens_used = 0
         
-        st.text("📅 Categorizando patentes por año...")
+        if tokens_used >= max_tokens:
+            return patents_by_year, tokens_used
         
-        for entry in results:
-            year = None
+        try:
+            # Búsqueda amplia sin filtros de fecha
+            params = {
+                "engine": "google_patents",
+                "q": f"{query} after:{start_year-1}-12-31 before:{end_year+1}-01-01",
+                "api_key": self.api_key,
+                "num": 100,  # Obtener más resultados por búsqueda
+                "start": 0
+            }
             
-            # Método 1: publication_date (fecha de publicación)
-            if "publication_date" in entry:
-                try:
-                    date_str = entry["publication_date"]
-                    # Puede venir como "2023-05-15" o "May 15, 2023"
-                    year = self._extract_year_from_date_string(date_str)
-                except (ValueError, TypeError):
-                    pass
+            st.text(f"🔄 Búsqueda masiva {start_year}-{end_year}...")
             
-            # Método 2: patent_date (fecha de la patente)
-            if not year and "patent_date" in entry:
-                try:
-                    date_str = entry["patent_date"]
-                    year = self._extract_year_from_date_string(date_str)
-                except (ValueError, TypeError):
-                    pass
+            # Hacer múltiples páginas si es necesario
+            all_patents = []
+            max_pages = min(5, max_tokens)  # Límite de páginas
             
-            # Método 3: Buscar año en el título o snippet
-            if not year:
-                text_to_search = f"{entry.get('title', '')} {entry.get('snippet', '')}"
-                year = self._extract_year_from_text(text_to_search)
+            for page in range(max_pages):
+                if tokens_used >= max_tokens:
+                    break
+                    
+                params["start"] = page * 100
+                response = requests.get(self.base_url, params=params, timeout=30)
+                tokens_used += 1
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "error" not in data and "organic_results" in data:
+                        patents = data["organic_results"]
+                        if not patents:  # No más resultados
+                            break
+                        all_patents.extend(patents)
+                    else:
+                        break
+                else:
+                    break
+                    
+                time.sleep(0.3)  # Rate limiting
             
-            # Método 4: filing_date como último recurso
-            if not year and "filing_date" in entry:
-                try:
-                    date_str = entry["filing_date"]
-                    year = self._extract_year_from_date_string(date_str)
-                except (ValueError, TypeError):
-                    pass
+            # Procesar resultados para extraer años
+            if all_patents:
+                for patent in all_patents:
+                    year = self._extract_year_from_patent(patent)
+                    if year and start_year <= year <= end_year:
+                        patents_by_year[year] = patents_by_year.get(year, 0) + 1
+                
+                st.success(f"✅ Procesados {len(all_patents)} patentes, encontrados {sum(patents_by_year.values())} en rango")
             
-            # Si se encontró un año válido, contabilizarlo
-            if year and 1900 <= year <= datetime.now().year:
-                patents_by_year[year] = patents_by_year.get(year, 0) + 1
+        except Exception as e:
+            st.warning(f"⚠️ Error en búsqueda masiva: {str(e)}")
         
-        # Completar años faltantes con ceros
-        if patents_by_year:
-            min_year = min(patents_by_year.keys())
-            max_year = max(patents_by_year.keys())
-            
-            # Crear rango completo de años
-            all_years = list(range(min_year, max_year + 1))
-            
-            # Completar con ceros los años faltantes
-            complete_patents = {year: patents_by_year.get(year, 0) for year in all_years}
-            
-            # Ordenar por año
-            self.patents_by_year = dict(sorted(complete_patents.items()))
+        return patents_by_year, tokens_used
+    
+    def _decade_search_strategy(self, query, start_year, end_year, max_tokens):
+        """Estrategia por décadas: Busca por rangos de 10 años."""
+        patents_by_year = {}
+        tokens_used = 0
+        
+        # Crear rangos de décadas
+        decade_ranges = []
+        current = start_year
+        while current <= end_year:
+            decade_end = min(current + 9, end_year)
+            decade_ranges.append((current, decade_end))
+            current += 10
+        
+        for decade_start, decade_end in decade_ranges:
+            if tokens_used >= max_tokens:
+                break
+                
+            try:
+                params = {
+                    "engine": "google_patents",
+                    "q": f"{query} after:{decade_start-1}-12-31 before:{decade_end+1}-01-01",
+                    "api_key": self.api_key,
+                    "num": 50
+                }
+                
+                st.text(f"🔄 Década {decade_start}-{decade_end}...")
+                
+                response = requests.get(self.base_url, params=params, timeout=30)
+                tokens_used += 1
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "error" not in data:
+                        total_results = data.get("search_information", {}).get("total_results", 0)
+                        total_results = int(str(total_results).replace(",", "")) if total_results else 0
+                        
+                        # Distribuir uniformemente los resultados en la década
+                        if total_results > 0:
+                            years_in_decade = decade_end - decade_start + 1
+                            avg_per_year = total_results // years_in_decade
+                            remainder = total_results % years_in_decade
+                            
+                            for i, year in enumerate(range(decade_start, decade_end + 1)):
+                                patents_by_year[year] = avg_per_year + (1 if i < remainder else 0)
+                
+                time.sleep(0.3)
+                
+            except Exception as e:
+                st.warning(f"⚠️ Error en década {decade_start}-{decade_end}: {str(e)}")
+        
+        return patents_by_year, tokens_used
+    
+    def _smart_sampling_strategy(self, query, start_year, end_year, max_tokens):
+        """Estrategia de muestreo inteligente: Busca años clave y extrapola."""
+        patents_by_year = {}
+        tokens_used = 0
+        
+        # Seleccionar años clave para muestrear
+        total_years = end_year - start_year + 1
+        if total_years <= max_tokens:
+            # Si hay suficientes tokens, buscar año por año
+            sample_years = list(range(start_year, end_year + 1))
         else:
-            self.patents_by_year = {}
+            # Muestrear años estratégicamente
+            sample_size = min(max_tokens, total_years // 2)
+            sample_years = self._select_strategic_years(start_year, end_year, sample_size)
+        
+        st.text(f"🎯 Muestreando {len(sample_years)} años clave de {total_years} totales")
+        
+        # Buscar años seleccionados
+        for year in sample_years:
+            if tokens_used >= max_tokens:
+                break
+                
+            try:
+                params = {
+                    "engine": "google_patents",
+                    "q": f"{query} after:{year-1}-12-31 before:{year+1}-01-01",
+                    "api_key": self.api_key,
+                    "num": 10
+                }
+                
+                response = requests.get(self.base_url, params=params, timeout=30)
+                tokens_used += 1
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "error" not in data:
+                        total_results = data.get("search_information", {}).get("total_results", 0)
+                        total_results = int(str(total_results).replace(",", "")) if total_results else 0
+                        patents_by_year[year] = total_results
+                
+                time.sleep(0.2)
+                
+            except Exception as e:
+                st.warning(f"⚠️ Error en año {year}: {str(e)}")
+        
+        return patents_by_year, tokens_used
+    
+    def _select_strategic_years(self, start_year, end_year, sample_size):
+        """Selecciona años estratégicos para muestrear."""
+        years = list(range(start_year, end_year + 1))
+        
+        if sample_size >= len(years):
+            return years
+        
+        # Estrategia: Incluir siempre primer año, último año, y distribuir el resto
+        strategic_years = [start_year, end_year]
+        
+        if sample_size > 2:
+            # Añadir años intermedios uniformemente distribuidos
+            remaining_sample = sample_size - 2
+            step = max(1, (end_year - start_year - 1) // (remaining_sample + 1))
             
-        return self.patents_by_year
+            for i in range(1, remaining_sample + 1):
+                year = start_year + i * step
+                if year < end_year and year not in strategic_years:
+                    strategic_years.append(year)
+        
+        return sorted(strategic_years)
+    
+    def _fill_missing_years(self, patents_by_year, start_year, end_year):
+        """Completa años faltantes usando interpolación."""
+        if not patents_by_year:
+            return patents_by_year
+        
+        # Crear lista completa de años
+        all_years = list(range(start_year, end_year + 1))
+        filled_data = {}
+        
+        for year in all_years:
+            if year in patents_by_year:
+                filled_data[year] = patents_by_year[year]
+            else:
+                # Interpolación simple entre años conocidos
+                filled_data[year] = self._interpolate_value(year, patents_by_year)
+        
+        return filled_data
+    
+    def _interpolate_value(self, target_year, known_data):
+        """Interpola valor para un año faltante."""
+        if not known_data:
+            return 0
+        
+        known_years = sorted(known_data.keys())
+        
+        # Si el año objetivo está fuera del rango, usar extrapolación simple
+        if target_year < min(known_years):
+            return max(0, known_data[min(known_years)] // 2)  # Mitad del valor más temprano
+        elif target_year > max(known_years):
+            return known_data[max(known_years)]  # Mismo valor que el más reciente
+        
+        # Interpolación lineal entre dos puntos conocidos
+        for i in range(len(known_years) - 1):
+            year1, year2 = known_years[i], known_years[i + 1]
+            if year1 <= target_year <= year2:
+                value1, value2 = known_data[year1], known_data[year2]
+                ratio = (target_year - year1) / (year2 - year1)
+                return int(value1 + ratio * (value2 - value1))
+        
+        return 0
+    
+    def _extract_year_from_patent(self, patent_data):
+        """Extrae el año de los metadatos de una patente."""
+        # Intentar diferentes campos donde puede estar la fecha
+        date_fields = [
+            'publication_date', 
+            'patent_date', 
+            'filing_date',
+            'priority_date'
+        ]
+        
+        for field in date_fields:
+            if field in patent_data:
+                year = self._extract_year_from_date_string(patent_data[field])
+                if year:
+                    return year
+        
+        # Buscar en título o snippet
+        text_to_search = f"{patent_data.get('title', '')} {patent_data.get('snippet', '')}"
+        return self._extract_year_from_text(text_to_search)
     
     def _extract_year_from_date_string(self, date_str):
-        """
-        Extrae el año de una cadena de fecha en varios formatos.
-        
-        Args:
-            date_str: Cadena de fecha
-            
-        Returns:
-            int: Año extraído o None si no se puede extraer
-        """
+        """Extrae año de string de fecha."""
         if not date_str:
             return None
         
-        # Formatos comunes de fecha
-        date_formats = [
-            '%Y-%m-%d',           # 2023-05-15
-            '%Y/%m/%d',           # 2023/05/15
-            '%m/%d/%Y',           # 05/15/2023
-            '%B %d, %Y',          # May 15, 2023
-            '%b %d, %Y',          # May 15, 2023
-            '%Y',                 # 2023
-        ]
-        
-        for fmt in date_formats:
-            try:
-                return datetime.strptime(date_str, fmt).year
-            except ValueError:
-                continue
-        
-        # Si no funciona ningún formato, usar regex
-        return self._extract_year_from_text(date_str)
+        # Buscar patrón de año (4 dígitos)
+        import re
+        match = re.search(r'\b(19|20)\d{2}\b', str(date_str))
+        if match:
+            year = int(match.group())
+            current_year = datetime.now().year
+            if 1900 <= year <= current_year:
+                return year
+        return None
     
     def _extract_year_from_text(self, text):
-        """
-        Extrae año de texto usando regex.
-        
-        Args:
-            text: Texto donde buscar el año
-            
-        Returns:
-            int: Año encontrado o None
-        """
+        """Extrae año de texto libre."""
         if not text:
             return None
         
-        # Buscar años entre 1900 y año actual
+        import re
         current_year = datetime.now().year
-        years = re.findall(r'\b(19\d{2}|20\d{2})\b', text)
+        years = re.findall(r'\b(19|20)\d{2}\b', text)
         
         if years:
             valid_years = [int(y) for y in years if 1900 <= int(y) <= current_year]
             if valid_years:
-                # Retornar el año más reciente si hay múltiples
-                return max(valid_years)
-        
+                return max(valid_years)  # Retornar el año más reciente
         return None
     
+    def _create_ultra_simple_query(self, original_query):
+        """Crea una query ultra-simple que tenga más probabilidad de funcionar."""
+        # Extraer conceptos clave
+        import re
+        
+        # Buscar términos entre comillas
+        quoted_terms = re.findall(r'"([^"]+)"', original_query)
+        
+        if quoted_terms:
+            # Usar solo el primer término y simplificar
+            main_term = quoted_terms[0].strip()
+            # Tomar solo la primera palabra del término principal
+            words = main_term.split()
+            if words:
+                return f'"{words[0]}"'
+        
+        # Si no hay términos entre comillas, extraer palabras clave
+        clean_query = re.sub(r'[()><=]', ' ', original_query)
+        clean_query = re.sub(r'\b(AND|OR|NOT|TITLE|ABS|KEY)\b', ' ', clean_query)
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', clean_query)
+        
+        if words:
+            return f'"{words[0]}"'
+        
+        # Fallback absoluto
+        return "technology"
+    
+    def _show_optimization_summary(self, patents_by_year, tokens_used, max_tokens):
+        """Muestra resumen de la optimización."""
+        if not patents_by_year:
+            st.error("❌ No se obtuvieron datos de patentes")
+            return
+        
+        total_patents = sum(patents_by_year.values())
+        years_covered = len(patents_by_year)
+        
+        st.success(f"🎯 **Optimización Exitosa**")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Tokens Usados", f"{tokens_used}/{max_tokens}")
+        with col2:
+            st.metric("Total Patentes", f"{total_patents:,}")
+        with col3:
+            st.metric("Años Cubiertos", years_covered)
+        with col4:
+            efficiency = total_patents / tokens_used if tokens_used > 0 else 0
+            st.metric("Eficiencia", f"{efficiency:.1f} patentes/token")
+        
+        # Mostrar ahorro de tokens
+        naive_tokens = years_covered  # Un token por año
+        tokens_saved = naive_tokens - tokens_used
+        if tokens_saved > 0:
+            st.info(f"💰 **Ahorro**: {tokens_saved} tokens ({tokens_saved/naive_tokens*100:.1f}% menos que búsqueda año por año)")
+
+
+# Función para integrar en el código existente
+def integrate_optimized_patents_search():
+    """
+    Función para reemplazar la búsqueda de patentes existente.
+    Usar esta función en lugar de GooglePatentsAnalyzer.search_patents()
+    """
+    
+    def run_optimized_patents_analysis(scopus_query, start_year, end_year, serp_api_key, max_tokens=30):
+        """
+        Ejecuta análisis optimizado de patentes.
+        
+        Args:
+            scopus_query: Query original de Scopus
+            start_year: Año inicial
+            end_year: Año final
+            serp_api_key: API key de SerpAPI
+            max_tokens: Máximo número de requests (default: 30)
+            
+        Returns:
+            dict: Patentes por año
+        """
+        
+        st.write("### 🚀 Análisis Optimizado de Patentes")
+        
+        # Configuración de optimización
+        with st.expander("⚙️ Configuración de Optimización", expanded=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                max_tokens = st.slider(
+                    "Máximo tokens a usar",
+                    min_value=10,
+                    max_value=100,
+                    value=max_tokens,
+                    help="Cada token = 1 request a SerpAPI"
+                )
+            
+            with col2:
+                years_span = end_year - start_year + 1
+                naive_cost = years_span
+                st.metric("Costo búsqueda naive", f"{naive_cost} tokens")
+                st.metric("Costo optimizado", f"≤{max_tokens} tokens")
+                
+                if max_tokens < naive_cost:
+                    savings = naive_cost - max_tokens
+                    st.success(f"💰 Ahorro: {savings} tokens ({savings/naive_cost*100:.1f}%)")
+        
+        # Ejecutar análisis optimizado
+        analyzer = OptimizedGooglePatentsAnalyzer(serp_api_key)
+        patents_by_year = analyzer.analyze_patents_optimized(
+            scopus_query, 
+            start_year, 
+            end_year, 
+            max_tokens
+        )
+        
+        return patents_by_year
+    
+    return run_optimized_patents_analysis    
 
 def run_s_curve_analysis():
     """
@@ -1445,39 +1461,69 @@ def run_s_curve_analysis():
                             st.code(traceback.format_exc())
             
             # =============================================================
-            # 2. ANÁLISIS DE PATENTES - DIRECTO Y AUTOMÁTICO
+            # 2. ANÁLISIS DE PATENTES - OPTIMIZADO
             # =============================================================
             if analyze_patents:
-                st.write("## 📑 Análisis de Patentes")
+                st.write("## 📑 Análisis de Patentes (Optimizado)")
                 
                 if not st.session_state.get('serp_api_key'):
                     st.error("⚠️ Se requiere SerpAPI Key para analizar patentes. Configúrala en el panel lateral.")
                     patents_by_year = None
                     patents_analysis = None
                 else:
-                    with st.spinner("🔄 Analizando patentes con Google Patents..."):
-                        try:
-                            # Instanciar el analizador de patentes
-                            patents_analyzer = GooglePatentsAnalyzer(st.session_state.serp_api_key)
-                            
-                            # Obtener rango de años desde la configuración (agregada abajo)
+                    # NUEVA CONFIGURACIÓN DE OPTIMIZACIÓN
+                    with st.expander("🎯 Configuración de Optimización", expanded=True):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            max_tokens = st.slider(
+                                "Máximo tokens SerpAPI",
+                                min_value=5,
+                                max_value=100,
+                                value=25,
+                                help="Cada token = 1 request. Menos tokens = más optimización."
+                            )
+                        
+                        with col2:
                             patents_start_year = st.session_state.get('patents_start_year_config', datetime.now().year - 15)
                             patents_end_year = st.session_state.get('patents_end_year_config', datetime.now().year)
+                            years_span = patents_end_year - patents_start_year + 1
+                            naive_cost = years_span
                             
-                            # Ejecutar búsqueda por años
-                            patents_by_year = patents_analyzer.search_patents(
+                            st.metric("Años a analizar", years_span)
+                            st.metric("Costo método naive", f"{naive_cost} tokens")
+                        
+                        with col3:
+                            potential_savings = max(0, naive_cost - max_tokens)
+                            savings_percent = (potential_savings / naive_cost * 100) if naive_cost > 0 else 0
+                            
+                            st.metric("Costo optimizado", f"≤{max_tokens} tokens")
+                            if potential_savings > 0:
+                                st.metric(
+                                    "Ahorro estimado", 
+                                    f"{potential_savings} tokens",
+                                    delta=f"-{savings_percent:.1f}%"
+                                )
+                    
+                    # EJECUTAR ANÁLISIS OPTIMIZADO
+                    with st.spinner("🔄 Ejecutando análisis optimizado de patentes..."):
+                        try:
+                            # Usar la nueva clase optimizada
+                            analyzer = OptimizedGooglePatentsAnalyzer(st.session_state.serp_api_key)
+                            
+                            patents_by_year = analyzer.analyze_patents_optimized(
                                 scopus_query,
-                                max_results=max_results,
                                 start_year=patents_start_year,
-                                end_year=patents_end_year
+                                end_year=patents_end_year,
+                                max_tokens=max_tokens
                             )
                             
                             # Verificar si se obtuvieron resultados
-                            if patents_by_year:
+                            if patents_by_year and sum(patents_by_year.values()) > 0:
                                 # Mostrar tabla de patentes por año
                                 df_patents = TechnologyAnalyzer.display_data_table(
                                     patents_by_year, 
-                                    title="Tabla de Patentes por Año"
+                                    title="Tabla de Patentes por Año (Optimizada)"
                                 )
                                 
                                 # Realizar análisis de curva en S
@@ -1489,7 +1535,7 @@ def run_s_curve_analysis():
                                     analysis_fig, 
                                     ajuste_info, 
                                     parametros,
-                                    title="Análisis de Curva en S - Patentes"
+                                    title="Análisis de Curva en S - Patentes (Optimizado)"
                                 )
                                 
                                 # Guardar para comparación posterior
@@ -1501,20 +1547,140 @@ def run_s_curve_analysis():
                                 # Exportar datos
                                 TechnologyAnalyzer.export_data(
                                     analysis_df if analysis_df is not None else df_patents,
-                                    "patentes",
+                                    "patentes_optimizado",
                                     scopus_query
                                 )
+                                
+                                # Mostrar estadísticas de optimización
+                                st.success("✅ Análisis de patentes completado exitosamente")
+                                
                             else:
-                                st.warning("No se pudieron obtener resultados de patentes.")
+                                st.warning("⚠️ No se obtuvieron resultados de patentes. Posibles causas:")
+                                st.write("""
+                                - La consulta es muy específica
+                                - No existen patentes para esta tecnología en el rango de años
+                                - Problema con la API de Google Patents
+                                """)
+                                
+                                # Mostrar sugerencias para mejorar resultados
+                                with st.expander("💡 Sugerencias para mejorar resultados"):
+                                    st.write("""
+                                    **Prueba estas estrategias:**
+                                    
+                                    1. **Simplifica la consulta**: Usa términos más generales
+                                    2. **Amplía el rango de años**: Incluye años más antiguos
+                                    3. **Incrementa el límite de tokens**: Permite más búsquedas
+                                    4. **Verifica la tecnología**: Algunas tecnologías tienen pocas patentes
+                                    """)
+                                
                                 patents_by_year = None
                                 patents_analysis = None
-                        
+                            
                         except Exception as e:
-                            st.error(f"Error en el análisis de patentes: {str(e)}")
-                            import traceback
-                            st.code(traceback.format_exc())
+                            st.error(f"❌ Error en el análisis optimizado de patentes: {str(e)}")
+                            
+                            # Mostrar información de debug
+                            with st.expander("🔧 Información de Debug"):
+                                st.write("**Query original:**")
+                                st.code(scopus_query)
+                                
+                                st.write("**Error completo:**")
+                                import traceback
+                                st.code(traceback.format_exc())
+                            
                             patents_by_year = None
                             patents_analysis = None
+
+            # 3. AÑADIR FUNCIÓN AUXILIAR PARA ANÁLISIS RÁPIDO DE VIABILIDAD
+            def check_patents_viability(query, serp_api_key):
+                """
+                Función auxiliar para verificar rápidamente si vale la pena analizar patentes.
+                Usa solo 1 token para verificar.
+                """
+                try:
+                    analyzer = OptimizedGooglePatentsAnalyzer(serp_api_key)
+                    simplified_query = analyzer._create_ultra_simple_query(query)
+                    
+                    # Hacer una búsqueda muy simple
+                    params = {
+                        "engine": "google_patents",
+                        "q": simplified_query,
+                        "api_key": serp_api_key,
+                        "num": 1
+                    }
+                    
+                    response = requests.get(analyzer.base_url, params=params, timeout=20)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "error" not in data:
+                            total_results = data.get("search_information", {}).get("total_results", 0)
+                            total_results = int(str(total_results).replace(",", "")) if total_results else 0
+                            
+                            return {
+                                "viable": total_results > 0,
+                                "total_results": total_results,
+                                "simplified_query": simplified_query,
+                                "recommendation": "Proceder con análisis" if total_results > 100 else 
+                                            "Considerar ampliar términos" if total_results > 0 else 
+                                            "Revisar consulta - muy específica"
+                            }
+                    
+                    return {"viable": False, "error": "No se pudo conectar"}
+                    
+                except Exception as e:
+                    return {"viable": False, "error": str(e)}
+
+            # 4. INTEGRAR VERIFICACIÓN PREVIA EN LA INTERFAZ
+            # Añadir esto ANTES del botón principal de análisis:
+
+            # Verificación rápida de viabilidad
+            if scopus_query and st.session_state.get('serp_api_key') and analyze_patents:
+                with st.expander("🔍 Verificación Rápida de Patentes", expanded=False):
+                    if st.button("🚀 Verificar viabilidad (1 token)", key="verify_patents"):
+                        with st.spinner("Verificando..."):
+                            viability = check_patents_viability(scopus_query, st.session_state.serp_api_key)
+                            
+                            if viability.get("viable"):
+                                st.success(f"✅ {viability['recommendation']}")
+                                st.info(f"📊 Aproximadamente {viability['total_results']:,} patentes encontradas")
+                                st.caption(f"Query simplificada: {viability.get('simplified_query', 'N/A')}")
+                            else:
+                                st.warning(f"⚠️ {viability.get('recommendation', 'Problema detectado')}")
+                                if "error" in viability:
+                                    st.error(f"Error: {viability['error']}")
+
+            # 5. CONFIGURACIÓN MEJORADA EN EL SIDEBAR
+            # Añadir esto en la función sidebar_config():
+
+            # En la sección de SerpAPI, añadir información sobre optimización:
+            with st.expander("📈 SerpAPI (Hype Cycle & Patentes)", expanded=False):
+                st.markdown('<div class="api-config">', unsafe_allow_html=True)
+                serp_api_key = st.text_input(
+                    "SerpAPI Key",
+                    value=st.session_state.serp_api_key,
+                    type="password",
+                    help="Necesaria para análisis de Hype Cycle y búsqueda optimizada de patentes"
+                )
+                st.session_state.serp_api_key = serp_api_key
+                
+                # Información de optimización
+                st.info("""
+                **🎯 Optimización de Patentes:**
+                - Búsqueda inteligente por rangos
+                - Mínimo consumo de tokens
+                - Interpolación de años faltantes
+                - Estrategias adaptativas por época
+                """)
+                
+                if st.button("🔄 Probar conexión SerpAPI", key="test_serp_unique"):
+                    with st.spinner("Probando conexión con SerpAPI..."):
+                        success, message = test_api_connection("serp", serp_api_key)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+                st.markdown('</div>', unsafe_allow_html=True)
                                 
             # =============================================================
             # 3. COMPARACIÓN PAPERS vs PATENTES
