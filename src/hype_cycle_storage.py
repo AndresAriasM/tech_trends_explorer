@@ -429,7 +429,9 @@ class HypeCycleStorage:
                         ":type": "hype_cycle"
                     }
                 )
-                return response.get('Items', [])
+                items = response.get('Items', [])
+                # NUEVO: Convertir Decimals a floats
+                return [self._process_query_from_storage(item) for item in items]
             else:
                 # Storage local
                 queries = self.storage.data.get("hype_cycle_queries", [])
@@ -438,7 +440,7 @@ class HypeCycleStorage:
         except Exception as e:
             st.error(f"Error obteniendo consultas: {str(e)}")
             return []
-    
+
     def get_query_by_id(self, query_id: str) -> Optional[Dict]:
         """Obtiene una consulta específica por ID"""
         try:
@@ -449,7 +451,10 @@ class HypeCycleStorage:
                     ExpressionAttributeValues={":id": query_id}
                 )
                 items = response.get('Items', [])
-                return items[0] if items else None
+                if items:
+                    # NUEVO: Convertir Decimals a floats
+                    return self._process_query_from_storage(items[0])
+                return None
             else:
                 # Storage local
                 queries = self.storage.data.get("hype_cycle_queries", [])
@@ -461,7 +466,7 @@ class HypeCycleStorage:
         except Exception as e:
             st.error(f"Error obteniendo consulta: {str(e)}")
             return None
-    
+
     def get_all_hype_cycle_queries(self) -> List[Dict]:
         """Obtiene todas las consultas de Hype Cycle"""
         try:
@@ -471,7 +476,9 @@ class HypeCycleStorage:
                     FilterExpression="analysis_type = :type",
                     ExpressionAttributeValues={":type": "hype_cycle"}
                 )
-                return response.get('Items', [])
+                items = response.get('Items', [])
+                # NUEVO: Convertir Decimals a floats
+                return [self._process_query_from_storage(item) for item in items]
             else:
                 # Storage local
                 return self.storage.data.get("hype_cycle_queries", [])
@@ -606,8 +613,74 @@ class HypeCycleStorage:
         query_dict["processing_time"] = time.time() - query_dict["processing_time"]
         
         return query_dict
+    
+    def _convert_decimals_to_float(self, obj):
+        """
+        Convierte recursivamente todos los Decimal a float cuando se lee de DynamoDB
+        
+        Args:
+            obj: Objeto a convertir (dict, list, Decimal, etc.)
+            
+        Returns:
+            Objeto con Decimals convertidos a float
+        """
+        if isinstance(obj, dict):
+            return {k: self._convert_decimals_to_float(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_decimals_to_float(item) for item in obj]
+        elif isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, (int, str, bool)) or obj is None:
+            return obj
+        else:
+            # Para otros tipos, mantener como está
+            return obj
 
-# REEMPLAZAR la clase HypeCycleHistoryInterface en hype_cycle_storage.py
+    def _process_query_from_storage(self, query_dict):
+        """
+        Procesa una consulta leída del storage para convertir Decimals a floats
+        
+        Args:
+            query_dict: Diccionario de consulta desde DynamoDB
+            
+        Returns:
+            Diccionario con tipos de datos correctos para Python/Streamlit
+        """
+        if hasattr(self.storage, 'analyses_table'):
+            # Es DynamoDB - convertir Decimals a floats
+            return self._convert_decimals_to_float(query_dict)
+        else:
+            # Es storage local - no necesita conversión
+            return query_dict
+    
+    def _safe_metric_value(self, value):
+        """
+        Convierte un valor a un tipo seguro para st.metric()
+        
+        Args:
+            value: Valor a convertir (puede ser Decimal, int, float, str)
+            
+        Returns:
+            Valor convertido a int, float, o str
+        """
+        if value is None:
+            return 0
+        
+        try:
+            # Si es Decimal, convertir a float
+            if isinstance(value, Decimal):
+                return float(value)
+            # Si es string que representa un número
+            elif isinstance(value, str) and value.replace('.', '').replace('-', '').isdigit():
+                return float(value) if '.' in value else int(value)
+            # Si ya es int o float, mantener
+            elif isinstance(value, (int, float)):
+                return value
+            else:
+                # Para otros tipos, convertir a string
+                return str(value)
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            return str(value)
 
 class HypeCycleHistoryInterface:
     """Interfaz para gestionar el historial de consultas de Hype Cycle"""
@@ -881,54 +954,65 @@ class HypeCycleHistoryInterface:
                             else:
                                 st.error(f"Error eliminando consulta {selected_query_id}")
 
-    def _display_query_details(self, query: Dict):
-        """Muestra detalles completos de una consulta"""
-        st.subheader(f"Detalles de Consulta: {query.get('search_query', 'Sin nombre')[:50]}...")
+    def _display_query_card(self, query: Dict, index: int):
+        """Muestra una tarjeta de consulta"""
+        query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
         
-        # Información básica
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.write("**Información General**")
-            st.write(f"ID: `{query.get('query_id', 'Unknown')}`")
-            try:
-                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
-                st.write(f"Fecha: {date.strftime('%Y-%m-%d %H:%M:%S')}")
-            except:
-                st.write("Fecha: No disponible")
-            st.write(f"Tiempo de procesamiento: {query.get('processing_time', 0):.2f}s")
-        
-        with col2:
-            st.write("**Métricas del Hype Cycle**")
-            hype_metrics = query.get('hype_metrics', {})
-            for key, value in hype_metrics.items():
-                if key not in ['inflection_points']:  # Excluir objetos complejos
-                    st.write(f"{key}: {value}")
-        
-        with col3:
-            st.write("**Uso de API**")
-            api_usage = query.get('api_usage', {})
-            for key, value in api_usage.items():
-                st.write(f"{key}: {value}")
-        
-        # Datos anuales si están disponibles
-        yearly_stats = query.get('yearly_stats', [])
-        if yearly_stats:
-            st.subheader("Estadísticas Anuales")
-            import pandas as pd
-            df_yearly = pd.DataFrame(yearly_stats)
-            st.dataframe(df_yearly)
-        
-        # Muestra de resultados de noticias
-        news_results = query.get('news_results', [])
-        if news_results:
-            st.subheader(f"Muestra de Resultados de Noticias ({len(news_results)} total)")
-            for i, result in enumerate(news_results[:3]):  # Mostrar solo los primeros 3
-                with st.expander(f"Noticia {i+1}: {result.get('title', 'Sin título')[:50]}..."):
-                    st.write(f"**Fuente:** {result.get('source', 'No especificada')}")
-                    st.write(f"**Fecha:** {result.get('date', 'No especificada')}")
-                    st.write(f"**Sentimiento:** {result.get('sentiment', 'No calculado')}")
-                    st.write(f"**Link:** {result.get('link', 'No disponible')}")
+        with st.expander(
+            f"🔍 {query.get('search_query', 'Sin consulta')[:60]}... - "
+            f"**{query.get('hype_metrics', {}).get('phase', 'Unknown')}**",
+            expanded=False
+        ):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.write("**Consulta completa:**")
+                st.code(query.get('search_query', 'No disponible'))
+                
+                # Mostrar términos de búsqueda si están disponibles
+                search_terms = query.get('search_terms', [])
+                if search_terms:
+                    st.write("**Términos de búsqueda:**")
+                    for term in search_terms:
+                        st.write(f"- {term.get('value', '')} ({term.get('operator', 'AND')})")
+                
+                # Información de calidad de datos
+                data_quality = query.get('data_quality', {})
+                if data_quality:
+                    quality_score = data_quality.get('quality_score', 0)
+                    # NUEVO: Conversión segura para el score
+                    safe_score = self.storage._safe_metric_value(quality_score)
+                    if isinstance(safe_score, (int, float)):
+                        st.write(f"**Calidad de datos:** {safe_score:.2%}")
+                    else:
+                        st.write(f"**Calidad de datos:** {safe_score}")
+                
+            with col2:
+                st.write("**Métricas del Hype Cycle:**")
+                hype_metrics = query.get('hype_metrics', {})
+                
+                # NUEVO: Usar conversiones seguras para st.metric()
+                phase = hype_metrics.get('phase', 'Unknown')
+                confidence = self.storage._safe_metric_value(hype_metrics.get('confidence', 0))
+                total_mentions = self.storage._safe_metric_value(hype_metrics.get('total_mentions', 0))
+                
+                st.metric("Fase", phase)
+                if isinstance(confidence, (int, float)):
+                    st.metric("Confianza", f"{confidence:.2f}")
+                else:
+                    st.metric("Confianza", str(confidence))
+                st.metric("Total Menciones", total_mentions)
+                
+                # Fecha de ejecución
+                try:
+                    date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
+                    st.write(f"**Fecha:** {date.strftime('%Y-%m-%d %H:%M')}")
+                except:
+                    st.write("**Fecha:** No disponible")
+            
+            # Botón para reutilizar consulta - KEY ÚNICA
+            if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_{self.unique_id}_{index}"):
+                self._reuse_query(query)
 
     def _reuse_query(self, query: Dict):
         """Permite reutilizar una consulta existente"""

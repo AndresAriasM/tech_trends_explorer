@@ -2,6 +2,7 @@
 import numpy as np
 from typing import List, Dict, Tuple
 import math
+from decimal import Decimal, InvalidOperation
 
 class HypeCyclePositioner:
     """Maneja el posicionamiento de tecnologías en la curva de Hype Cycle"""
@@ -41,6 +42,14 @@ class HypeCyclePositioner:
         """
         base_pos = self.phase_positions.get(phase, self.phase_positions["Unknown"])
         
+        # NUEVO: Asegurar que los valores son float/int antes de operaciones matemáticas
+        try:
+            confidence = float(confidence) if confidence is not None else 0.5
+            total_mentions = int(total_mentions) if total_mentions is not None else 0
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            confidence = 0.5
+            total_mentions = 0
+        
         # Variación basada en confianza (±10% de la posición base)
         confidence_factor = (confidence - 0.5) * 0.2  # -0.1 a +0.1
         
@@ -51,14 +60,14 @@ class HypeCyclePositioner:
         random_x = np.random.uniform(-3, 3)
         random_y = np.random.uniform(-3, 3)
         
-        final_x = base_pos["x"] + (confidence_factor * 10) + random_x
-        final_y = base_pos["y"] + (confidence_factor * 15) + (mention_factor * 5) + random_y
+        final_x = float(base_pos["x"]) + (confidence_factor * 10) + random_x
+        final_y = float(base_pos["y"]) + (confidence_factor * 15) + (mention_factor * 5) + random_y
         
         # Asegurar que esté dentro de los límites
         final_x = max(1, min(98, final_x))
         final_y = max(5, min(95, final_y))
         
-        return (final_x, final_y)
+        return (float(final_x), float(final_y))
     
     def avoid_overlap(self, technologies: List[Dict]) -> List[Dict]:
         """

@@ -7,6 +7,16 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import json
 
+import plotly.graph_objects as go
+import plotly.express as px
+
+# Opcional para mejor suavizado (si está disponible):
+try:
+    from scipy.ndimage import gaussian_filter1d
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
 # Importar módulos locales
 from hype_cycle_positioning import HypeCyclePositioner
 
@@ -320,51 +330,104 @@ class CategoryAdminInterface:
                 st.code(traceback.format_exc())
     
     def _create_hype_cycle_chart(self, queries: List[Dict], category_name: str, 
-                                show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
+                            show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
         """
-        Crea la gráfica del Hype Cycle con múltiples tecnologías
-        
-        Args:
-            queries: Lista de consultas de la categoría
-            category_name: Nombre de la categoría
-            show_labels: Si mostrar etiquetas de tecnologías
-            show_confidence: Si mostrar niveles de confianza
-            
-        Returns:
-            Figura de Plotly con la gráfica del Hype Cycle
+        Crea la gráfica del Hype Cycle estilo Gartner clásico - VERSIÓN FINAL CORREGIDA
         """
-        
         # Crear figura
         fig = go.Figure()
         
-        # Generar curva base del Hype Cycle
-        x_curve, y_curve = self.positioner.create_hype_cycle_curve()
+        # CURVA MEJORADA Y SUAVE ESTILO GARTNER
+        x_curve = np.linspace(0, 100, 500)
         
-        # Añadir curva principal
+        # Crear curva suave usando funciones gaussianas superpuestas
+        peak1 = 70 * np.exp(-((x_curve - 20)/12)**2)
+        trough = -25 * np.exp(-((x_curve - 50)/15)**2)
+        plateau = 25 * (1 / (1 + np.exp(-(x_curve - 80)/8)))
+        baseline = 20
+        
+        y_curve = baseline + peak1 + trough + plateau
+        
+        # Suavizar la curva
+        try:
+            from scipy.ndimage import gaussian_filter1d
+            y_curve = gaussian_filter1d(y_curve, sigma=1.5)
+        except:
+            window = 5
+            y_smooth = np.convolve(y_curve, np.ones(window)/window, mode='same')
+            y_curve = y_smooth
+        
+        y_curve = np.clip(y_curve, 5, 85)
+        
+        # AÑADIR CURVA PRINCIPAL
         fig.add_trace(go.Scatter(
             x=x_curve, 
             y=y_curve,
             mode='lines',
             name='Hype Cycle',
-            line=dict(color='#1f77b4', width=3),
+            line=dict(
+                color='#1f77b4',
+                width=5,
+                shape='spline',
+                smoothing=1.3
+            ),
             showlegend=False,
             hoverinfo='skip'
         ))
         
-        # Procesar posiciones de tecnologías
+        # Función mejorada para obtener Y en la curva
+        def get_y_on_curve(x_pos):
+            if x_pos < 0:
+                return y_curve[0]
+            elif x_pos > 100:
+                return y_curve[-1]
+            else:
+                idx = int(x_pos * (len(x_curve) - 1) / 100)
+                idx = min(max(idx, 0), len(y_curve) - 1)
+                return float(y_curve[idx])
+        
+        # Procesar tecnologías
         technologies = []
-        for query in queries:
+        colors_palette = [
+            '#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6',
+            '#1ABC9C', '#E67E22', '#34495E', '#E91E63', '#00BCD4'
+        ]
+        
+        # POSICIONES X MEJORADAS PARA EVITAR SUPERPOSICIÓN
+        phase_x_positions = {
+            "Innovation Trigger": [8, 12],
+            "Peak of Inflated Expectations": [18, 24],
+            "Trough of Disillusionment": [42, 48, 54],
+            "Slope of Enlightenment": [65, 72, 78],
+            "Plateau of Productivity": [85, 91],
+            "Unknown": [50]
+        }
+        
+        phase_counters = {phase: 0 for phase in phase_x_positions.keys()}
+        
+        for i, query in enumerate(queries):
             hype_metrics = query.get("hype_metrics", {})
             phase = hype_metrics.get("phase", "Unknown")
-            confidence = hype_metrics.get("confidence", 0.5)
-            total_mentions = hype_metrics.get("total_mentions", 0)
+            confidence = float(hype_metrics.get("confidence", 0.5))
+            total_mentions = int(hype_metrics.get("total_mentions", 0))
             
-            # Obtener o calcular posición
-            if hasattr(hype_metrics, 'hype_cycle_position_x') and hype_metrics.hype_cycle_position_x:
-                pos_x = hype_metrics.hype_cycle_position_x
-                pos_y = hype_metrics.hype_cycle_position_y
+            # Obtener posición X
+            available_positions = phase_x_positions.get(phase, [50])
+            counter = phase_counters[phase]
+            
+            if counter < len(available_positions):
+                pos_x = available_positions[counter]
             else:
-                pos_x, pos_y = self.positioner.calculate_position(phase, confidence, total_mentions)
+                base_x = available_positions[counter % len(available_positions)]
+                offset = (counter // len(available_positions)) * 6
+                pos_x = base_x + offset
+            
+            phase_counters[phase] += 1
+            
+            # Obtener Y de la curva
+            pos_y = get_y_on_curve(pos_x)
+            pos_y += np.random.uniform(-1, 3)  # Variación mínima
+            pos_x += np.random.uniform(-0.5, 0.5)
             
             # Extraer nombre de tecnología
             tech_name = (
@@ -373,7 +436,6 @@ class CategoryAdminInterface:
                 query.get("search_query", "")[:20]
             )
             
-            # Obtener tiempo al plateau
             time_to_plateau = hype_metrics.get("time_to_plateau", "N/A")
             
             technologies.append({
@@ -385,68 +447,89 @@ class CategoryAdminInterface:
                 "query_id": query.get("query_id", ""),
                 "time_to_plateau": time_to_plateau,
                 "total_mentions": total_mentions,
-                "sentiment_avg": hype_metrics.get("sentiment_avg", 0)
+                "sentiment_avg": float(hype_metrics.get("sentiment_avg", 0)),
+                "color": colors_palette[i % len(colors_palette)]
             })
         
-        # Evitar superposición
-        technologies = self.positioner.avoid_overlap(technologies)
-        
-        # Añadir tecnologías a la gráfica
+        # AÑADIR TECNOLOGÍAS CON ETIQUETAS MEJORADAS
         for i, tech in enumerate(technologies):
-            # Determinar color basado en tiempo al plateau
-            color = self.positioner.get_color_for_time_to_plateau(tech["time_to_plateau"])
+            base_size = 12
+            confidence_factor = tech["confidence"] * 6
+            mentions_factor = min(tech["total_mentions"] / 200, 4)
+            size = base_size + confidence_factor + mentions_factor
             
-            # Determinar tamaño basado en menciones (opcional)
-            size = max(8, min(20, 8 + (tech["total_mentions"] / 100)))
+            color = self._get_classic_color_for_time_to_plateau(tech["time_to_plateau"])
             
-            # Configurar texto de etiqueta
-            text_label = tech["name"] if show_labels else ""
-            
-            # Configurar información de hover
             hover_text = f"""
-                <b>{tech['name']}</b><br>
-                Fase: {tech['phase']}<br>
-                Confianza: {tech['confidence']:.2f}<br>
-                Tiempo al Plateau: {tech['time_to_plateau']}<br>
-                Menciones: {tech['total_mentions']}<br>
-                Sentimiento: {tech['sentiment_avg']:.2f}
+                <b style="font-size:14px">{tech['name']}</b><br>
+                <b>Fase:</b> {tech['phase']}<br>
+                <b>Confianza:</b> {tech['confidence']:.1%}<br>
+                <b>Tiempo al Plateau:</b> {tech['time_to_plateau']}<br>
+                <b>Menciones:</b> {tech['total_mentions']:,}<br>
+                <b>Sentimiento:</b> {tech['sentiment_avg']:+.2f}
             """
             
-            # Añadir punto de la tecnología
+            # Punto principal
             fig.add_trace(go.Scatter(
                 x=[tech["position_x"]],
                 y=[tech["position_y"]],
-                mode='markers+text' if show_labels else 'markers',
+                mode='markers',
                 name=tech["name"],
                 marker=dict(
                     size=size,
                     color=color,
                     symbol='circle',
-                    line=dict(color='white', width=1),
-                    opacity=0.8
+                    line=dict(color='white', width=2),
+                    opacity=0.9
                 ),
-                text=[text_label],
-                textposition="top center",
-                textfont=dict(size=9, color='black'),
                 hovertemplate=hover_text + "<extra></extra>",
                 showlegend=False
             ))
             
-            # Mostrar nivel de confianza si está habilitado
-            if show_confidence:
-                confidence_text = f"{tech['confidence']:.2f}"
-                fig.add_trace(go.Scatter(
-                    x=[tech["position_x"]],
-                    y=[tech["position_y"] - 8],
-                    mode='text',
-                    text=[confidence_text],
-                    textfont=dict(size=8, color='gray'),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
+            # ETIQUETAS CON MEJOR CONTRASTE Y POSICIONAMIENTO
+            if show_labels:
+                # Determinar posición de etiqueta para evitar superposición
+                label_y = tech["position_y"] + 8
+                
+                # Ajustar posición Y si está muy arriba
+                if label_y > 80:
+                    label_y = tech["position_y"] - 8
+                    arrow_direction = 15
+                else:
+                    arrow_direction = -15
+                
+                # FONDO CON MEJOR CONTRASTE
+                fig.add_annotation(
+                    x=tech["position_x"],
+                    y=label_y,
+                    text=f'<b>{tech["name"]}</b>',
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1,
+                    arrowwidth=2,
+                    arrowcolor=color,
+                    font=dict(
+                        size=10, 
+                        color='white',  # TEXTO BLANCO
+                        family="Arial Black"
+                    ),
+                    bgcolor=color,  # FONDO DEL MISMO COLOR QUE EL PUNTO
+                    bordercolor='white',
+                    borderwidth=2,
+                    borderpad=5,
+                    ax=0,
+                    ay=arrow_direction,
+                    opacity=0.9
+                )
         
-        # Añadir etiquetas de fases
-        phase_labels = self.positioner.get_phase_label_positions()
+        # ETIQUETAS DE FASES SIN SUPERPOSICIÓN
+        phase_labels = [
+            {"name": "Innovation<br>Trigger", "x": 10, "y": -8},
+            {"name": "Peak of Inflated<br>Expectations", "x": 21, "y": -8},
+            {"name": "Trough of<br>Disillusionment", "x": 48, "y": -8},
+            {"name": "Slope of<br>Enlightenment", "x": 72, "y": -8},
+            {"name": "Plateau of<br>Productivity", "x": 88, "y": -8}
+        ]
         
         for label in phase_labels:
             fig.add_annotation(
@@ -454,48 +537,289 @@ class CategoryAdminInterface:
                 y=label["y"],
                 text=f"<b>{label['name']}</b>",
                 showarrow=False,
-                font=dict(size=11, color='#2c3e50'),
-                bgcolor='rgba(255,255,255,0.8)',
-                bordercolor='#bdc3c7',
-                borderwidth=1,
+                font=dict(
+                    size=10, 
+                    color='white',  # TEXTO BLANCO
+                    family="Arial"
+                ),
+                bgcolor='#34495E',  # FONDO GRIS OSCURO
+                bordercolor='white',
+                borderwidth=2,
+                borderpad=6,
                 xanchor='center',
-                yanchor='top'
+                yanchor='top',
+                opacity=0.9
             )
         
-        # Añadir leyenda de colores (tiempo al plateau)
-        self._add_time_legend(fig)
+        # Líneas divisorias más sutiles
+        division_lines = [16, 30, 60, 82]
+        for x_pos in division_lines:
+            fig.add_vline(
+                x=x_pos, 
+                line=dict(color="rgba(189, 195, 199, 0.4)", width=1, dash="dot"),
+                layer="below"
+            )
         
-        # Configurar layout
+        # LEYENDA MEJORADA CON MEJOR CONTRASTE
+        legend_items = [
+            {"label": "Ya alcanzado", "color": "#27AE60"},
+            {"label": "< 2 años", "color": "#3498DB"},
+            {"label": "2-5 años", "color": "#F39C12"},
+            {"label": "5-10 años", "color": "#E67E22"},
+            {"label": "> 10 años", "color": "#E74C3C"}
+        ]
+        
+        for item in legend_items:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(
+                    size=12, 
+                    color=item["color"],
+                    symbol='circle',
+                    line=dict(color='white', width=2)
+                ),
+                name=item["label"],
+                showlegend=True
+            ))
+        
+        # LAYOUT OPTIMIZADO
         fig.update_layout(
             title=dict(
-                text=f"<b>Hype Cycle - {category_name}</b><br><span style='font-size:12px'>Posición de tecnologías en el ciclo de Gartner</span>",
+                text=f"<b>Hype Cycle - {category_name}</b>",
                 x=0.5,
-                font=dict(size=16)
+                font=dict(size=20, color='#2C3E50', family="Arial")
             ),
             xaxis=dict(
-                title="<b>TIME</b>",
-                showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)',
+                title=dict(
+                    text="<b>TIME</b>",
+                    font=dict(size=14, color='#2C3E50')
+                ),
+                showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[-2, 102]
+                range=[0, 100],
+                showline=True,
+                linecolor='#BDC3C7',
+                linewidth=2
             ),
             yaxis=dict(
-                title="<b>EXPECTATIONS</b>",
-                showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)',
+                title=dict(
+                    text="<b>EXPECTATIONS</b>",
+                    font=dict(size=14, color='#2C3E50')
+                ),
+                showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[0, 100]
+                range=[-15, 90],  # RANGO AMPLIADO PARA LAS ETIQUETAS
+                showline=True,
+                linecolor='#BDC3C7',
+                linewidth=2
             ),
             plot_bgcolor='white',
             paper_bgcolor='white',
-            height=600,
-            showlegend=False,
-            font=dict(family="Arial, sans-serif")
+            height=650,
+            showlegend=True,
+            font=dict(family="Arial, sans-serif"),
+            margin=dict(t=80, l=80, r=160, b=100),
+            hovermode='closest',
+            legend=dict(
+                title=dict(
+                    text="<b>Tiempo al Plateau</b>",
+                    font=dict(size=12, color="#2C3E50")
+                ),
+                orientation="v",
+                yanchor="top",
+                y=0.95,
+                xanchor="left",
+                x=1.02,
+                bgcolor='rgba(248,249,250,0.95)',  # FONDO MÁS CONTRASTANTE
+                bordercolor='#34495E',
+                borderwidth=2,
+                font=dict(size=11, color="#2C3E50"),
+                itemsizing="constant"
+            )
         )
         
         return fig
+
+    def _get_classic_color_for_time_to_plateau(self, time_estimate: str) -> str:
+        """Colores clásicos para tiempo al plateau"""
+        time_colors = {
+            "already": "#27AE60",      # Verde
+            "<2": "#3498DB",           # Azul
+            "2-5": "#F39C12",          # Naranja
+            "5-10": "#E67E22",         # Naranja oscuro
+            ">10": "#E74C3C",          # Rojo
+            "unknown": "#95A5A6"       # Gris
+        }
+        
+        time_lower = time_estimate.lower()
+        
+        if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
+            return time_colors["already"]
+        elif any(x in time_lower for x in ["<2", "menos de 2", "1-2"]):
+            return time_colors["<2"]
+        elif any(x in time_lower for x in ["2-5", "3-5", "2-4"]):
+            return time_colors["2-5"]
+        elif any(x in time_lower for x in ["5-10", "6-10", "5-8"]):
+            return time_colors["5-10"]
+        elif any(x in time_lower for x in [">10", "más de 10", "10+"]):
+            return time_colors[">10"]
+        else:
+            return time_colors["unknown"]
+
+    def _add_classic_time_legend(self, fig: go.Figure):
+        """Leyenda clásica y limpia"""
+        legend_items = [
+            {"label": "Ya alcanzado", "color": "#27AE60"},
+            {"label": "< 2 años", "color": "#3498DB"},
+            {"label": "2-5 años", "color": "#F39C12"},
+            {"label": "5-10 años", "color": "#E67E22"},
+            {"label": "> 10 años", "color": "#E74C3C"}
+        ]
+        
+        for item in legend_items:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(size=10, color=item["color"]),
+                name=item["label"],
+                showlegend=True
+            ))
+        
+        fig.update_layout(
+            legend=dict(
+                title="Tiempo al Plateau",
+                orientation="v",
+                yanchor="top",
+                y=0.95,
+                xanchor="left",
+                x=1.02,
+                bgcolor='white',
+                bordercolor='#BDC3C7',
+                borderwidth=1
+            )
+        )
+
+    def _get_enhanced_color_for_time_to_plateau(self, time_estimate: str) -> str:
+        """
+        Retorna color mejorado basado en tiempo estimado al plateau
+        """
+        # Paleta de colores más moderna y profesional
+        time_colors = {
+            "already": "#27AE60",      # Verde éxito
+            "<2": "#3498DB",           # Azul claro
+            "2-5": "#9B59B6",          # Púrpura
+            "5-10": "#E67E22",         # Naranja
+            ">10": "#E74C3C",          # Rojo
+            "unknown": "#95A5A6"       # Gris
+        }
+        
+        time_lower = time_estimate.lower()
+        
+        if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
+            return time_colors["already"]
+        elif any(x in time_lower for x in ["<2", "menos de 2", "1-2"]):
+            return time_colors["<2"]
+        elif any(x in time_lower for x in ["2-5", "3-5", "2-4"]):
+            return time_colors["2-5"]
+        elif any(x in time_lower for x in ["5-10", "6-10", "5-8"]):
+            return time_colors["5-10"]
+        elif any(x in time_lower for x in [">10", "más de 10", "10+"]):
+            return time_colors[">10"]
+        else:
+            return time_colors["unknown"]
+
+    def _add_enhanced_time_legend(self, fig: go.Figure):
+        """Añade leyenda de colores mejorada para tiempo al plateau"""
+        legend_items = [
+            {"label": "Ya alcanzado", "color": "#27AE60", "icon": "●"},
+            {"label": "< 2 años", "color": "#3498DB", "icon": "●"},
+            {"label": "2-5 años", "color": "#9B59B6", "icon": "●"},
+            {"label": "5-10 años", "color": "#E67E22", "icon": "●"},
+            {"label": "> 10 años", "color": "#E74C3C", "icon": "●"}
+        ]
+        
+        # Añadir puntos invisibles para la leyenda con mejor diseño
+        for i, item in enumerate(legend_items):
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(
+                    size=12, 
+                    color=item["color"],
+                    symbol='circle',
+                    line=dict(color='white', width=1)
+                ),
+                name=f"{item['icon']} {item['label']}",
+                showlegend=True
+            ))
+        
+        # Configurar leyenda mejorada
+        fig.update_layout(
+            legend=dict(
+                title=dict(
+                    text="<b>Tiempo al Plateau</b>",
+                    font=dict(size=12, color="#2E3440")
+                ),
+                orientation="v",
+                yanchor="top",
+                y=0.98,
+                xanchor="left",
+                x=1.02,
+                bgcolor='rgba(255,255,255,0.95)',
+                bordercolor='rgba(176, 196, 222, 0.8)',
+                borderwidth=1,
+                font=dict(size=10, color="#2E3440"),
+                itemsizing="constant"
+            )
+        )
+
+    def _add_enhanced_time_legend(self, fig: go.Figure):
+        """Añade leyenda de colores mejorada para tiempo al plateau"""
+        legend_items = [
+            {"label": "Ya alcanzado", "color": "#27AE60", "icon": "●"},
+            {"label": "< 2 años", "color": "#3498DB", "icon": "●"},
+            {"label": "2-5 años", "color": "#9B59B6", "icon": "●"},
+            {"label": "5-10 años", "color": "#E67E22", "icon": "●"},
+            {"label": "> 10 años", "color": "#E74C3C", "icon": "●"}
+        ]
+        
+        # Añadir puntos invisibles para la leyenda con mejor diseño
+        for i, item in enumerate(legend_items):
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(
+                    size=12, 
+                    color=item["color"],
+                    symbol='circle',
+                    line=dict(color='white', width=1)
+                ),
+                name=f"{item['icon']} {item['label']}",
+                showlegend=True
+            ))
+        
+        # Configurar leyenda mejorada
+        fig.update_layout(
+            legend=dict(
+                title=dict(
+                    text="<b>Tiempo al Plateau</b>",
+                    font=dict(size=12, color="#2E3440")
+                ),
+                orientation="v",
+                yanchor="top",
+                y=0.98,
+                xanchor="left",
+                x=1.02,
+                bgcolor='rgba(255,255,255,0.95)',
+                bordercolor='rgba(176, 196, 222, 0.8)',
+                borderwidth=1,
+                font=dict(size=10, color="#2E3440"),
+                itemsizing="constant"
+            )
+        )
     
     def _add_time_legend(self, fig: go.Figure):
         """Añade leyenda de colores para tiempo al plateau"""
