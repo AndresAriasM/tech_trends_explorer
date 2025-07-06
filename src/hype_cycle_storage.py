@@ -89,30 +89,255 @@ class HypeCycleStorage:
         if hasattr(db_storage, 'dynamodb'):
             self._ensure_hype_cycle_table()
     
+    
     def _convert_floats_to_decimal(self, obj):
         """
         Convierte recursivamente todos los floats a Decimal para DynamoDB
+        VERSIÓN MEJORADA: Maneja Infinity, NaN y valores problemáticos
         
         Args:
             obj: Objeto a convertir (dict, list, float, etc.)
             
         Returns:
-            Objeto con floats convertidos a Decimal
+            Objeto con floats convertidos a Decimal, manejando casos especiales
         """
+        import math
+        from decimal import Decimal, InvalidOperation
+        
         if isinstance(obj, dict):
             return {k: self._convert_floats_to_decimal(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._convert_floats_to_decimal(item) for item in obj]
         elif isinstance(obj, float):
-            # Convertir float a Decimal con precisión limitada
-            return Decimal(str(round(obj, 6)))
+            # NUEVO: Verificar casos especiales
+            if math.isnan(obj):
+                return Decimal('0')  # Convertir NaN a 0
+            elif math.isinf(obj):
+                if obj > 0:
+                    return Decimal('999999')  # Infinity positivo -> valor grande
+                else:
+                    return Decimal('-999999')  # Infinity negativo -> valor pequeño
+            else:
+                try:
+                    # Convertir float normal a Decimal con precisión limitada
+                    return Decimal(str(round(obj, 6)))
+                except (ValueError, InvalidOperation):
+                    # Si hay algún problema con la conversión, usar 0
+                    return Decimal('0')
         elif isinstance(obj, (int, str, bool)) or obj is None:
             return obj
         elif hasattr(obj, 'item'):  # Objetos numpy
-            return Decimal(str(round(float(obj.item()), 6)))
+            try:
+                value = float(obj.item())
+                # Aplicar las mismas verificaciones que para float
+                if math.isnan(value):
+                    return Decimal('0')
+                elif math.isinf(value):
+                    return Decimal('999999') if value > 0 else Decimal('-999999')
+                else:
+                    return Decimal(str(round(value, 6)))
+            except (ValueError, InvalidOperation):
+                return Decimal('0')
         else:
             # Para otros tipos, intentar convertir a string
             return str(obj)
+        
+    def _sanitize_data_for_dynamodb(self, data):
+        """
+        Sanitiza datos específicamente para DynamoDB, removiendo valores problemáticos
+        
+        Args:
+            data: Datos a sanitizar
+            
+        Returns:
+            Datos limpios y seguros para DynamoDB
+        """
+        import math
+        
+        def clean_value(value):
+            """Limpia un valor individual"""
+            if isinstance(value, dict):
+                return {k: clean_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [clean_value(item) for item in value]
+            elif isinstance(value, float):
+                if math.isnan(value) or math.isinf(value):
+                    return 0.0  # Reemplazar NaN/Inf con 0
+                return value
+            elif hasattr(value, 'item'):  # numpy types
+                try:
+                    float_val = float(value.item())
+                    if math.isnan(float_val) or math.isinf(float_val):
+                        return 0.0
+                    return float_val
+                except:
+                    return 0.0
+            else:
+                return value
+        
+        return clean_value(data)
+
+    def save_hype_cycle_query(self, 
+                            search_query: str,
+                            search_terms: List[Dict],
+                            hype_analysis_results: Dict,
+                            news_results: List[Dict],
+                            category_id: str = "default",
+                            search_parameters: Dict = None,
+                            notes: str = "",
+                            technology_name: str = None,
+                            technology_description: str = "") -> str:
+        """
+        Guarda una consulta completa de Hype Cycle con manejo mejorado de errores DynamoDB
+        """
+        try:
+            # Importar el positioner
+            from hype_cycle_positioning import HypeCyclePositioner
+            positioner = HypeCyclePositioner()
+            
+            # Generar ID único
+            query_id = f"hype_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+            
+            # NUEVO: Sanitizar resultados del análisis ANTES de procesar
+            cleaned_hype_results = self._sanitize_data_for_dynamodb(hype_analysis_results)
+            cleaned_news_results = self._sanitize_data_for_dynamodb(news_results)
+            
+            # Procesar métricas del Hype Cycle con datos limpios
+            hype_metrics = self._extract_hype_metrics(cleaned_hype_results)
+            
+            # Calcular posición en la gráfica
+            pos_x, pos_y = positioner.calculate_position(
+                hype_metrics.phase, 
+                hype_metrics.confidence,
+                hype_metrics.total_mentions
+            )
+            hype_metrics.hype_cycle_position_x = pos_x
+            hype_metrics.hype_cycle_position_y = pos_y
+            
+            # Estimar tiempo al plateau
+            hype_metrics.time_to_plateau = positioner.estimate_time_to_plateau(
+                hype_metrics.phase, 
+                hype_metrics.confidence
+            )
+            
+            # Procesar estadísticas anuales con datos limpios
+            yearly_stats = self._process_yearly_stats(cleaned_hype_results.get('yearly_stats', []))
+            
+            # Calcular métricas de calidad de datos con datos limpios
+            data_quality = self._calculate_data_quality(cleaned_news_results, yearly_stats)
+            
+            # Estimar uso de API
+            api_usage = {
+                "estimated_requests": len(cleaned_news_results) // 10 + 1,
+                "total_results": len(cleaned_news_results),
+                "search_timestamp": datetime.now(timezone.utc).isoformat(),
+                "api_provider": "SerpAPI"
+            }
+            
+            # Obtener información de categoría
+            try:
+                category = self.storage.get_category_by_id(category_id)
+                category_name = category.get("name") if category else "Sin categoría"
+            except:
+                category_name = "Sin categoría"
+            
+            # Generar nombre de tecnología si no se proporciona
+            if not technology_name:
+                technology_name = self._extract_technology_name(search_query, search_terms)
+            
+            # Crear objeto de consulta
+            hype_query = HypeCycleQuery(
+                query_id=query_id,
+                category_id=category_id,
+                search_query=search_query,
+                search_terms=search_terms,
+                execution_date=datetime.now(timezone.utc).isoformat(),
+                api_usage=api_usage,
+                hype_metrics=hype_metrics,
+                yearly_stats=yearly_stats,
+                news_results=self._sanitize_news_results(cleaned_news_results),
+                search_parameters=search_parameters or {},
+                data_quality=data_quality,
+                processing_time=time.time(),
+                notes=notes,
+                technology_name=technology_name,
+                category_name=category_name,
+                last_updated=datetime.now(timezone.utc).isoformat(),
+                is_active=True,
+                technology_description=technology_description
+            )
+            
+            # Convertir a diccionario y preparar para almacenamiento
+            query_dict = self._prepare_for_storage(hype_query)
+            
+            # NUEVO: Doble sanitización para DynamoDB
+            if hasattr(self.storage, 'analyses_table'):
+                # Es DynamoDB - sanitizar primero, luego convertir floats a Decimal
+                query_dict = self._sanitize_data_for_dynamodb(query_dict)
+                query_dict = self._convert_floats_to_decimal(query_dict)
+                
+                # VERIFICACIÓN FINAL: Detectar cualquier valor problemático restante
+                self._validate_dynamodb_data(query_dict)
+            
+            # Guardar en el storage
+            if hasattr(self.storage, 'analyses_table'):
+                # DynamoDB
+                self.storage.analyses_table.put_item(Item=query_dict)
+            else:
+                # Storage local - los floats están bien aquí
+                if "hype_cycle_queries" not in self.storage.data:
+                    self.storage.data["hype_cycle_queries"] = []
+                self.storage.data["hype_cycle_queries"].append(query_dict)
+                self.storage.save_data()
+            
+            st.success(f"✅ Consulta de Hype Cycle guardada con ID: {query_id}")
+            return query_id
+            
+        except Exception as e:
+            st.error(f"❌ Error al guardar consulta de Hype Cycle: {str(e)}")
+            
+            # Información de debug más detallada
+            import traceback
+            error_details = traceback.format_exc()
+            
+            # Detectar tipo específico de error
+            if "Infinity and NaN not supported" in str(e):
+                st.error("🔍 **Error específico:** Datos contienen valores infinitos o NaN que DynamoDB no puede manejar")
+                st.error("💡 **Sugerencia:** Revisa los datos de entrada del análisis de noticias")
+            
+            with st.expander("🔍 Ver detalles completos del error"):
+                st.code(error_details)
+            
+            return None
+
+    def _validate_dynamodb_data(self, data, path="root"):
+        """
+        Valida que los datos sean seguros para DynamoDB
+        
+        Args:
+            data: Datos a validar
+            path: Ruta actual en la estructura de datos (para debug)
+        """
+        import math
+        
+        def check_value(value, current_path):
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    check_value(v, f"{current_path}.{k}")
+            elif isinstance(value, list):
+                for i, item in enumerate(value):
+                    check_value(item, f"{current_path}[{i}]")
+            elif isinstance(value, float):
+                if math.isnan(value):
+                    raise ValueError(f"NaN encontrado en {current_path}")
+                elif math.isinf(value):
+                    raise ValueError(f"Infinity encontrado en {current_path}")
+        
+        try:
+            check_value(data, path)
+        except ValueError as e:
+            st.error(f"❌ Validación DynamoDB falló: {str(e)}")
+            raise e
     
     def _convert_dataclass_to_dict(self, dataclass_obj):
         """

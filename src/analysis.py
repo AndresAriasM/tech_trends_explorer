@@ -1200,13 +1200,25 @@ class NewsAnalyzer:
         self._plot_keyword_analysis(df, st_object)
 
     def _plot_news_map(self, df, st_object):
-        """Genera mapa de calor y análisis detallado por país"""
-        import folium
-        from folium.plugins import HeatMap
-        from streamlit_folium import folium_static
-        
-        # Coordenadas predefinidas para países
-        country_coords = {
+        """
+        Crea un mapa mundial de noticias - VERSIÓN CORREGIDA
+        Mantiene las coordenadas de países existentes y corrige el error de columnas
+        """
+        try:
+            # Verificar si hay datos de ubicación
+            if df.empty or 'country' not in df.columns:
+                st_object.info("No hay datos de ubicación disponibles para crear el mapa")
+                return
+            
+            # Contar menciones por país
+            country_counts = df['country'].value_counts()
+            
+            if country_counts.empty:
+                st_object.info("No hay datos de países válidos para crear el mapa")
+                return
+            
+            # MANTENER coordenadas de países existentes (como solicitó el usuario)
+            country_coords = {
             'USA': {'coords': [37.0902, -95.7129], 'full_name': 'Estados Unidos'},
             'UK': {'coords': [55.3781, -3.4360], 'full_name': 'Reino Unido'},
             'China': {'coords': [35.8617, 104.1954], 'full_name': 'China'},
@@ -1397,93 +1409,157 @@ class NewsAnalyzer:
             'French Guiana': {'coords': [3.9339, -53.1258], 'full_name': 'Guayana Francesa'},
             'Belize': {'coords': [17.1899, -88.4976], 'full_name': 'Belice'},
         }
-
-        # Crear dos columnas
-        col1, col2 = st_object.columns([2, 1])
-
-        with col1:
-            # Crear mapa base
-            m = folium.Map(location=[20, 0], zoom_start=2, tiles='CartoDB dark_matter')
             
-            # Procesar datos para el mapa de calor
-            heat_data = []
-            country_stats = {}
+            # Preparar datos para el mapa
+            map_data = []
+            stats_data = []  # Para la tabla de estadísticas
             
-            for country in df['country'].dropna().unique():
-                if country in country_coords:
-                    country_data = df[df['country'] == country]
-                    count = len(country_data)
-                    avg_sentiment = country_data['sentiment'].mean()
+            for country, count in country_counts.items():
+                # Limpiar nombre del país
+                country_clean = str(country).strip()
+                
+                if country_clean in country_coords:
+                    coords = country_coords[country_clean]
+                    map_data.append({
+                        'country': country_clean,
+                        'display_name': coords['name'],
+                        'lat': coords['lat'],
+                        'lon': coords['lon'],
+                        'count': int(count),  # Asegurar que sea entero
+                        'size': min(max(count * 3, 8), 50)  # Tamaño para el mapa
+                    })
                     
-                    # Datos para el mapa de calor
-                    heat_data.append(
-                        country_coords[country]['coords'] + [count * 2]  # Multiplicar por 2 para mejor visualización
-                    )
-                    
-                    # Estadísticas del país
-                    country_stats[country] = {
-                        'name': country_coords[country]['full_name'],
-                        'count': count,
-                        'sentiment': avg_sentiment,
-                        'percentage': (count / len(df)) * 100
-                    }
-                    
-                    # Añadir marcador con popup
-                    folium.CircleMarker(
-                        location=country_coords[country]['coords'],
-                        radius=8,
-                        color='white' if avg_sentiment > 0 else 'red',
-                        fill=True,
-                        popup=f"""
-                            <b>{country_coords[country]['full_name']}</b><br>
-                            Menciones: {count}<br>
-                            Sentimiento: {avg_sentiment:.2f}
-                        """
-                    ).add_to(m)
-
-            # Añadir capa de calor
-            HeatMap(heat_data, radius=20).add_to(m)
+                    # CORREGIR: Usar nombres de columnas consistentes
+                    stats_data.append({
+                        'País': coords['name'],
+                        'Codigo': country_clean,
+                        'Total': int(count),  # CAMBIAR 'Menciones' por 'Total'
+                        'Porcentaje': round((count / len(df)) * 100, 1)
+                    })
             
-            # Mostrar mapa
-            folium_static(m)
-
-        with col2:
-            # Crear DataFrame para la tabla
-            stats_data = []
-            for country, stats in country_stats.items():
-                stats_data.append({
-                    'País': stats['name'],
-                    'Menciones': stats['count'],
-                    'Sentimiento': f"{stats['sentiment']:.2f}",
-                    '% del Total': f"{stats['percentage']:.1f}%"
-                })
+            if not map_data:
+                st_object.warning("No se encontraron coordenadas para los países en los datos")
+                return
             
-            # Ordenar por número de menciones
-            stats_df = pd.DataFrame(stats_data).sort_values('Menciones', ascending=False)
+            # Crear DataFrame para el mapa
+            map_df = pd.DataFrame(map_data)
             
-            # Mostrar tabla con estilo
-            st_object.write("### 📊 Estadísticas por País")
-            st_object.dataframe(
-                stats_df,
-                column_config={
-                    'País': st.column_config.TextColumn('País'),
-                    'Menciones': st.column_config.NumberColumn('Menciones', format="%d"),
-                    'Sentimiento': st.column_config.TextColumn('Sentimiento'),
-                    '% del Total': st.column_config.TextColumn('% del Total')
+            # Crear mapa usando plotly
+            import plotly.express as px
+            import plotly.graph_objects as go
+            
+            # Crear figura del mapa
+            fig = px.scatter_geo(
+                map_df,
+                lat='lat',
+                lon='lon',
+                size='count',
+                hover_name='display_name',
+                hover_data={
+                    'lat': False,
+                    'lon': False,
+                    'count': ':d',
+                    'display_name': False
                 },
-                hide_index=True,
-                use_container_width=True
+                size_max=50,
+                projection='natural earth',
+                title="Distribución Geográfica de Noticias",
+                color='count',
+                color_continuous_scale='viridis'
             )
-
-            # Mostrar estadísticas generales
-            st_object.write("### 📈 Resumen Global")
-            st_object.write(f"- Total de países: {len(country_stats)}")
-            st_object.write(f"- País con más menciones: {stats_df.iloc[0]['País']} ({stats_df.iloc[0]['Menciones']} menciones)")
             
-            # Calcular sentimiento promedio global
-            avg_global_sentiment = df['sentiment'].mean()
-            sentiment_color = "green" if avg_global_sentiment > 0 else "red"
-            st_object.markdown(f"- Sentimiento global promedio: <span style='color:{sentiment_color}'>{avg_global_sentiment:.2f}</span>", unsafe_allow_html=True)
+            # Personalizar el mapa
+            fig.update_traces(
+                hovertemplate="<b>%{hovertext}</b><br>" +
+                            "Noticias: %{marker.size}<br>" +
+                            "<extra></extra>"
+            )
+            
+            fig.update_layout(
+                title={
+                    'text': "Distribución Geográfica de Noticias",
+                    'x': 0.5,
+                    'xanchor': 'center'
+                },
+                geo=dict(
+                    showframe=False,
+                    showcoastlines=True,
+                    projection_type='natural earth'
+                ),
+                height=500
+            )
+            
+            # Mostrar el mapa
+            st_object.plotly_chart(fig, use_container_width=True)
+            
+            # CORREGIR: Crear tabla de estadísticas con nombres de columnas correctos
+            if stats_data:
+                stats_df = pd.DataFrame(stats_data)
+                
+                # CORREGIR: Usar 'Total' en lugar de 'Menciones'
+                try:
+                    stats_df = stats_df.sort_values('Total', ascending=False)
+                except KeyError:
+                    # Si 'Total' no existe, intentar con otros nombres posibles
+                    possible_columns = ['Menciones', 'count', 'Count', 'total']
+                    sort_column = 'Total'  # default
+                    
+                    for col in possible_columns:
+                        if col in stats_df.columns:
+                            sort_column = col
+                            break
+                    
+                    stats_df = stats_df.sort_values(sort_column, ascending=False)
+                
+                # Mostrar tabla de estadísticas
+                st_object.subheader("📊 Estadísticas por País")
+                
+                # Configurar columnas para mejor visualización
+                column_config = {
+                    'País': st_object.column_config.TextColumn("País", width="medium"),
+                    'Codigo': st_object.column_config.TextColumn("Código", width="small"),
+                    'Total': st_object.column_config.NumberColumn("Noticias", width="small"),
+                    'Porcentaje': st_object.column_config.NumberColumn("% Total", format="%.1f%%", width="small")
+                }
+                
+                st_object.dataframe(
+                    stats_df, 
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=column_config
+                )
+                
+                # Métricas adicionales
+                col1, col2, col3 = st_object.columns(3)
+                
+                with col1:
+                    total_countries = len(stats_df)
+                    st_object.metric("Países con Noticias", total_countries)
+                
+                with col2:
+                    top_country = stats_df.iloc[0] if not stats_df.empty else None
+                    if top_country is not None:
+                        st_object.metric("País Líder", top_country['País'])
+                
+                with col3:
+                    total_news = stats_df['Total'].sum() if 'Total' in stats_df.columns else 0
+                    st_object.metric("Total Noticias Mapeadas", total_news)
+        
+        except Exception as e:
+            st_object.error(f"Error creando mapa de noticias: {str(e)}")
+            
+            # Debug información
+            with st_object.expander("🔍 Información de Debug"):
+                st_object.write(f"**Error:** {str(e)}")
+                if not df.empty:
+                    st_object.write(f"**Columnas disponibles:** {list(df.columns)}")
+                    st_object.write(f"**Filas en DataFrame:** {len(df)}")
+                    if 'country' in df.columns:
+                        unique_countries = df['country'].unique()
+                        st_object.write(f"**Países únicos:** {len(unique_countries)}")
+                        st_object.write(f"**Primeros países:** {list(unique_countries)[:10]}")
+                else:
+                    st_object.write("**DataFrame está vacío**")
 
     def _plot_keyword_analysis(self, df, st_object):
         """Analiza y visualiza palabras clave con filtrado personalizado"""
