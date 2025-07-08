@@ -1,4 +1,4 @@
-# src/hype_cycle.py - ACTUALIZADO con sistema de almacenamiento
+# src/hype_cycle.py - SOLO DYNAMODB
 import streamlit as st
 import pandas as pd
 import time
@@ -21,15 +21,27 @@ from data_storage import initialize_database
 
 def run_hype_cycle_analysis():
     """
-    Ejecuta el análisis del Hype Cycle con nueva pestaña de administración
+    Ejecuta el análisis del Hype Cycle con DynamoDB únicamente
     """
     st.markdown('<p class="tab-subheader">📈 Análisis del Hype Cycle</p>', unsafe_allow_html=True)
     
-    # NUEVAS PESTAÑAS - AÑADIR LA TERCERA
+    # Verificar configuración AWS
+    aws_configured = (
+        st.session_state.get('aws_access_key_id') and 
+        st.session_state.get('aws_secret_access_key') and 
+        st.session_state.get('aws_region')
+    )
+    
+    if not aws_configured:
+        st.error("❌ Se requieren credenciales de AWS para usar DynamoDB")
+        st.info("Configura las credenciales en el panel lateral")
+        return
+    
+    # Pestañas principales
     tab_analysis, tab_history, tab_admin = st.tabs([
         "🔍 Nuevo Análisis", 
         "📚 Historial",
-        "🏷️ Administrar Categorías"  # NUEVA PESTAÑA
+        "🏷️ Administrar Categorías"
     ])
     
     with tab_analysis:
@@ -41,88 +53,55 @@ def run_hype_cycle_analysis():
     with tab_admin:  
         _show_admin_interface()
 
+def _get_dynamodb_instance():
+    """Obtiene una instancia de DynamoDB configurada"""
+    try:
+        return initialize_database(
+            "dynamodb",
+            region_name=st.session_state.aws_region,
+            aws_access_key_id=st.session_state.aws_access_key_id,
+            aws_secret_access_key=st.session_state.aws_secret_access_key
+        )
+    except Exception as e:
+        st.error(f"Error conectando a DynamoDB: {str(e)}")
+        return None
+
 def _show_admin_interface():
     """Interfaz para administrar categorías y tecnologías"""
     try:
-        # Inicializar sistema de almacenamiento
-        storage_mode = st.session_state.get('hype_storage_mode', 'local')
-        
-        if storage_mode == 'local':
-            db = initialize_database("local")
-        else:
-            aws_configured = (
-                st.session_state.get('aws_access_key_id') and 
-                st.session_state.get('aws_secret_access_key') and 
-                st.session_state.get('aws_region')
-            )
-            
-            if aws_configured:
-                db = initialize_database(
-                    "dynamodb",
-                    region_name=st.session_state.aws_region,
-                    aws_access_key_id=st.session_state.aws_access_key_id,
-                    aws_secret_access_key=st.session_state.aws_secret_access_key
-                )
-            else:
-                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
-                db = initialize_database("local")
+        db = _get_dynamodb_instance()
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
             
-            # IMPORTAR LA NUEVA CLASE
-            from category_admin import CategoryAdminInterface
-            
-            # USAR CONTEXTO ÚNICO
-            import time
+            # Contexto único para evitar conflictos
             unique_context = f"hype_admin_{int(time.time())}"
             
             admin_interface = CategoryAdminInterface(hype_storage, unique_context)
             admin_interface.show_admin_interface()
         else:
-            st.error("No se pudo inicializar el sistema de almacenamiento")
+            st.error("No se pudo inicializar el sistema de almacenamiento DynamoDB")
             
     except Exception as e:
         st.error(f"Error en la interfaz de administración: {str(e)}")
         import traceback
-        st.code(traceback.format_exc())
+        with st.expander("🔍 Ver detalles del error"):
+            st.code(traceback.format_exc())
 
 def _show_analysis_interface():
     """Interfaz para realizar nuevos análisis"""
     st.write("""
     Esta herramienta te permite analizar tecnologías usando el modelo del Hype Cycle de Gartner.
-    El análisis del Hype Cycle ayuda a entender en qué fase de expectativas y adopción se 
-    encuentra una tecnología.
+    **Almacenamiento:** Todos los datos se guardan en DynamoDB en la nube.
     """)
     
-    # Inicializar sistema de almacenamiento
-    storage_mode = st.session_state.get('hype_storage_mode', 'local')
-    try:
-        if storage_mode == 'local':
-            db = initialize_database("local")
-        else:
-            # Usar DynamoDB si está configurado
-            aws_configured = (
-                st.session_state.get('aws_access_key_id') and 
-                st.session_state.get('aws_secret_access_key') and 
-                st.session_state.get('aws_region')
-            )
-            
-            if aws_configured:
-                db = initialize_database(
-                    "dynamodb",
-                    region_name=st.session_state.aws_region,
-                    aws_access_key_id=st.session_state.aws_access_key_id,
-                    aws_secret_access_key=st.session_state.aws_secret_access_key
-                )
-            else:
-                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
-                db = initialize_database("local")
-        
-        hype_storage = initialize_hype_cycle_storage(db.storage) if db else None
-    except Exception as e:
-        st.error(f"Error inicializando almacenamiento: {str(e)}")
-        hype_storage = None
+    # Inicializar DynamoDB
+    db = _get_dynamodb_instance()
+    hype_storage = initialize_hype_cycle_storage(db.storage) if db else None
+    
+    if not hype_storage:
+        st.error("❌ No se pudo conectar a DynamoDB. Verifica tu configuración.")
+        return
     
     # Verificar si hay una consulta para reutilizar
     reuse_query = st.session_state.get('hype_reuse_query')
@@ -134,72 +113,58 @@ def _show_analysis_interface():
             st.rerun()
     
     # Configuración de categoría para guardar
-    st.write("### 📂 Configuración de Almacenamiento")
+    st.write("### 📂 Configuración de Almacenamiento en DynamoDB")
     with st.expander("⚙️ Opciones de guardado", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
-            # Modo de almacenamiento - KEY ÚNICA AÑADIDA
-            storage_options = ["local", "dynamodb"]
-            current_mode = st.selectbox(
-                "Modo de almacenamiento",
-                options=storage_options,
-                index=storage_options.index(storage_mode),
-                help="Selecciona dónde guardar los resultados del análisis",
-                key="hype_analysis_storage_mode_selectbox"  # ← KEY ÚNICA AÑADIDA
-            )
-            st.session_state.hype_storage_mode = current_mode
+            # Info de DynamoDB
+            st.success("🗄️ **Almacenamiento: DynamoDB**")
+            st.info(f"📍 Región: {st.session_state.get('aws_region')}")
             
-            # Auto-guardar - KEY ÚNICA AÑADIDA
+            # Auto-guardar
             auto_save = st.checkbox(
                 "Guardar automáticamente", 
                 value=True,
                 help="Guarda automáticamente cada análisis realizado",
-                key="hype_analysis_auto_save_checkbox"  # ← KEY ÚNICA AÑADIDA
+                key="hype_analysis_auto_save_checkbox_dynamo"
             )
         
         with col2:
             # Selector de categoría
-            if hype_storage:
-                try:
-                    categories = hype_storage.storage.get_all_categories()
-                    category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
-                    
-                    # Selectbox para categoría - KEY ÚNICA AÑADIDA
-                    selected_category_name = st.selectbox(
-                        "Categoría para guardar",
-                        options=list(category_options.keys()),
-                        help="Selecciona la categoría donde guardar este análisis",
-                        key="hype_analysis_category_selectbox"  # ← KEY ÚNICA AÑADIDA
-                    )
-                    
-                    selected_category_id = category_options[selected_category_name]
-                    
-                    # Opción para crear nueva categoría - KEY ÚNICA AÑADIDA
-                    if st.checkbox("Crear nueva categoría", key="hype_analysis_new_category_checkbox"):
-                        new_cat_name = st.text_input("Nombre de la nueva categoría", key="hype_analysis_new_cat_name_input")
-                        new_cat_desc = st.text_area("Descripción (opcional)", height=60, key="hype_analysis_new_cat_desc_textarea")
-                        
-                        if st.button("Crear Categoría", key="hype_analysis_create_category_btn") and new_cat_name:
-                            try:
-                                new_cat_id = hype_storage.storage.add_category(new_cat_name, new_cat_desc)
-                                if new_cat_id:
-                                    st.success(f"✅ Categoría '{new_cat_name}' creada")
-                                    selected_category_id = new_cat_id
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"Error creando categoría: {str(e)}")
+            try:
+                categories = hype_storage.storage.get_all_categories()
+                category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
                 
-                except Exception as e:
-                    st.warning(f"Error cargando categorías: {str(e)}")
-                    selected_category_id = "default"
-            else:
+                selected_category_name = st.selectbox(
+                    "Categoría para guardar",
+                    options=list(category_options.keys()),
+                    help="Selecciona la categoría donde guardar este análisis",
+                    key="hype_analysis_category_selectbox_dynamo"
+                )
+                
+                selected_category_id = category_options[selected_category_name]
+                
+                # Opción para crear nueva categoría
+                if st.checkbox("Crear nueva categoría", key="hype_analysis_new_category_checkbox_dynamo"):
+                    new_cat_name = st.text_input("Nombre de la nueva categoría", key="hype_analysis_new_cat_name_input_dynamo")
+                    new_cat_desc = st.text_area("Descripción (opcional)", height=60, key="hype_analysis_new_cat_desc_textarea_dynamo")
+                    
+                    if st.button("Crear Categoría", key="hype_analysis_create_category_btn_dynamo") and new_cat_name:
+                        try:
+                            new_cat_id = hype_storage.storage.add_category(new_cat_name, new_cat_desc)
+                            if new_cat_id:
+                                st.success(f"✅ Categoría '{new_cat_name}' creada")
+                                selected_category_id = new_cat_id
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error creando categoría: {str(e)}")
+            
+            except Exception as e:
+                st.warning(f"Error cargando categorías: {str(e)}")
                 selected_category_id = "default"
-                st.info("Sistema de almacenamiento no disponible")
 
-    # ==========================================
-    # 🆕 NUEVA SECCIÓN: Configuración de la tecnología
-    # ==========================================
+    # Información de la tecnología
     st.write("### 🔬 Información de la Tecnología")
     with st.expander("📝 Detalles de la tecnología (opcional)", expanded=False):
         col1, col2 = st.columns(2)
@@ -209,7 +174,7 @@ def _show_analysis_interface():
                 "Nombre de la tecnología",
                 placeholder="ej: Inteligencia Artificial, Blockchain, etc.",
                 help="Nombre simplificado que aparecerá en las gráficas",
-                key="hype_technology_name_input"
+                key="hype_technology_name_input_dynamo"
             )
         
         with col2:
@@ -217,29 +182,23 @@ def _show_analysis_interface():
                 "Descripción (opcional)",
                 placeholder="Breve descripción de la tecnología...",
                 height=60,
-                key="hype_technology_description_textarea"
+                key="hype_technology_description_textarea_dynamo"
             )
-    # ==========================================
-    # FIN DE NUEVA SECCIÓN
-    # ==========================================
     
     # Configuración de búsqueda
     st.write("### 🎯 Define los términos para el análisis")
     
     # Si hay consulta reutilizada, cargar los términos
     if reuse_query and reuse_query.get('search_terms'):
-        # Pre-cargar términos de la consulta reutilizada
         topics = reuse_query['search_terms']
         st.write("**Términos cargados desde historial:**")
         for i, term in enumerate(topics):
             st.write(f"{i+1}. {term.get('value', '')} ({term.get('operator', 'AND')})")
         
-        if st.button("Modificar términos", key="hype_modify_terms_btn"):
-            # Permite editar los términos
-            topics = manage_topics("hype", preset_topics=topics)
+        if st.button("Modificar términos", key="hype_modify_terms_btn_dynamo"):
+            topics = manage_topics("hype_dynamo", preset_topics=topics)
     else:
-        # Gestión normal de topics
-        topics = manage_topics("hype")
+        topics = manage_topics("hype_dynamo")
     
     # Configuración adicional del Hype Cycle
     with st.expander("⚙️ Opciones avanzadas", expanded=False):
@@ -251,19 +210,17 @@ def _show_analysis_interface():
                 max_value=2025,
                 value=reuse_query.get('search_parameters', {}).get('min_year', 2015) if reuse_query else 2015,
                 help="Año desde el cual buscar resultados",
-                key="hype_analysis_min_year_input"  # ← KEY ÚNICA AÑADIDA
+                key="hype_analysis_min_year_input_dynamo"
             )
         with col2:
-            # Multiselect para fuentes - KEY ÚNICA AÑADIDA
             sources_filter = st.multiselect(
                 "Filtrar fuentes",
                 options=["Tech News", "Business News", "Academic Sources", "Blogs"],
                 default=reuse_query.get('search_parameters', {}).get('sources_filter', ["Tech News", "Business News"]) if reuse_query else ["Tech News", "Business News"],
                 help="Tipos de fuentes a incluir en el análisis",
-                key="hype_analysis_sources_filter_multiselect"  # ← KEY ÚNICA AÑADIDA
+                key="hype_analysis_sources_filter_multiselect_dynamo"
             )
         
-        # Configuración adicional para almacenamiento
         col3, col4 = st.columns(2)
         with col3:
             max_results = st.number_input(
@@ -272,14 +229,14 @@ def _show_analysis_interface():
                 max_value=1000,
                 value=200,
                 help="Número máximo de resultados a obtener de la API",
-                key="hype_analysis_max_results_input"  # ← KEY ÚNICA AÑADIDA
+                key="hype_analysis_max_results_input_dynamo"
             )
         with col4:
             analysis_notes = st.text_input(
                 "Notas del análisis",
                 placeholder="Ej: Análisis para Q1 2025, investigación de mercado...",
                 help="Notas que se guardarán con el análisis",
-                key="hype_analysis_notes_input"  # ← KEY ÚNICA AÑADIDA
+                key="hype_analysis_notes_input_dynamo"
             )
     
     # Mostrar información de consulta actual
@@ -288,8 +245,8 @@ def _show_analysis_interface():
         st.write("### 📝 Consulta actual")
         st.code(current_query)
     
-    # Botón de análisis - KEY ÚNICA AÑADIDA
-    if st.button("📊 Analizar Hype Cycle", type="primary", key="hype_analyze_main_btn"):
+    # Botón de análisis
+    if st.button("📊 Analizar Hype Cycle", type="primary", key="hype_analyze_main_btn_dynamo"):
         if not topics:
             st.error("Por favor, ingresa al menos un tema para analizar")
             return
@@ -397,11 +354,9 @@ def _show_analysis_interface():
                     if inflection_fig:
                         st.plotly_chart(inflection_fig, use_container_width=True)
                     
-                    # ==========================================
-                    # 🔄 MODIFICACIÓN: Guardar automáticamente con technology_name
-                    # ==========================================
+                    # Guardar automáticamente en DynamoDB
                     if auto_save and hype_storage:
-                        with st.spinner("💾 Guardando análisis..."):
+                        with st.spinner("💾 Guardando análisis en DynamoDB..."):
                             try:
                                 query_id = hype_storage.save_hype_cycle_query(
                                     search_query=google_query,
@@ -411,29 +366,27 @@ def _show_analysis_interface():
                                     category_id=selected_category_id,
                                     search_parameters=search_parameters,
                                     notes=analysis_notes,
-                                    technology_name=technology_name,  # 🆕 NUEVO PARÁMETRO
-                                    technology_description=technology_description  # 🆕 NUEVO PARÁMETRO
+                                    technology_name=technology_name,
+                                    technology_description=technology_description
                                 )
                                 
                                 if query_id:
-                                    st.success(f"✅ Análisis guardado automáticamente con ID: {query_id}")
+                                    st.success(f"✅ Análisis guardado automáticamente en DynamoDB con ID: {query_id}")
                                     
                                     # Opción para ver en historial
-                                    if st.button("📚 Ver en Historial", key="hype_view_in_history_btn"):
+                                    if st.button("📚 Ver en Historial", key="hype_view_in_history_btn_dynamo"):
                                         st.session_state.hype_show_query_id = query_id
                                         st.rerun()
                                         
                             except Exception as e:
-                                st.error(f"❌ Error guardando análisis: {str(e)}")
+                                st.error(f"❌ Error guardando análisis en DynamoDB: {str(e)}")
                     
-                    # ==========================================
-                    # 🔄 MODIFICACIÓN: Opción manual de guardado con technology_name
-                    # ==========================================
+                    # Opción manual de guardado
                     elif hype_storage and not auto_save:
-                        st.write("### 💾 Guardar Análisis")
+                        st.write("### 💾 Guardar Análisis en DynamoDB")
                         
-                        if st.button("Guardar este análisis", type="secondary", key="hype_manual_save_btn"):
-                            with st.spinner("💾 Guardando análisis..."):
+                        if st.button("Guardar este análisis", type="secondary", key="hype_manual_save_btn_dynamo"):
+                            with st.spinner("💾 Guardando análisis en DynamoDB..."):
                                 try:
                                     query_id = hype_storage.save_hype_cycle_query(
                                         search_query=google_query,
@@ -443,18 +396,15 @@ def _show_analysis_interface():
                                         category_id=selected_category_id,
                                         search_parameters=search_parameters,
                                         notes=analysis_notes,
-                                        technology_name=technology_name,  # 🆕 NUEVO PARÁMETRO
-                                        technology_description=technology_description  # 🆕 NUEVO PARÁMETRO
+                                        technology_name=technology_name,
+                                        technology_description=technology_description
                                     )
                                     
                                     if query_id:
-                                        st.success(f"✅ Análisis guardado con ID: {query_id}")
+                                        st.success(f"✅ Análisis guardado en DynamoDB con ID: {query_id}")
                                         
                                 except Exception as e:
                                     st.error(f"❌ Error guardando análisis: {str(e)}")
-                    # ==========================================
-                    # FIN DE MODIFICACIONES
-                    # ==========================================
                     
                     # Mostrar análisis detallado
                     news_analyzer.display_advanced_analysis(serp_results, query_info, st)
@@ -477,40 +427,20 @@ def _show_analysis_interface():
         4. **Slope of Enlightenment**: Comprensión realista de beneficios y limitaciones
         5. **Plateau of Productivity**: Adopción estable y generalizada
         
-        Para comenzar, ingresa los términos de búsqueda en el formulario superior y haz clic en "Analizar Hype Cycle".
+        **Almacenamiento:** Todos los análisis se guardan automáticamente en DynamoDB.
+        
+        Para comenzar, ingresa los términos de búsqueda y haz clic en "Analizar Hype Cycle".
         """)
 
 def _show_history_interface():
     """Interfaz para mostrar el historial de consultas"""
     try:
-        # Inicializar sistema de almacenamiento
-        storage_mode = st.session_state.get('hype_storage_mode', 'local')
-        
-        if storage_mode == 'local':
-            db = initialize_database("local")
-        else:
-            aws_configured = (
-                st.session_state.get('aws_access_key_id') and 
-                st.session_state.get('aws_secret_access_key') and 
-                st.session_state.get('aws_region')
-            )
-            
-            if aws_configured:
-                db = initialize_database(
-                    "dynamodb",
-                    region_name=st.session_state.aws_region,
-                    aws_access_key_id=st.session_state.aws_access_key_id,
-                    aws_secret_access_key=st.session_state.aws_secret_access_key
-                )
-            else:
-                st.warning("⚠️ DynamoDB no configurado. Usando almacenamiento local.")
-                db = initialize_database("local")
+        db = _get_dynamodb_instance()
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
             
-            # USAR CONTEXTO ÚNICO CON TIMESTAMP
-            import time
+            # Contexto único
             unique_context = f"hype_history_{int(time.time())}"
             
             history_interface = create_hype_cycle_interface(hype_storage, unique_context)
@@ -524,7 +454,7 @@ def _show_history_interface():
                 st.info(f"Mostrando detalles de la consulta: {show_query_id}")
                 query = hype_storage.get_query_by_id(show_query_id)
                 if query:
-                    history_interface._display_query_details(query)
+                    st.json(query)
                 else:
                     st.error("No se encontró la consulta especificada")
                 
@@ -532,21 +462,20 @@ def _show_history_interface():
                     del st.session_state.hype_show_query_id
                     st.rerun()
         else:
-            st.error("No se pudo inicializar el sistema de almacenamiento")
+            st.error("No se pudo inicializar el sistema de almacenamiento DynamoDB")
             
     except Exception as e:
         st.error(f"Error en la interfaz de historial: {str(e)}")
         import traceback
-        st.code(traceback.format_exc())
+        with st.expander("🔍 Ver detalles del error"):
+            st.code(traceback.format_exc())
 
 # Funciones auxiliares reutilizadas del script principal
-def manage_topics(prefix="hype", preset_topics=None):
-    """Maneja la adición y eliminación de topics SIN recargas molestas."""
+def manage_topics(prefix="hype_dynamo", preset_topics=None):
+    """Maneja la adición y eliminación de topics."""
     
-    # Usar un estado específico para este módulo
     state_key = f"{prefix}_topics_data"
     
-    # Si hay preset_topics, cargarlos
     if preset_topics and state_key not in st.session_state:
         st.session_state[state_key] = preset_topics
     elif state_key not in st.session_state:
@@ -574,9 +503,7 @@ def manage_topics(prefix="hype", preset_topics=None):
     
     st.write("### 🔍 Construye tu búsqueda")
     
-    # USAR FORM para evitar recargas automáticas
     with st.form(key=f"{prefix}_topics_form"):
-        # Crear columnas para cada topic
         for topic in st.session_state[state_key]:
             col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
             
@@ -607,7 +534,6 @@ def manage_topics(prefix="hype", preset_topics=None):
                 topic['exact_match'] = exact_match
             
             with col4:
-                # Marcar para eliminar (en lugar de botón que recarga)
                 if len(st.session_state[state_key]) > 1:
                     remove = st.checkbox(
                         "❌", 
@@ -616,7 +542,6 @@ def manage_topics(prefix="hype", preset_topics=None):
                     )
                     topic['_remove'] = remove
         
-        # Botones dentro del form (no causan recarga)
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -628,7 +553,7 @@ def manage_topics(prefix="hype", preset_topics=None):
         with col3:
             clear_all = st.form_submit_button("🧹 Limpiar Todo")
     
-    # Procesar acciones DESPUÉS del form
+    # Procesar acciones
     if add_topic:
         new_id = max([t['id'] for t in st.session_state[state_key]]) + 1
         st.session_state[state_key].append({
@@ -644,7 +569,6 @@ def manage_topics(prefix="hype", preset_topics=None):
             topic for topic in st.session_state[state_key] 
             if not topic.get('_remove', False)
         ]
-        # Asegurar que quede al menos uno
         if not st.session_state[state_key]:
             st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
         st.rerun()
@@ -670,42 +594,33 @@ def manage_topics(prefix="hype", preset_topics=None):
     return topics
 
 def build_search_equation(topics):
-    """Construye la ecuación de búsqueda en base a los términos y operadores, sin operador al final."""
+    """Construye la ecuación de búsqueda en base a los términos y operadores."""
     equation = ""
     for i, topic in enumerate(topics):
-        # Escapamos los espacios si es una coincidencia exacta
         if topic['exact_match']:
             term = f'"{topic["value"]}"'
         else:
             term = topic['value']
         
-        if i == len(topics) - 1:  # Si es el último término, no añadimos operador
+        if i == len(topics) - 1:
             equation += f"{term}"
-        else:  # Para todos los demás términos, agregamos operador
+        else:
             equation += f"{term} {topic['operator']} "
     
     return equation
 
 def process_topics(topics_data):
-    """
-    Procesa los topics antes de construir la query
-    
-    Args:
-        topics_data: Lista de topics con sus operadores y opciones
-    Returns:
-        Lista de diccionarios procesados
-    """
+    """Procesa los topics antes de construir la query"""
     processed_topics = []
     
     for topic in topics_data:
-        if topic['value'].strip():  # Solo procesar topics no vacíos
+        if topic['value'].strip():
             processed_topic = {
                 'value': topic['value'].strip(),
                 'operator': topic.get('operator', 'AND'),
                 'exact_match': topic.get('exact_match', False)
             }
             
-            # Si ya tiene comillas, desactivar exact_match
             if processed_topic['value'].startswith('"') and processed_topic['value'].endswith('"'):
                 processed_topic['exact_match'] = False
             

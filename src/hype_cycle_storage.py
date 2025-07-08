@@ -1,4 +1,4 @@
-# src/hype_cycle_storage.py
+# src/hype_cycle_storage.py - CORREGIDO CON FUNCIONES DE NUBE Y FORMATEO SEGURO
 import streamlit as st
 import pandas as pd
 import time
@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from dataclasses import dataclass, asdict
 from enum import Enum
+import math
 
 class HypeCyclePhase(Enum):
     """Enum para las fases del Hype Cycle"""
@@ -31,13 +32,9 @@ class HypeCycleMetrics:
     latest_year: int
     sentiment_avg: float
     sentiment_trend: float
-    
-    # NUEVOS CAMPOS para posicionamiento en gráfica
-    hype_cycle_position_x: float = 50.0  # Posición X en la curva (0-100)
-    hype_cycle_position_y: float = 50.0  # Posición Y en la curva (expectativas)
-    time_to_plateau: str = "N/A"         # Tiempo estimado hasta plateau
-    
-    # Campos existentes
+    hype_cycle_position_x: float = 50.0
+    hype_cycle_position_y: float = 50.0
+    time_to_plateau: str = "N/A"
     innovation_trigger_year: Optional[int] = None
     peak_year: Optional[int] = None
     trough_year: Optional[int] = None
@@ -49,28 +46,20 @@ class HypeCycleQuery:
     query_id: str
     category_id: str
     search_query: str
-    search_terms: List[Dict]  # Lista de términos con operadores
+    search_terms: List[Dict]
     execution_date: str
-    api_usage: Dict  # Información sobre uso de API (tokens, requests, etc.)
-    
-    # Resultados del análisis
+    api_usage: Dict
     hype_metrics: HypeCycleMetrics
-    yearly_stats: List[Dict]  # Datos anuales de menciones y sentimiento
-    news_results: List[Dict]  # Resultados completos de noticias
-    
-    # Metadatos adicionales
-    search_parameters: Dict  # Parámetros de búsqueda (año mínimo, filtros, etc.)
-    data_quality: Dict  # Métricas de calidad de datos
-    processing_time: float  # Tiempo de procesamiento
-    
-    # NUEVOS CAMPOS para administración
-    technology_name: str = ""     # Nombre simplificado para mostrar en gráfica
-    category_name: str = ""       # Nombre de la categoría (para referencia rápida)
-    last_updated: str = ""        # Última actualización
-    is_active: bool = True        # Si debe mostrarse en gráficas activas
-    technology_description: str = ""  # Descripción opcional
-    
-    # Para versionado y auditoría
+    yearly_stats: List[Dict]
+    news_results: List[Dict]
+    search_parameters: Dict
+    data_quality: Dict
+    processing_time: float
+    technology_name: str = ""
+    category_name: str = ""
+    last_updated: str = ""
+    is_active: bool = True
+    technology_description: str = ""
     created_by: str = "system"
     version: str = "1.0"
     notes: str = ""
@@ -79,104 +68,19 @@ class HypeCycleStorage:
     """Clase especializada para gestionar almacenamiento de consultas Hype Cycle"""
     
     def __init__(self, db_storage):
-        """
-        Inicializa con el storage de DynamoDB existente
-        """
+        """Inicializa con el storage de DynamoDB"""
         self.storage = db_storage
-        self.table_name = "hype-cycle-queries"
         
-        # Si es DynamoDB, asegurar que existe la tabla específica
-        if hasattr(db_storage, 'dynamodb'):
-            self._ensure_hype_cycle_table()
+        # Verificar que es DynamoDB
+        if not hasattr(db_storage, 'dynamodb'):
+            raise ValueError("HypeCycleStorage requiere DynamoDB storage")
     
+    def _generate_unique_query_id(self):
+        """Genera un ID único garantizado para queries de Hype Cycle"""
+        timestamp = int(time.time() * 1000)  # Milisegundos
+        unique_part = str(uuid.uuid4())[:12]  # Más caracteres para unicidad
+        return f"hype_{timestamp}_{unique_part}"
     
-    def _convert_floats_to_decimal(self, obj):
-        """
-        Convierte recursivamente todos los floats a Decimal para DynamoDB
-        VERSIÓN MEJORADA: Maneja Infinity, NaN y valores problemáticos
-        
-        Args:
-            obj: Objeto a convertir (dict, list, float, etc.)
-            
-        Returns:
-            Objeto con floats convertidos a Decimal, manejando casos especiales
-        """
-        import math
-        from decimal import Decimal, InvalidOperation
-        
-        if isinstance(obj, dict):
-            return {k: self._convert_floats_to_decimal(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._convert_floats_to_decimal(item) for item in obj]
-        elif isinstance(obj, float):
-            # NUEVO: Verificar casos especiales
-            if math.isnan(obj):
-                return Decimal('0')  # Convertir NaN a 0
-            elif math.isinf(obj):
-                if obj > 0:
-                    return Decimal('999999')  # Infinity positivo -> valor grande
-                else:
-                    return Decimal('-999999')  # Infinity negativo -> valor pequeño
-            else:
-                try:
-                    # Convertir float normal a Decimal con precisión limitada
-                    return Decimal(str(round(obj, 6)))
-                except (ValueError, InvalidOperation):
-                    # Si hay algún problema con la conversión, usar 0
-                    return Decimal('0')
-        elif isinstance(obj, (int, str, bool)) or obj is None:
-            return obj
-        elif hasattr(obj, 'item'):  # Objetos numpy
-            try:
-                value = float(obj.item())
-                # Aplicar las mismas verificaciones que para float
-                if math.isnan(value):
-                    return Decimal('0')
-                elif math.isinf(value):
-                    return Decimal('999999') if value > 0 else Decimal('-999999')
-                else:
-                    return Decimal(str(round(value, 6)))
-            except (ValueError, InvalidOperation):
-                return Decimal('0')
-        else:
-            # Para otros tipos, intentar convertir a string
-            return str(obj)
-        
-    def _sanitize_data_for_dynamodb(self, data):
-        """
-        Sanitiza datos específicamente para DynamoDB, removiendo valores problemáticos
-        
-        Args:
-            data: Datos a sanitizar
-            
-        Returns:
-            Datos limpios y seguros para DynamoDB
-        """
-        import math
-        
-        def clean_value(value):
-            """Limpia un valor individual"""
-            if isinstance(value, dict):
-                return {k: clean_value(v) for k, v in value.items()}
-            elif isinstance(value, list):
-                return [clean_value(item) for item in value]
-            elif isinstance(value, float):
-                if math.isnan(value) or math.isinf(value):
-                    return 0.0  # Reemplazar NaN/Inf con 0
-                return value
-            elif hasattr(value, 'item'):  # numpy types
-                try:
-                    float_val = float(value.item())
-                    if math.isnan(float_val) or math.isinf(float_val):
-                        return 0.0
-                    return float_val
-                except:
-                    return 0.0
-            else:
-                return value
-        
-        return clean_value(data)
-
     def save_hype_cycle_query(self, 
                             search_query: str,
                             search_terms: List[Dict],
@@ -188,21 +92,21 @@ class HypeCycleStorage:
                             technology_name: str = None,
                             technology_description: str = "") -> str:
         """
-        Guarda una consulta completa de Hype Cycle con manejo mejorado de errores DynamoDB
+        Guarda una consulta completa de Hype Cycle - VERSIÓN ÚNICA Y LIMPIA
         """
         try:
             # Importar el positioner
             from hype_cycle_positioning import HypeCyclePositioner
             positioner = HypeCyclePositioner()
             
-            # Generar ID único
-            query_id = f"hype_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+            # Generar ID único garantizado
+            query_id = self._generate_unique_query_id()
             
-            # NUEVO: Sanitizar resultados del análisis ANTES de procesar
-            cleaned_hype_results = self._sanitize_data_for_dynamodb(hype_analysis_results)
-            cleaned_news_results = self._sanitize_data_for_dynamodb(news_results)
+            # Sanitizar datos ANTES de procesar
+            cleaned_hype_results = self.storage._sanitize_for_dynamodb(hype_analysis_results)
+            cleaned_news_results = self.storage._sanitize_for_dynamodb(news_results)
             
-            # Procesar métricas del Hype Cycle con datos limpios
+            # Procesar métricas del Hype Cycle
             hype_metrics = self._extract_hype_metrics(cleaned_hype_results)
             
             # Calcular posición en la gráfica
@@ -213,37 +117,26 @@ class HypeCycleStorage:
             )
             hype_metrics.hype_cycle_position_x = pos_x
             hype_metrics.hype_cycle_position_y = pos_y
-            
-            # Estimar tiempo al plateau
             hype_metrics.time_to_plateau = positioner.estimate_time_to_plateau(
                 hype_metrics.phase, 
                 hype_metrics.confidence
             )
             
-            # Procesar estadísticas anuales con datos limpios
+            # Procesar estadísticas anuales
             yearly_stats = self._process_yearly_stats(cleaned_hype_results.get('yearly_stats', []))
             
-            # Calcular métricas de calidad de datos con datos limpios
+            # Calcular métricas de calidad
             data_quality = self._calculate_data_quality(cleaned_news_results, yearly_stats)
             
-            # Estimar uso de API
-            api_usage = {
-                "estimated_requests": len(cleaned_news_results) // 10 + 1,
-                "total_results": len(cleaned_news_results),
-                "search_timestamp": datetime.now(timezone.utc).isoformat(),
-                "api_provider": "SerpAPI"
-            }
-            
             # Obtener información de categoría
-            try:
-                category = self.storage.get_category_by_id(category_id)
-                category_name = category.get("name") if category else "Sin categoría"
-            except:
-                category_name = "Sin categoría"
+            category_name = self._get_category_name(category_id)
             
             # Generar nombre de tecnología si no se proporciona
             if not technology_name:
                 technology_name = self._extract_technology_name(search_query, search_terms)
+            
+            # Crear timestamp único
+            execution_timestamp = datetime.now(timezone.utc).isoformat()
             
             # Crear objeto de consulta
             hype_query = HypeCycleQuery(
@@ -251,8 +144,13 @@ class HypeCycleStorage:
                 category_id=category_id,
                 search_query=search_query,
                 search_terms=search_terms,
-                execution_date=datetime.now(timezone.utc).isoformat(),
-                api_usage=api_usage,
+                execution_date=execution_timestamp,
+                api_usage={
+                    "estimated_requests": len(cleaned_news_results) // 10 + 1,
+                    "total_results": len(cleaned_news_results),
+                    "search_timestamp": execution_timestamp,
+                    "api_provider": "SerpAPI"
+                },
                 hype_metrics=hype_metrics,
                 yearly_stats=yearly_stats,
                 news_results=self._sanitize_news_results(cleaned_news_results),
@@ -262,227 +160,34 @@ class HypeCycleStorage:
                 notes=notes,
                 technology_name=technology_name,
                 category_name=category_name,
-                last_updated=datetime.now(timezone.utc).isoformat(),
+                last_updated=execution_timestamp,
                 is_active=True,
                 technology_description=technology_description
             )
             
-            # Convertir a diccionario y preparar para almacenamiento
-            query_dict = self._prepare_for_storage(hype_query)
+            # Convertir a diccionario y preparar para DynamoDB
+            query_dict = self._prepare_for_dynamodb(hype_query)
             
-            # NUEVO: Doble sanitización para DynamoDB
-            if hasattr(self.storage, 'analyses_table'):
-                # Es DynamoDB - sanitizar primero, luego convertir floats a Decimal
-                query_dict = self._sanitize_data_for_dynamodb(query_dict)
-                query_dict = self._convert_floats_to_decimal(query_dict)
-                
-                # VERIFICACIÓN FINAL: Detectar cualquier valor problemático restante
-                self._validate_dynamodb_data(query_dict)
+            # Guardar en DynamoDB
+            self.storage.analyses_table.put_item(Item=query_dict)
             
-            # Guardar en el storage
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB
-                self.storage.analyses_table.put_item(Item=query_dict)
-            else:
-                # Storage local - los floats están bien aquí
-                if "hype_cycle_queries" not in self.storage.data:
-                    self.storage.data["hype_cycle_queries"] = []
-                self.storage.data["hype_cycle_queries"].append(query_dict)
-                self.storage.save_data()
-            
-            st.success(f"✅ Consulta de Hype Cycle guardada con ID: {query_id}")
-            return query_id
-            
-        except Exception as e:
-            st.error(f"❌ Error al guardar consulta de Hype Cycle: {str(e)}")
-            
-            # Información de debug más detallada
-            import traceback
-            error_details = traceback.format_exc()
-            
-            # Detectar tipo específico de error
-            if "Infinity and NaN not supported" in str(e):
-                st.error("🔍 **Error específico:** Datos contienen valores infinitos o NaN que DynamoDB no puede manejar")
-                st.error("💡 **Sugerencia:** Revisa los datos de entrada del análisis de noticias")
-            
-            with st.expander("🔍 Ver detalles completos del error"):
-                st.code(error_details)
-            
-            return None
-
-    def _validate_dynamodb_data(self, data, path="root"):
-        """
-        Valida que los datos sean seguros para DynamoDB
-        
-        Args:
-            data: Datos a validar
-            path: Ruta actual en la estructura de datos (para debug)
-        """
-        import math
-        
-        def check_value(value, current_path):
-            if isinstance(value, dict):
-                for k, v in value.items():
-                    check_value(v, f"{current_path}.{k}")
-            elif isinstance(value, list):
-                for i, item in enumerate(value):
-                    check_value(item, f"{current_path}[{i}]")
-            elif isinstance(value, float):
-                if math.isnan(value):
-                    raise ValueError(f"NaN encontrado en {current_path}")
-                elif math.isinf(value):
-                    raise ValueError(f"Infinity encontrado en {current_path}")
-        
-        try:
-            check_value(data, path)
-        except ValueError as e:
-            st.error(f"❌ Validación DynamoDB falló: {str(e)}")
-            raise e
-    
-    def _convert_dataclass_to_dict(self, dataclass_obj):
-        """
-        Convierte dataclass a diccionario y maneja floats
-        
-        Args:
-            dataclass_obj: Objeto dataclass
-            
-        Returns:
-            Diccionario con valores convertidos
-        """
-        if hasattr(dataclass_obj, '__dict__'):
-            # Es un dataclass o objeto similar
-            obj_dict = {}
-            for key, value in dataclass_obj.__dict__.items():
-                obj_dict[key] = self._convert_floats_to_decimal(value)
-            return obj_dict
-        else:
-            # No es un dataclass, convertir directamente
-            return self._convert_floats_to_decimal(dataclass_obj)
-    
-    def _ensure_hype_cycle_table(self):
-        """Asegura que existe la tabla específica para Hype Cycle en DynamoDB"""
-        try:
-            # Intentar acceder a la tabla
-            table = self.storage.dynamodb.Table(self.table_name)
-            table.table_status
-        except Exception:
-            # Si no existe, usar la tabla general de análisis
-            self.table_name = self.storage.analyses_table_name
-            st.info(f"Usando tabla general: {self.table_name}")
-    
-    def save_hype_cycle_query(self, 
-                             search_query: str,
-                             search_terms: List[Dict],
-                             hype_analysis_results: Dict,
-                             news_results: List[Dict],
-                             category_id: str = "default",
-                             search_parameters: Dict = None,
-                             notes: str = "",
-                             technology_name: str = None,
-                             technology_description: str = "") -> str:
-        """
-        Guarda una consulta completa de Hype Cycle con soporte completo para DynamoDB
-        """
-        try:
-            # Importar el positioner
-            from hype_cycle_positioning import HypeCyclePositioner
-            positioner = HypeCyclePositioner()
-            
-            # Generar ID único
-            query_id = f"hype_{int(time.time())}_{str(uuid.uuid4())[:8]}"
-            
-            # Procesar métricas del Hype Cycle
-            hype_metrics = self._extract_hype_metrics(hype_analysis_results)
-            
-            # Calcular posición en la gráfica
-            pos_x, pos_y = positioner.calculate_position(
-                hype_metrics.phase, 
-                hype_metrics.confidence,
-                hype_metrics.total_mentions
-            )
-            hype_metrics.hype_cycle_position_x = pos_x
-            hype_metrics.hype_cycle_position_y = pos_y
-            
-            # Estimar tiempo al plateau
-            hype_metrics.time_to_plateau = positioner.estimate_time_to_plateau(
-                hype_metrics.phase, 
-                hype_metrics.confidence
-            )
-            
-            # Procesar estadísticas anuales
-            yearly_stats = self._process_yearly_stats(hype_analysis_results.get('yearly_stats', []))
-            
-            # Calcular métricas de calidad de datos
-            data_quality = self._calculate_data_quality(news_results, yearly_stats)
-            
-            # Estimar uso de API
-            api_usage = {
-                "estimated_requests": len(news_results) // 10 + 1,
-                "total_results": len(news_results),
-                "search_timestamp": datetime.now(timezone.utc).isoformat(),
-                "api_provider": "SerpAPI"
-            }
-            
-            # Obtener información de categoría
-            try:
-                category = self.storage.get_category_by_id(category_id)
-                category_name = category.get("name") if category else "Sin categoría"
-            except:
-                category_name = "Sin categoría"
-            
-            # Generar nombre de tecnología si no se proporciona
-            if not technology_name:
-                technology_name = self._extract_technology_name(search_query, search_terms)
-            
-            # Crear objeto de consulta
-            hype_query = HypeCycleQuery(
-                query_id=query_id,
-                category_id=category_id,
-                search_query=search_query,
-                search_terms=search_terms,
-                execution_date=datetime.now(timezone.utc).isoformat(),
-                api_usage=api_usage,
-                hype_metrics=hype_metrics,
-                yearly_stats=yearly_stats,
-                news_results=self._sanitize_news_results(news_results),
-                search_parameters=search_parameters or {},
-                data_quality=data_quality,
-                processing_time=time.time(),
-                notes=notes,
-                technology_name=technology_name,
-                category_name=category_name,
-                last_updated=datetime.now(timezone.utc).isoformat(),
-                is_active=True,
-                technology_description=technology_description
-            )
-            
-            # Convertir a diccionario y preparar para almacenamiento
-            query_dict = self._prepare_for_storage(hype_query)
-            
-            # NUEVO: Convertir floats a Decimal para DynamoDB
-            if hasattr(self.storage, 'analyses_table'):
-                # Es DynamoDB - convertir floats a Decimal
-                query_dict = self._convert_floats_to_decimal(query_dict)
-            
-            # Guardar en el storage
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB
-                self.storage.analyses_table.put_item(Item=query_dict)
-            else:
-                # Storage local - los floats están bien aquí
-                if "hype_cycle_queries" not in self.storage.data:
-                    self.storage.data["hype_cycle_queries"] = []
-                self.storage.data["hype_cycle_queries"].append(query_dict)
-                self.storage.save_data()
-            
-            st.success(f"✅ Consulta de Hype Cycle guardada con ID: {query_id}")
+            st.success(f"✅ Consulta de Hype Cycle guardada con ID único: {query_id}")
             return query_id
             
         except Exception as e:
             st.error(f"❌ Error al guardar consulta de Hype Cycle: {str(e)}")
             import traceback
-            st.code(traceback.format_exc())
+            with st.expander("🔍 Ver detalles del error"):
+                st.code(traceback.format_exc())
             return None
+    
+    def _get_category_name(self, category_id: str) -> str:
+        """Obtiene el nombre de la categoría de forma segura"""
+        try:
+            category = self.storage.get_category_by_id(category_id)
+            return category.get("name") if category else "Sin categoría"
+        except:
+            return "Sin categoría"
     
     def _extract_hype_metrics(self, hype_results: Dict) -> HypeCycleMetrics:
         """Extrae métricas específicas del análisis de Hype Cycle"""
@@ -503,14 +208,27 @@ class HypeCycleStorage:
                 if inflection_points.get('trough'):
                     trough_year = inflection_points['trough'].get('year')
             
+            # Calcular sentiment promedio de forma segura
+            sentiment_avg = 0.0
+            yearly_stats = hype_results.get('yearly_stats')
+            if yearly_stats is not None:
+                try:
+                    if hasattr(yearly_stats, 'sentiment_mean'):
+                        sentiment_avg = float(yearly_stats['sentiment_mean'].mean())
+                    elif isinstance(yearly_stats, list):
+                        sentiments = [float(stat.get('sentiment_mean', 0)) for stat in yearly_stats]
+                        sentiment_avg = sum(sentiments) / len(sentiments) if sentiments else 0.0
+                except:
+                    sentiment_avg = 0.0
+            
             return HypeCycleMetrics(
                 phase=hype_results.get('phase', 'Unknown'),
                 confidence=float(hype_results.get('confidence', 0.0)),
                 total_mentions=int(metrics_data.get('total_mentions', 0)),
                 peak_mentions=int(metrics_data.get('peak_mentions', 0)),
                 latest_year=int(metrics_data.get('latest_year', datetime.now().year)),
-                sentiment_avg=float(hype_results.get('yearly_stats', {}).get('sentiment_mean', {}).mean() if hasattr(hype_results.get('yearly_stats', {}), 'mean') else 0.0),
-                sentiment_trend=0.0,  # Se calculará más adelante
+                sentiment_avg=sentiment_avg,
+                sentiment_trend=0.0,
                 innovation_trigger_year=innovation_year,
                 peak_year=peak_year,
                 trough_year=trough_year,
@@ -533,19 +251,17 @@ class HypeCycleStorage:
         """Procesa estadísticas anuales para almacenamiento"""
         try:
             if hasattr(yearly_stats, 'to_dict'):
-                # Si es un DataFrame de pandas
                 records = yearly_stats.to_dict('records')
             elif isinstance(yearly_stats, list):
                 records = yearly_stats
             else:
                 records = []
             
-            # Asegurar que todos los valores son serializables
             processed_records = []
             for record in records:
                 processed_record = {}
                 for key, value in record.items():
-                    if hasattr(value, 'item'):  # numpy types
+                    if hasattr(value, 'item'):
                         processed_record[key] = value.item()
                     elif isinstance(value, (int, float, str, bool)) or value is None:
                         processed_record[key] = value
@@ -579,13 +295,11 @@ class HypeCycleStorage:
     def _calculate_data_quality(self, news_results: List[Dict], yearly_stats: List[Dict]) -> Dict:
         """Calcula métricas de calidad de los datos"""
         try:
-            # Calcular completitud de datos
             total_results = len(news_results)
             results_with_date = sum(1 for r in news_results if r.get('date'))
             results_with_sentiment = sum(1 for r in news_results if r.get('sentiment') is not None)
             results_with_country = sum(1 for r in news_results if r.get('country'))
             
-            # Calcular distribución temporal
             years_covered = len(yearly_stats) if yearly_stats else 0
             
             return {
@@ -606,144 +320,28 @@ class HypeCycleStorage:
             st.warning(f"Error calculando calidad de datos: {str(e)}")
             return {"quality_score": 0, "error": str(e)}
     
-    def _prepare_for_storage(self, hype_query: HypeCycleQuery) -> Dict:
-        """Prepara el objeto para almacenamiento - VERSIÓN MEJORADA"""
+    def _prepare_for_dynamodb(self, hype_query: HypeCycleQuery) -> Dict:
+        """Prepara el objeto para almacenamiento en DynamoDB"""
+        # Convertir dataclass a diccionario
+        query_dict = asdict(hype_query)
         
-        # Convertir dataclass a diccionario manejando floats
-        if hasattr(hype_query, '__dict__'):
-            query_dict = {}
-            for key, value in hype_query.__dict__.items():
-                if hasattr(value, '__dict__') and hasattr(value, '__dataclass_fields__'):
-                    # Es un dataclass (como HypeCycleMetrics)
-                    query_dict[key] = self._convert_dataclass_to_dict(value)
-                elif isinstance(value, (list, dict)):
-                    # Es una lista o diccionario
-                    query_dict[key] = self._convert_floats_to_decimal(value)
-                else:
-                    # Es un valor simple
-                    query_dict[key] = self._convert_floats_to_decimal(value)
-        else:
-            # No es un objeto con __dict__, usar asdict
-            from dataclasses import asdict
-            query_dict = asdict(hype_query)
-        
-        # Agregar campos necesarios para compatibilidad
+        # Agregar campos requeridos para DynamoDB
         query_dict.update({
-            "analysis_id": hype_query.query_id,
-            "timestamp": hype_query.execution_date,
+            "analysis_id": hype_query.query_id,  # Clave primaria
+            "timestamp": hype_query.execution_date,  # Clave de ordenamiento
             "analysis_type": "hype_cycle",
             "query": hype_query.search_query,
             "name": f"Hype Cycle: {hype_query.technology_name or hype_query.search_query[:50]}..."
         })
         
         # Actualizar tiempo de procesamiento
-        processing_start = query_dict.get("processing_time", time.time())
-        query_dict["processing_time"] = time.time() - processing_start
+        query_dict["processing_time"] = time.time() - query_dict["processing_time"]
         
-        return query_dict
+        # Convertir floats a Decimal para DynamoDB
+        return self.storage._convert_floats_to_decimal(query_dict)
     
-    def get_queries_by_category(self, category_id: str) -> List[Dict]:
-        """Obtiene todas las consultas de Hype Cycle de una categoría"""
-        try:
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB
-                response = self.storage.analyses_table.scan(
-                    FilterExpression="category_id = :cat_id AND analysis_type = :type",
-                    ExpressionAttributeValues={
-                        ":cat_id": category_id,
-                        ":type": "hype_cycle"
-                    }
-                )
-                items = response.get('Items', [])
-                # NUEVO: Convertir Decimals a floats
-                return [self._process_query_from_storage(item) for item in items]
-            else:
-                # Storage local
-                queries = self.storage.data.get("hype_cycle_queries", [])
-                return [q for q in queries if q.get("category_id") == category_id]
-                
-        except Exception as e:
-            st.error(f"Error obteniendo consultas: {str(e)}")
-            return []
-
-    def get_query_by_id(self, query_id: str) -> Optional[Dict]:
-        """Obtiene una consulta específica por ID"""
-        try:
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB
-                response = self.storage.analyses_table.scan(
-                    FilterExpression="analysis_id = :id OR query_id = :id",
-                    ExpressionAttributeValues={":id": query_id}
-                )
-                items = response.get('Items', [])
-                if items:
-                    # NUEVO: Convertir Decimals a floats
-                    return self._process_query_from_storage(items[0])
-                return None
-            else:
-                # Storage local
-                queries = self.storage.data.get("hype_cycle_queries", [])
-                for query in queries:
-                    if query.get("query_id") == query_id or query.get("analysis_id") == query_id:
-                        return query
-                return None
-                
-        except Exception as e:
-            st.error(f"Error obteniendo consulta: {str(e)}")
-            return None
-
-    def get_all_hype_cycle_queries(self) -> List[Dict]:
-        """Obtiene todas las consultas de Hype Cycle"""
-        try:
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB
-                response = self.storage.analyses_table.scan(
-                    FilterExpression="analysis_type = :type",
-                    ExpressionAttributeValues={":type": "hype_cycle"}
-                )
-                items = response.get('Items', [])
-                # NUEVO: Convertir Decimals a floats
-                return [self._process_query_from_storage(item) for item in items]
-            else:
-                # Storage local
-                return self.storage.data.get("hype_cycle_queries", [])
-                
-        except Exception as e:
-            st.error(f"Error obteniendo todas las consultas: {str(e)}")
-            return []
-    
-    def delete_query(self, query_id: str) -> bool:
-        """Elimina una consulta específica"""
-        try:
-            if hasattr(self.storage, 'analyses_table'):
-                # DynamoDB - necesitamos el timestamp también
-                query = self.get_query_by_id(query_id)
-                if query:
-                    self.storage.analyses_table.delete_item(
-                        Key={
-                            "analysis_id": query_id,
-                            "timestamp": query["timestamp"]
-                        }
-                    )
-                    return True
-            else:
-                # Storage local
-                queries = self.storage.data.get("hype_cycle_queries", [])
-                self.storage.data["hype_cycle_queries"] = [
-                    q for q in queries 
-                    if q.get("query_id") != query_id and q.get("analysis_id") != query_id
-                ]
-                self.storage.save_data()
-                return True
-            
-            return False
-            
-        except Exception as e:
-            st.error(f"Error eliminando consulta: {str(e)}")
-            return False
     def _extract_technology_name(self, search_query: str, search_terms: List[Dict]) -> str:
         """Extrae un nombre de tecnología limpio de la consulta"""
-        # Priorizar el primer término más significativo
         for term in search_terms:
             value = term.get('value', '').strip().strip('"')
             if len(value) > 2 and value.lower() not in ['and', 'or', 'not']:
@@ -754,179 +352,200 @@ class HypeCycleStorage:
         clean_query = clean_query.replace(' NOT ', ' ').replace('after:', '').replace('before:', '')
         words = [w for w in clean_query.split() if not w.isdigit() and len(w) > 2]
         return ' '.join(words[:2]).title() if words else "Tecnología"
-
-    def _extract_hype_metrics(self, hype_results: Dict) -> HypeCycleMetrics:
-        """Extrae métricas específicas del análisis de Hype Cycle - VERSIÓN SIN FLOATS"""
+    
+    def get_queries_by_category(self, category_id: str) -> List[Dict]:
+        """Obtiene todas las consultas de Hype Cycle de una categoría"""
         try:
-            metrics_data = hype_results.get('metrics', {})
-            inflection_points = hype_results.get('inflection_points', {})
-            
-            # Extraer años de puntos de inflexión
-            innovation_year = None
-            peak_year = None
-            trough_year = None
-            
-            if inflection_points:
-                if inflection_points.get('innovation_trigger'):
-                    innovation_year = inflection_points['innovation_trigger'].get('year')
-                if inflection_points.get('peak'):
-                    peak_year = inflection_points['peak'].get('year')
-                if inflection_points.get('trough'):
-                    trough_year = inflection_points['trough'].get('year')
-            
-            # Calcular sentiment promedio
-            sentiment_avg = 0.0
-            yearly_stats = hype_results.get('yearly_stats')
-            if yearly_stats is not None:
-                try:
-                    if hasattr(yearly_stats, 'sentiment_mean'):
-                        sentiment_avg = float(yearly_stats['sentiment_mean'].mean())
-                    elif isinstance(yearly_stats, list):
-                        sentiments = [float(stat.get('sentiment_mean', 0)) for stat in yearly_stats]
-                        sentiment_avg = sum(sentiments) / len(sentiments) if sentiments else 0.0
-                except:
-                    sentiment_avg = 0.0
-            
-            # Crear métricas sin floats (se convertirán después)
-            return HypeCycleMetrics(
-                phase=hype_results.get('phase', 'Unknown'),
-                confidence=float(hype_results.get('confidence', 0.0)),
-                total_mentions=int(metrics_data.get('total_mentions', 0)),
-                peak_mentions=int(metrics_data.get('peak_mentions', 0)),
-                latest_year=int(metrics_data.get('latest_year', datetime.now().year)),
-                sentiment_avg=sentiment_avg,
-                sentiment_trend=0.0,
-                innovation_trigger_year=innovation_year,
-                peak_year=peak_year,
-                trough_year=trough_year,
-                inflection_points=inflection_points,
-                hype_cycle_position_x=50.0,  # Se actualizará después
-                hype_cycle_position_y=50.0,  # Se actualizará después
-                time_to_plateau="N/A"        # Se actualizará después
+            response = self.storage.analyses_table.scan(
+                FilterExpression="category_id = :cat_id AND analysis_type = :type",
+                ExpressionAttributeValues={
+                    ":cat_id": category_id,
+                    ":type": "hype_cycle"
+                }
             )
+            items = response.get('Items', [])
+            return [self.storage._convert_decimals_to_float(item) for item in items]
+                
+        except Exception as e:
+            st.error(f"Error obteniendo consultas por categoría: {str(e)}")
+            return []
+
+    def get_query_by_id(self, query_id: str) -> Optional[Dict]:
+        """Obtiene una consulta específica por ID"""
+        try:
+            response = self.storage.analyses_table.scan(
+                FilterExpression="analysis_id = :id OR query_id = :id",
+                ExpressionAttributeValues={":id": query_id}
+            )
+            items = response.get('Items', [])
+            if items:
+                return self.storage._convert_decimals_to_float(items[0])
+            return None
+                
+        except Exception as e:
+            st.error(f"Error obteniendo consulta por ID: {str(e)}")
+            return None
+
+    def get_all_hype_cycle_queries(self) -> List[Dict]:
+        """Obtiene todas las consultas de Hype Cycle"""
+        try:
+            response = self.storage.analyses_table.scan(
+                FilterExpression="analysis_type = :type",
+                ExpressionAttributeValues={":type": "hype_cycle"}
+            )
+            items = response.get('Items', [])
+            return [self.storage._convert_decimals_to_float(item) for item in items]
+                
+        except Exception as e:
+            st.error(f"Error obteniendo todas las consultas: {str(e)}")
+            return []
+    
+    def delete_query(self, query_id: str) -> bool:
+        """Elimina una consulta específica"""
+        try:
+            # Primero obtener el timestamp
+            query = self.get_query_by_id(query_id)
+            if query:
+                return self.storage.delete_item(query_id, query["timestamp"])
+            return False
             
         except Exception as e:
-            st.warning(f"Error extrayendo métricas: {str(e)}")
-            return HypeCycleMetrics(
-                phase="Unknown",
-                confidence=0.0,
-                total_mentions=0,
-                peak_mentions=0,
-                latest_year=datetime.now().year,
-                sentiment_avg=0.0,
-                sentiment_trend=0.0,
-                hype_cycle_position_x=50.0,
-                hype_cycle_position_y=50.0,
-                time_to_plateau="N/A"
-            )
-
-    def _prepare_for_storage(self, hype_query: HypeCycleQuery) -> Dict:
-        """Prepara el objeto para almacenamiento en DynamoDB - VERSIÓN ACTUALIZADA"""
-        # Convertir a diccionario
-        query_dict = asdict(hype_query)
-        
-        # Agregar campos necesarios para DynamoDB
-        query_dict.update({
-            "analysis_id": hype_query.query_id,  # Para compatibilidad con tabla general
-            "timestamp": hype_query.execution_date,
-            "analysis_type": "hype_cycle",
-            "query": hype_query.search_query,
-            "name": f"Hype Cycle: {hype_query.technology_name or hype_query.search_query[:50]}..."
-        })
-        
-        # Actualizar tiempo de procesamiento
-        query_dict["processing_time"] = time.time() - query_dict["processing_time"]
-        
-        return query_dict
+            st.error(f"Error eliminando consulta: {str(e)}")
+            return False
     
-    def _convert_decimals_to_float(self, obj):
-        """
-        Convierte recursivamente todos los Decimal a float cuando se lee de DynamoDB
-        
-        Args:
-            obj: Objeto a convertir (dict, list, Decimal, etc.)
-            
-        Returns:
-            Objeto con Decimals convertidos a float
-        """
-        if isinstance(obj, dict):
-            return {k: self._convert_decimals_to_float(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._convert_decimals_to_float(item) for item in obj]
-        elif isinstance(obj, Decimal):
-            return float(obj)
-        elif isinstance(obj, (int, str, bool)) or obj is None:
-            return obj
-        else:
-            # Para otros tipos, mantener como está
-            return obj
-
-    def _process_query_from_storage(self, query_dict):
-        """
-        Procesa una consulta leída del storage para convertir Decimals a floats
-        
-        Args:
-            query_dict: Diccionario de consulta desde DynamoDB
-            
-        Returns:
-            Diccionario con tipos de datos correctos para Python/Streamlit
-        """
-        if hasattr(self.storage, 'analyses_table'):
-            # Es DynamoDB - convertir Decimals a floats
-            return self._convert_decimals_to_float(query_dict)
-        else:
-            # Es storage local - no necesita conversión
-            return query_dict
-    
-    def _safe_metric_value(self, value):
-        """
-        Convierte un valor a un tipo seguro para st.metric()
-        
-        Args:
-            value: Valor a convertir (puede ser Decimal, int, float, str)
-            
-        Returns:
-            Valor convertido a int, float, o str
-        """
-        if value is None:
-            return 0
-        
+    def update_query(self, query_id: str, updates: Dict) -> bool:
+        """Actualiza una consulta específica"""
         try:
-            # Si es Decimal, convertir a float
-            if isinstance(value, Decimal):
-                return float(value)
-            # Si es string que representa un número
-            elif isinstance(value, str) and value.replace('.', '').replace('-', '').isdigit():
-                return float(value) if '.' in value else int(value)
-            # Si ya es int o float, mantener
-            elif isinstance(value, (int, float)):
-                return value
+            # Primero obtener el timestamp
+            query = self.get_query_by_id(query_id)
+            if query:
+                updates["last_updated"] = datetime.now(timezone.utc).isoformat()
+                return self.storage.update_item(query_id, query["timestamp"], updates)
+            return False
+            
+        except Exception as e:
+            st.error(f"Error actualizando consulta: {str(e)}")
+            return False
+    
+    def move_technology_to_category(self, query_id: str, target_category_id: str) -> bool:
+        """
+        Mueve una tecnología a otra categoría en DynamoDB
+        
+        Args:
+            query_id: ID de la consulta/tecnología a mover
+            target_category_id: ID de la categoría destino
+            
+        Returns:
+            bool: True si se movió exitosamente, False en caso contrario
+        """
+        try:
+            # 1. Obtener la tecnología actual
+            current_query = self.get_query_by_id(query_id)
+            
+            if not current_query:
+                st.error(f"❌ No se encontró la tecnología con ID: {query_id}")
+                return False
+            
+            current_category_id = current_query.get("category_id", "default")
+            
+            # 2. Verificar que la categoría destino existe
+            target_category = self.storage.get_category_by_id(target_category_id)
+            if not target_category:
+                st.error(f"❌ La categoría destino no existe: {target_category_id}")
+                return False
+            
+            # 3. Verificar que no es la misma categoría
+            if current_category_id == target_category_id:
+                st.warning("⚠️ La tecnología ya está en esa categoría.")
+                return False
+            
+            # 4. Obtener nombre de la nueva categoría
+            new_category_name = target_category.get("name", "Sin nombre")
+            
+            # 5. Actualizar en DynamoDB
+            updates = {
+                "category_id": target_category_id,
+                "category_name": new_category_name,
+                "last_updated": datetime.now(timezone.utc).isoformat()
+            }
+            
+            success = self.update_query(query_id, updates)
+            
+            if success:
+                tech_name = current_query.get("technology_name") or current_query.get("name") or "Tecnología"
+                st.success(f"✅ '{tech_name}' movida exitosamente a '{new_category_name}'")
+                return True
             else:
-                # Para otros tipos, convertir a string
-                return str(value)
-        except (ValueError, TypeError, decimal.InvalidOperation):
-            return str(value)
+                st.error("❌ Error actualizando la tecnología en DynamoDB")
+                return False
+                
+        except Exception as e:
+            st.error(f"❌ Error moviendo tecnología: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+            return False
 
 class HypeCycleHistoryInterface:
-    """Interfaz para gestionar el historial de consultas de Hype Cycle"""
+    """Interfaz para gestionar el historial de consultas de Hype Cycle con formateo seguro"""
     
     def __init__(self, hype_storage, context_prefix: str = "default"):
         self.storage = hype_storage
-        self.context_prefix = context_prefix  # Añadir prefijo de contexto
+        self.context_prefix = context_prefix
+        self.unique_id = str(int(time.time()))[-6:]
+    
+    def _safe_format_value(self, value, format_type="float", format_str=".2f", default="0.00"):
+        """
+        Formatea un valor de forma segura para evitar errores de tipo
         
-        # GENERAR TIMESTAMP ÚNICO para evitar conflictos
-        import time
-        self.unique_id = str(int(time.time()))[-6:]  # Últimos 6 dígitos del timestamp
+        Args:
+            value: Valor a formatear
+            format_type: Tipo de formato ("float", "int", "percent")
+            format_str: String de formato
+            default: Valor por defecto
+            
+        Returns:
+            String formateado de forma segura
+        """
+        try:
+            if value is None:
+                return default
+            
+            # Convertir Decimal a float
+            if isinstance(value, Decimal):
+                numeric_value = float(value)
+            elif isinstance(value, str):
+                # Limpiar strings y convertir
+                clean_value = value.replace(',', '').replace('%', '').strip()
+                numeric_value = float(clean_value) if clean_value else 0.0
+            elif isinstance(value, (int, float)):
+                numeric_value = float(value)
+            else:
+                return str(value)
+            
+            # Verificar NaN e infinito
+            if math.isnan(numeric_value) or math.isinf(numeric_value):
+                return default
+            
+            # Aplicar formato según tipo
+            if format_type == "percent":
+                return f"{numeric_value * 100:.1f}%"
+            elif format_type == "int":
+                return str(int(numeric_value))
+            else:  # float
+                return f"{numeric_value:{format_str}}"
+                
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            return default
     
     def show_history_interface(self):
         """Muestra la interfaz completa de historial"""
         st.header("📚 Historial de Consultas de Hype Cycle")
         
-        # Pestañas para diferentes vistas - KEYS ÚNICAS
-        tab1, tab2, tab3 = st.tabs([
+        tab1, tab2, tab3, tab4 = st.tabs([
             "🔍 Explorar por Categoría", 
             "📊 Vista de Resumen", 
-            "⚙️ Gestionar Consultas"
+            "⚙️ Gestionar Consultas",
+            "🔄 Mover Tecnologías"  # Nueva pestaña
         ])
         
         with tab1:
@@ -937,29 +556,28 @@ class HypeCycleHistoryInterface:
         
         with tab3:
             self._show_query_manager()
+        
+        with tab4:
+            self._show_move_technologies()  # Nueva función
     
     def _show_category_explorer(self):
         """Muestra explorador por categorías"""
         st.subheader("Explorar Consultas por Categoría")
         
-        # Obtener categorías disponibles
         try:
             categories = self.storage.storage.get_all_categories()
         except:
-            categories = [{"id": "default", "name": "Sin categoría"}]
+            categories = [{"category_id": "default", "name": "Sin categoría"}]
         
-        # Selector de categoría - KEY ÚNICA CON TIMESTAMP
-        category_options = {cat.get("name", "Sin nombre"): cat.get("id", cat.get("category_id")) for cat in categories}
+        category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
         
         selected_category_name = st.selectbox(
             "Selecciona una categoría",
             options=list(category_options.keys()),
-            key=f"{self.context_prefix}_history_category_explorer_{self.unique_id}"  # ← KEY ÚNICA
+            key=f"{self.context_prefix}_history_category_explorer_{self.unique_id}"
         )
         
         selected_category_id = category_options[selected_category_name]
-        
-        # Obtener consultas de la categoría
         queries = self.storage.get_queries_by_category(selected_category_id)
         
         if not queries:
@@ -968,12 +586,11 @@ class HypeCycleHistoryInterface:
         
         st.write(f"**{len(queries)} consultas encontradas en '{selected_category_name}'**")
         
-        # Mostrar consultas
         for i, query in enumerate(queries):
-            self._display_query_card(query, i)  # Pasar índice para keys únicas
+            self._display_query_card(query, i)
     
     def _display_query_card(self, query: Dict, index: int):
-        """Muestra una tarjeta de consulta"""
+        """Muestra una tarjeta de consulta con formateo seguro"""
         query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
         
         with st.expander(
@@ -987,43 +604,48 @@ class HypeCycleHistoryInterface:
                 st.write("**Consulta completa:**")
                 st.code(query.get('search_query', 'No disponible'))
                 
-                # Mostrar términos de búsqueda si están disponibles
                 search_terms = query.get('search_terms', [])
                 if search_terms:
                     st.write("**Términos de búsqueda:**")
                     for term in search_terms:
                         st.write(f"- {term.get('value', '')} ({term.get('operator', 'AND')})")
                 
-                # Información de calidad de datos
                 data_quality = query.get('data_quality', {})
                 if data_quality:
                     quality_score = data_quality.get('quality_score', 0)
-                    st.write(f"**Calidad de datos:** {quality_score:.2%}")
+                    # FORMATEO SEGURO PARA PORCENTAJE
+                    quality_formatted = self._safe_format_value(quality_score, "percent")
+                    st.write(f"**Calidad de datos:** {quality_formatted}")
                 
             with col2:
                 st.write("**Métricas del Hype Cycle:**")
                 hype_metrics = query.get('hype_metrics', {})
                 
                 st.metric("Fase", hype_metrics.get('phase', 'Unknown'))
-                st.metric("Confianza", f"{hype_metrics.get('confidence', 0):.2f}")
-                st.metric("Total Menciones", hype_metrics.get('total_mentions', 0))
                 
-                # Fecha de ejecución
+                # FORMATEO SEGURO PARA CONFIANZA
+                confidence = hype_metrics.get('confidence', 0)
+                confidence_formatted = self._safe_format_value(confidence, "float", ".2f")
+                st.metric("Confianza", confidence_formatted)
+                
+                # FORMATEO SEGURO PARA MENCIONES
+                mentions = hype_metrics.get('total_mentions', 0)
+                mentions_formatted = self._safe_format_value(mentions, "int")
+                st.metric("Total Menciones", mentions_formatted)
+                
                 try:
                     date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
                     st.write(f"**Fecha:** {date.strftime('%Y-%m-%d %H:%M')}")
                 except:
                     st.write("**Fecha:** No disponible")
             
-            # Botón para reutilizar consulta - KEY ÚNICA
             if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_{self.unique_id}_{index}"):
                 self._reuse_query(query)
     
     def _show_summary_dashboard(self):
-        """Muestra dashboard de resumen"""
+        """Muestra dashboard de resumen con formateo seguro"""
         st.subheader("Dashboard de Resumen")
         
-        # Obtener todas las consultas
         all_queries = self.storage.get_all_hype_cycle_queries()
         
         if not all_queries:
@@ -1037,19 +659,23 @@ class HypeCycleHistoryInterface:
             st.metric("Total Consultas", len(all_queries))
         
         with col2:
-            # Fases más comunes
             phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in all_queries]
             most_common_phase = max(set(phases), key=phases.count) if phases else "N/A"
             st.metric("Fase Más Común", most_common_phase)
         
         with col3:
-            # Promedio de confianza
-            confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in all_queries]
+            # CONFIANZA PROMEDIO CON FORMATEO SEGURO
+            confidences = []
+            for q in all_queries:
+                conf_raw = q.get("hype_metrics", {}).get("confidence", 0)
+                conf_numeric = float(self._safe_format_value(conf_raw, "float", "", "0"))
+                confidences.append(conf_numeric)
+            
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-            st.metric("Confianza Promedio", f"{avg_confidence:.2f}")
+            avg_conf_formatted = self._safe_format_value(avg_confidence, "float", ".2f")
+            st.metric("Confianza Promedio", avg_conf_formatted)
         
         with col4:
-            # Consultas este mes
             current_month = datetime.now().strftime("%Y-%m")
             recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
             st.metric("Consultas Este Mes", len(recent_queries))
@@ -1063,52 +689,17 @@ class HypeCycleHistoryInterface:
             phase_counts[phase] = phase_counts.get(phase, 0) + 1
         
         if phase_counts:
-            import plotly.express as px
             fig_phases = px.pie(
                 values=list(phase_counts.values()),
                 names=list(phase_counts.keys()),
                 title="Distribución de Tecnologías por Fase del Hype Cycle"
             )
             st.plotly_chart(fig_phases, use_container_width=True)
-        
-        # Timeline de consultas
-        st.subheader("Timeline de Consultas")
-        
-        # Preparar datos para timeline
-        timeline_data = []
-        for query in all_queries:
-            try:
-                date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
-                timeline_data.append({
-                    "Fecha": date,
-                    "Consulta": query.get("search_query", "")[:30] + "...",
-                    "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
-                    "Confianza": query.get("hype_metrics", {}).get("confidence", 0)
-                })
-            except:
-                continue
-        
-        if timeline_data:
-            import pandas as pd
-            import plotly.express as px
-            df_timeline = pd.DataFrame(timeline_data)
-            df_timeline = df_timeline.sort_values("Fecha")
-            
-            fig_timeline = px.scatter(
-                df_timeline,
-                x="Fecha",
-                y="Confianza",
-                color="Fase",
-                hover_data=["Consulta"],
-                title="Timeline de Consultas por Confianza y Fase"
-            )
-            st.plotly_chart(fig_timeline, use_container_width=True)
 
     def _show_query_manager(self):
         """Interfaz para gestionar consultas"""
         st.subheader("Gestionar Consultas")
         
-        # Obtener todas las consultas
         all_queries = self.storage.get_all_hype_cycle_queries()
         
         if not all_queries:
@@ -1124,25 +715,23 @@ class HypeCycleHistoryInterface:
             except:
                 formatted_date = "Fecha inválida"
             
+            # FORMATEO SEGURO PARA CONFIANZA
+            confidence_raw = query.get('hype_metrics', {}).get('confidence', 0)
+            confidence_formatted = self._safe_format_value(confidence_raw, "float", ".2f")
+            
             query_data.append({
                 "ID": query.get("query_id", query.get("analysis_id", "Unknown")),
                 "Consulta": query.get("search_query", "")[:50] + "...",
                 "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
                 "Fecha": formatted_date,
-                "Confianza": f"{query.get('hype_metrics', {}).get('confidence', 0):.2f}",
+                "Confianza": confidence_formatted,
                 "Resultados": query.get("api_usage", {}).get("total_results", 0)
             })
         
-        import pandas as pd
         df_queries = pd.DataFrame(query_data)
-        
-        # Mostrar tabla con selección
-        st.write("Selecciona consultas para gestionar:")
-        
-        # Mostrar tabla simple (sin selection ya que puede causar problemas)
         st.dataframe(df_queries, use_container_width=True)
         
-        # Selector manual para gestión
+        # Selector para gestión
         query_options = {}
         for i, query in enumerate(all_queries):
             query_id = query.get("query_id", query.get("analysis_id", f"query_{i}"))
@@ -1153,7 +742,7 @@ class HypeCycleHistoryInterface:
             selected_query_name = st.selectbox(
                 "Selecciona una consulta para gestionar:",
                 options=list(query_options.keys()),
-                key=f"query_manager_selectbox_{self.unique_id}"  
+                key=f"query_manager_selectbox_{self.unique_id}"
             )
             
             selected_query_id = query_options[selected_query_name]
@@ -1164,7 +753,7 @@ class HypeCycleHistoryInterface:
                 
                 with col1:
                     if st.button("📊 Ver Detalles", key=f"view_details_{self.unique_id}"):
-                        self._display_query_details(selected_query)
+                        st.json(selected_query)
                 
                 with col2:
                     if st.button("🔄 Reutilizar Consulta", key=f"reuse_query_{self.unique_id}"):
@@ -1179,72 +768,239 @@ class HypeCycleHistoryInterface:
                             else:
                                 st.error(f"Error eliminando consulta {selected_query_id}")
 
-    def _display_query_card(self, query: Dict, index: int):
-        """Muestra una tarjeta de consulta"""
-        query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
+    def _show_move_technologies(self):
+        """Interfaz para mover tecnologías entre categorías - VERSIÓN CLOUD"""
+        st.subheader("🔄 Mover Tecnologías Entre Categorías")
         
-        with st.expander(
-            f"🔍 {query.get('search_query', 'Sin consulta')[:60]}... - "
-            f"**{query.get('hype_metrics', {}).get('phase', 'Unknown')}**",
-            expanded=False
-        ):
-            col1, col2 = st.columns([2, 1])
+        st.write("""
+        Mueve tecnologías entre diferentes categorías en DynamoDB.
+        Los cambios se guardan inmediatamente en la nube.
+        """)
+        
+        # Obtener todas las consultas y categorías
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        
+        if not all_queries:
+            st.info("No hay tecnologías para mover.")
+            return
+        
+        try:
+            categories = self.storage.storage.get_all_categories()
+        except:
+            categories = [{"category_id": "default", "name": "Sin categoría"}]
+        
+        # Interfaz de selección
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.write("#### 🔬 Seleccionar Tecnología")
             
-            with col1:
-                st.write("**Consulta completa:**")
-                st.code(query.get('search_query', 'No disponible'))
+            # Filtro por categoría actual
+            category_options = {"Todas": "all"}
+            category_options.update({cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories})
+            
+            filter_category = st.selectbox(
+                "Filtrar por categoría actual:",
+                options=list(category_options.keys()),
+                key=f"move_filter_category_{self.unique_id}"
+            )
+            
+            # Filtrar tecnologías
+            if filter_category == "Todas":
+                filtered_queries = all_queries
+            else:
+                filter_cat_id = category_options[filter_category]
+                filtered_queries = [q for q in all_queries if q.get("category_id") == filter_cat_id]
+            
+            if not filtered_queries:
+                st.info("No hay tecnologías en la categoría seleccionada.")
+                return
+            
+            # Selector de tecnología
+            tech_options = {}
+            for query in filtered_queries:
+                query_id = query.get("query_id", query.get("analysis_id"))
+                tech_name = (
+                    query.get("technology_name") or 
+                    query.get("name") or 
+                    query.get("search_query", "")[:30]
+                )
                 
-                # Mostrar términos de búsqueda si están disponibles
-                search_terms = query.get('search_terms', [])
-                if search_terms:
-                    st.write("**Términos de búsqueda:**")
-                    for term in search_terms:
-                        st.write(f"- {term.get('value', '')} ({term.get('operator', 'AND')})")
+                # Obtener categoría actual
+                current_cat_id = query.get("category_id", "unknown")
+                current_cat_name = "Sin categoría"
+                for cat in categories:
+                    if cat.get("category_id") == current_cat_id:
+                        current_cat_name = cat.get("name", "Sin nombre")
+                        break
                 
-                # Información de calidad de datos
-                data_quality = query.get('data_quality', {})
-                if data_quality:
-                    quality_score = data_quality.get('quality_score', 0)
-                    # NUEVO: Conversión segura para el score
-                    safe_score = self.storage._safe_metric_value(quality_score)
-                    if isinstance(safe_score, (int, float)):
-                        st.write(f"**Calidad de datos:** {safe_score:.2%}")
+                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                display_name = f"{tech_name} | {current_cat_name} | {phase}"
+                tech_options[display_name] = {
+                    "query_id": query_id,
+                    "query": query,
+                    "tech_name": tech_name,
+                    "current_cat_name": current_cat_name
+                }
+            
+            selected_tech_display = st.selectbox(
+                f"Tecnología a mover ({len(tech_options)} disponibles):",
+                options=list(tech_options.keys()),
+                key=f"move_tech_selector_{self.unique_id}"
+            )
+            
+            selected_tech_info = tech_options[selected_tech_display]
+            selected_query = selected_tech_info["query"]
+            
+            # Mostrar información de la tecnología
+            with st.expander("ℹ️ Información de la Tecnología", expanded=True):
+                st.write(f"**Nombre:** {selected_tech_info['tech_name']}")
+                st.write(f"**Categoría actual:** {selected_tech_info['current_cat_name']}")
+                st.write(f"**ID:** {selected_tech_info['query_id']}")
+                
+                # Métricas con formateo seguro
+                hype_metrics = selected_query.get('hype_metrics', {})
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.metric("Fase", hype_metrics.get('phase', 'Unknown'))
+                    
+                    confidence_raw = hype_metrics.get('confidence', 0)
+                    confidence_formatted = self._safe_format_value(confidence_raw, "float", ".2f")
+                    st.metric("Confianza", confidence_formatted)
+                    
+                with col_b:
+                    mentions_raw = hype_metrics.get('total_mentions', 0)
+                    mentions_formatted = self._safe_format_value(mentions_raw, "int")
+                    st.metric("Menciones", mentions_formatted)
+                    
+                    try:
+                        exec_date = selected_query.get("execution_date", "")
+                        if exec_date:
+                            date_obj = datetime.fromisoformat(exec_date.replace('Z', '+00:00'))
+                            formatted_date = date_obj.strftime("%Y-%m-%d")
+                            st.write(f"**Fecha:** {formatted_date}")
+                    except:
+                        st.write("**Fecha:** No disponible")
+        
+        with col2:
+            st.write("#### 🎯 Categoría Destino")
+            
+            # Excluir la categoría actual de las opciones
+            current_cat_id = selected_query.get("category_id")
+            available_categories = {
+                cat.get("name", "Sin nombre"): cat.get("category_id") 
+                for cat in categories 
+                if cat.get("category_id") != current_cat_id
+            }
+            
+            if not available_categories:
+                st.warning("No hay otras categorías disponibles para mover la tecnología.")
+                return
+            
+            target_category_name = st.selectbox(
+                "Mover a categoría:",
+                options=list(available_categories.keys()),
+                key=f"move_target_category_{self.unique_id}"
+            )
+            
+            target_category_id = available_categories[target_category_name]
+            
+            # Mostrar información de la categoría destino
+            try:
+                target_queries = self.storage.get_queries_by_category(target_category_id)
+                
+                with st.expander("ℹ️ Información de Categoría Destino", expanded=True):
+                    st.write(f"**Nombre:** {target_category_name}")
+                    st.write(f"**Tecnologías actuales:** {len(target_queries)}")
+                    
+                    if target_queries:
+                        # Distribución de fases en categoría destino
+                        phase_dist = {}
+                        for q in target_queries:
+                            phase = q.get("hype_metrics", {}).get("phase", "Unknown")
+                            phase_dist[phase] = phase_dist.get(phase, 0) + 1
+                        
+                        st.write("**Distribución por fases:**")
+                        for phase, count in phase_dist.items():
+                            st.write(f"• {phase}: {count}")
                     else:
-                        st.write(f"**Calidad de datos:** {safe_score}")
-                
-            with col2:
-                st.write("**Métricas del Hype Cycle:**")
-                hype_metrics = query.get('hype_metrics', {})
-                
-                # NUEVO: Usar conversiones seguras para st.metric()
-                phase = hype_metrics.get('phase', 'Unknown')
-                confidence = self.storage._safe_metric_value(hype_metrics.get('confidence', 0))
-                total_mentions = self.storage._safe_metric_value(hype_metrics.get('total_mentions', 0))
-                
-                st.metric("Fase", phase)
-                if isinstance(confidence, (int, float)):
-                    st.metric("Confianza", f"{confidence:.2f}")
-                else:
-                    st.metric("Confianza", str(confidence))
-                st.metric("Total Menciones", total_mentions)
-                
-                # Fecha de ejecución
-                try:
-                    date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
-                    st.write(f"**Fecha:** {date.strftime('%Y-%m-%d %H:%M')}")
-                except:
-                    st.write("**Fecha:** No disponible")
+                        st.write("• No hay tecnologías en esta categoría")
+            except Exception as e:
+                st.warning(f"Error obteniendo info de categoría destino: {str(e)}")
             
-            # Botón para reutilizar consulta - KEY ÚNICA
-            if st.button(f"🔄 Reutilizar Consulta", key=f"{self.context_prefix}_reuse_query_{self.unique_id}_{index}"):
-                self._reuse_query(query)
+            # Zona de acción
+            st.write("---")
+            st.info(f"**Movimiento:** '{selected_tech_info['tech_name']}' → '{target_category_name}'")
+            
+            # Estados únicos para confirmación
+            confirm_key = f"confirm_move_{selected_tech_info['query_id']}_{target_category_id}_{self.unique_id}"
+            
+            confirm_move = st.checkbox(
+                f"Confirmar movimiento de tecnología",
+                key=confirm_key
+            )
+            
+            # Botones de acción
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                move_button_key = f"execute_move_{selected_tech_info['query_id']}_{target_category_id}_{self.unique_id}"
+                
+                if confirm_move and st.button(
+                    "🔄 MOVER TECNOLOGÍA", 
+                    type="primary",
+                    key=move_button_key
+                ):
+                    with st.spinner(f"Moviendo '{selected_tech_info['tech_name']}' a DynamoDB..."):
+                        success = self.storage.move_technology_to_category(
+                            selected_tech_info['query_id'], 
+                            target_category_id
+                        )
+                        
+                        if success:
+                            # Limpiar estados para forzar refresh
+                            st.session_state[f"move_filter_category_{self.unique_id}"] = "Todas"
+                            
+                            # Limpiar cualquier caché
+                            for key in list(st.session_state.keys()):
+                                if key.startswith('chart_cache_') or key.startswith('admin_state_'):
+                                    del st.session_state[key]
+                            
+                            time.sleep(1)
+                            st.rerun()
+            
+            with col_b:
+                preview_button_key = f"preview_move_{selected_tech_info['query_id']}_{target_category_id}_{self.unique_id}"
+                
+                if st.button(
+                    "👀 Preview", 
+                    key=preview_button_key
+                ):
+                    st.write("### 📊 Preview del Movimiento")
+                    
+                    try:
+                        current_count = len(target_queries) if 'target_queries' in locals() else 0
+                        new_count = current_count + 1
+                        
+                        col_prev1, col_prev2 = st.columns(2)
+                        
+                        with col_prev1:
+                            st.write("**Estado Actual:**")
+                            st.metric("Tecnologías", current_count)
+                        
+                        with col_prev2:
+                            st.write("**Después del Movimiento:**")
+                            st.metric("Tecnologías", new_count, delta=1)
+                            
+                    except Exception as e:
+                        st.warning(f"Error generando preview: {str(e)}")
 
     def _reuse_query(self, query: Dict):
         """Permite reutilizar una consulta existente"""
         st.info("**Consulta seleccionada para reutilizar:**")
         st.code(query.get('search_query', 'No disponible'))
         
-        # Guardar en session state para que esté disponible en la pestaña principal
         st.session_state.hype_reuse_query = {
             'search_query': query.get('search_query', ''),
             'search_terms': query.get('search_terms', []),
@@ -1253,7 +1009,7 @@ class HypeCycleHistoryInterface:
         
         st.success("✅ Consulta cargada. Ve a la pestaña 'Nuevo Análisis' para ejecutarla nuevamente o modificarla.")
 
-# Función para integrar con el sistema existente
+# Funciones para integración
 def initialize_hype_cycle_storage(db_storage):
     """Inicializa el sistema de almacenamiento de Hype Cycle"""
     return HypeCycleStorage(db_storage)

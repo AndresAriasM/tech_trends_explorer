@@ -1,4 +1,4 @@
-# src/category_admin.py
+# src/category_admin.py - CORREGIDO PARA FORMATEO SEGURO
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -9,6 +9,7 @@ import json
 import time
 import math
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -38,22 +39,18 @@ class CategoryAdminInterface:
         self.storage = hype_storage
         self.context_prefix = context_prefix
         
-        # AÑADIR ESTA LÍNEA QUE FALTA:
+        # Importar positioner
         from hype_cycle_positioning import HypeCyclePositioner
         self.positioner = HypeCyclePositioner()
         
-        # USAR CONTEXT_PREFIX ESTABLE EN LUGAR DE TIMESTAMP ALEATORIO
-        # El context_prefix debe ser pasado desde fuera y ser estable
+        # Usar context_prefix estable
         if not context_prefix or context_prefix == "default":
-            # Solo usar timestamp como fallback si no se proporciona un contexto
             import time
             self.unique_id = f"admin_{int(time.time())}"
         else:
-            # Usar el context_prefix como base para IDs estables
             self.unique_id = f"admin_{context_prefix}"
         
-        # INICIALIZAR ESTADOS DE MANERA MÁS CONTROLADA
-        # Estados específicos para esta instancia de admin
+        # Inicializar estados de manera controlada
         admin_state_key = f"admin_state_{self.unique_id}"
         if admin_state_key not in st.session_state:
             st.session_state[admin_state_key] = {
@@ -62,8 +59,68 @@ class CategoryAdminInterface:
                 'last_chart_category': None
             }
         
-        # Referencias directas para facilitar acceso
         self.admin_state = st.session_state[admin_state_key]
+    
+    def _safe_float_format(self, value, format_str=".2f", default="0.00"):
+        """
+        Formatea un valor como float de forma segura
+        
+        Args:
+            value: Valor a formatear (puede ser float, Decimal, str, int, None)
+            format_str: String de formato (ej: ".2f", ".1%")
+            default: Valor por defecto si la conversión falla
+            
+        Returns:
+            String formateado
+        """
+        try:
+            # Convertir Decimal, int, float a float
+            if isinstance(value, Decimal):
+                num_value = float(value)
+            elif isinstance(value, (int, float)):
+                num_value = float(value)
+            elif isinstance(value, str):
+                # Intentar convertir string a float
+                num_value = float(value.replace(',', '').replace('%', ''))
+            elif value is None:
+                return default
+            else:
+                return str(value)
+            
+            # Verificar que no sea NaN o infinito
+            if math.isnan(num_value) or math.isinf(num_value):
+                return default
+            
+            # Aplicar formato
+            return f"{num_value:{format_str}}"
+            
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            return default
+    
+    def _safe_int_format(self, value, default=0):
+        """
+        Convierte un valor a int de forma segura
+        
+        Args:
+            value: Valor a convertir
+            default: Valor por defecto si la conversión falla
+            
+        Returns:
+            int
+        """
+        try:
+            if isinstance(value, Decimal):
+                return int(value)
+            elif isinstance(value, (int, float)):
+                return int(value)
+            elif isinstance(value, str):
+                return int(float(value.replace(',', '')))
+            elif value is None:
+                return default
+            else:
+                return default
+        except (ValueError, TypeError, decimal.InvalidOperation):
+            return default
     
     def show_admin_interface(self):
         """Muestra la interfaz principal de administración"""
@@ -110,10 +167,10 @@ class CategoryAdminInterface:
         total_queries = len(self.storage.get_all_hype_cycle_queries())
         st.metric("Total de Tecnologías Analizadas", total_queries)
         
-        # Procesar cada categoría - CORRECCIÓN ASEGURADA
-        for category in categories:  # CORRECTO: usar 'category'
-            category_id = category.get("id") or category.get("category_id")  # CORRECTO
-            category_name = category.get("name", "Sin nombre")  # CORRECTO
+        # Procesar cada categoría
+        for category in categories:
+            category_id = category.get("category_id") or category.get("id")
+            category_name = category.get("name", "Sin nombre")
             
             # Obtener consultas de esta categoría
             queries = self.storage.get_queries_by_category(category_id)
@@ -125,7 +182,7 @@ class CategoryAdminInterface:
                 self._show_category_details(category_id, category_name, queries)
     
     def _show_category_details(self, category_id: str, category_name: str, queries: List[Dict]):
-        """Muestra detalles de una categoría específica"""
+        """Muestra detalles de una categoría específica con formateo seguro"""
         
         # Procesar datos de tecnologías
         tech_data = []
@@ -155,13 +212,20 @@ class CategoryAdminInterface:
             except:
                 formatted_date = exec_date[:10] if len(exec_date) >= 10 else "No disponible"
             
+            # FORMATEO SEGURO DE MÉTRICAS
+            confidence_raw = hype_metrics.get('confidence', 0)
+            confidence_formatted = self._safe_float_format(confidence_raw, ".2f", "0.00")
+            
+            total_mentions_raw = hype_metrics.get('total_mentions', 0)
+            total_mentions_formatted = self._safe_int_format(total_mentions_raw, 0)
+            
             tech_data.append({
                 "🔬 Tecnología": tech_name,
                 "📍 Fase": phase,
-                "🎯 Confianza": f"{hype_metrics.get('confidence', 0):.2f}",
+                "🎯 Confianza": confidence_formatted,
                 "⏱️ Tiempo al Plateau": hype_metrics.get("time_to_plateau", "N/A"),
                 "📅 Última Actualización": formatted_date,
-                "📊 Menciones": hype_metrics.get("total_mentions", 0),
+                "📊 Menciones": total_mentions_formatted,
                 "🆔 ID": query.get("query_id", query.get("analysis_id", ""))[:8]
             })
         
@@ -181,52 +245,65 @@ class CategoryAdminInterface:
             
             with col2:
                 # Tecnología más mencionada
-                most_mentioned = max(tech_data, key=lambda x: x["📊 Menciones"])
-                st.write("**🔥 Más Mencionada:**")
-                st.write(f"• {most_mentioned['🔬 Tecnología']}")
-                st.write(f"• {most_mentioned['📊 Menciones']} menciones")
+                if tech_data:
+                    try:
+                        # Convertir menciones a int para comparar
+                        max_mentions = 0
+                        most_mentioned = tech_data[0]
+                        
+                        for tech in tech_data:
+                            mentions = self._safe_int_format(tech["📊 Menciones"], 0)
+                            if mentions > max_mentions:
+                                max_mentions = mentions
+                                most_mentioned = tech
+                        
+                        st.write("**🔥 Más Mencionada:**")
+                        st.write(f"• {most_mentioned['🔬 Tecnología']}")
+                        st.write(f"• {max_mentions} menciones")
+                    except:
+                        st.write("**🔥 Más Mencionada:**")
+                        st.write("• Error calculando")
             
             with col3:
                 # Fecha más reciente
-                most_recent = max(tech_data, key=lambda x: x["📅 Última Actualización"])
-                st.write("**🕒 Más Reciente:**")
-                st.write(f"• {most_recent['🔬 Tecnología']}")
-                st.write(f"• {most_recent['📅 Última Actualización']}")
+                try:
+                    most_recent = max(tech_data, key=lambda x: x["📅 Última Actualización"])
+                    st.write("**🕒 Más Reciente:**")
+                    st.write(f"• {most_recent['🔬 Tecnología']}")
+                    st.write(f"• {most_recent['📅 Última Actualización']}")
+                except:
+                    st.write("**🕒 Más Reciente:**")
+                    st.write("• Error calculando")
         
         # Botones de acción
         st.write("---")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # BOTÓN "VER GRÁFICA" MEJORADO
+            # Botón "VER GRÁFICA" MEJORADO
             chart_button_key = f"chart_btn_{category_id}_{self.context_prefix}"
             
             if st.button(f"📊 Ver Gráfica", key=chart_button_key, type="primary"):
-                # MÉTODO MEJORADO PARA PRESELECCIONAR CATEGORÍA
-                
-                # 1. Establecer la categoría en el estado del selectbox directamente
+                # Establecer la categoría en el estado del selectbox
                 chart_selector_key = "hype_chart_category_selector_static"
                 st.session_state[chart_selector_key] = category_name
                 
-                # 2. También mantener compatibilidad con estados antiguos (por si acaso)
+                # Mantener compatibilidad con estados antiguos
                 st.session_state['selected_category_for_chart'] = category_id
                 st.session_state['chart_category_id'] = category_id
                 st.session_state['chart_category_name'] = category_name
                 
-                # 3. Forzar actualización del estado de categoría previa
-                st.session_state['hype_chart_previous_category'] = None  # Para forzar detección de cambio
+                # Forzar actualización del estado de categoría previa
+                st.session_state['hype_chart_previous_category'] = None
                 
-                # 4. Limpiar cache de gráficas previas
+                # Limpiar cache de gráficas previas
                 for key in list(st.session_state.keys()):
                     if key.startswith('chart_cache_') or key.startswith('plot_data_'):
                         del st.session_state[key]
                 
-                # 5. Mostrar confirmación
                 st.success(f"✅ Categoría '{category_name}' seleccionada para visualización.")
                 st.info("👆 **Haz clic en la pestaña '🎯 Gráfica Hype Cycle' arriba para ver la gráfica.**")
-                
-                # 6. Opcional: Auto-scroll o indicación visual
-                st.balloons()  # Efecto visual para confirmar la acción
+                st.balloons()
         
         with col2:
             export_button_key = f"export_btn_{category_id}_{self.context_prefix}"
@@ -244,7 +321,7 @@ class CategoryAdminInterface:
                 ids = [item["🆔 ID"] for item in tech_data]
                 st.code(", ".join(ids))
 
-        # ADICIONAL: Botón de debug para limpiar todo el estado (temporal, para testing)
+        # Botón de debug para limpiar todo el estado (temporal, para testing)
         if st.checkbox("🔧 Modo Debug", key=f"debug_mode_{category_id}_{self.unique_id}"):
             st.write("**Estado actual de la sesión (categorías):**")
             category_states = {
@@ -266,7 +343,7 @@ class CategoryAdminInterface:
                 st.write("No hay estados de categoría activos")
     
     def _show_hype_cycle_chart(self):
-        """Muestra la gráfica principal del Hype Cycle - VERSIÓN MEJORADA PARA PRESENTACIONES"""
+        """Muestra la gráfica principal del Hype Cycle con formateo seguro"""
         st.subheader("🎯 Gráfica del Hype Cycle por Categorías")
         
         st.write("""
@@ -289,7 +366,7 @@ class CategoryAdminInterface:
         # Preparar opciones de categorías
         category_options = {}
         for cat in categories:
-            cat_id = cat.get("id") or cat.get("category_id")
+            cat_id = cat.get("category_id") or cat.get("id")
             cat_name = cat.get("name", "Sin nombre")
             
             # Solo incluir categorías que tengan consultas
@@ -301,7 +378,7 @@ class CategoryAdminInterface:
             st.info("No hay categorías con tecnologías analizadas para mostrar en la gráfica.")
             return
         
-        # CLAVE ESTÁTICA PARA EL SELECTBOX
+        # Clave estática para el selectbox
         CHART_CATEGORY_KEY = "hype_chart_category_selector_static"
         
         # Inicializar el estado si no existe
@@ -321,14 +398,13 @@ class CategoryAdminInterface:
                         break
                 st.session_state[CHART_CATEGORY_KEY] = preselected_name or list(category_options.keys())[0]
             else:
-                # Usar la primera categoría disponible
                 st.session_state[CHART_CATEGORY_KEY] = list(category_options.keys())[0]
         
-        # INTERFAZ DE CONTROL MEJORADA
+        # Interfaz de control mejorada
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            # SELECTOR DE CATEGORÍA
+            # Selector de categoría
             selected_category_name = st.selectbox(
                 "🏷️ Selecciona una categoría para visualizar:",
                 options=list(category_options.keys()),
@@ -337,7 +413,7 @@ class CategoryAdminInterface:
             )
         
         with col2:
-            # OPCIONES DE VISUALIZACIÓN
+            # Opciones de visualización
             show_labels = st.checkbox("📝 Etiquetas con flechas", value=True, key="show_labels_hype_chart")
         
         with col3:
@@ -346,7 +422,7 @@ class CategoryAdminInterface:
         # Obtener ID de categoría seleccionada
         selected_category_id = category_options[selected_category_name]
         
-        # DETECTAR CAMBIO DE CATEGORÍA
+        # Detectar cambio de categoría
         previous_category_key = "hype_chart_previous_category"
         if previous_category_key not in st.session_state:
             st.session_state[previous_category_key] = selected_category_id
@@ -382,7 +458,7 @@ class CategoryAdminInterface:
                         st.write(f"  • {tech_name}: {status}")
             return
         
-        # INFORMACIÓN PREVIA A LA GRÁFICA
+        # Información previa a la gráfica con formateo seguro
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -396,13 +472,21 @@ class CategoryAdminInterface:
                 st.metric("📍 Fase Dominante", most_common_phase)
         
         with col3:
-            # Confianza promedio
-            confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in active_queries]
+            # Confianza promedio con formateo seguro
+            confidences = []
+            for q in active_queries:
+                conf_raw = q.get("hype_metrics", {}).get("confidence", 0)
+                conf_float = self._safe_float_format(conf_raw, "", "0")
+                try:
+                    confidences.append(float(conf_float))
+                except:
+                    confidences.append(0.0)
+            
             if confidences:
                 avg_confidence = sum(confidences) / len(confidences)
-                st.metric("🎯 Confianza Promedio", f"{avg_confidence:.2f}")
+                st.metric("🎯 Confianza Promedio", self._safe_float_format(avg_confidence, ".2f"))
         
-        # GENERAR Y MOSTRAR GRÁFICA MEJORADA
+        # Generar y mostrar gráfica mejorada
         try:
             with st.spinner(f"🎨 Generando visualización profesional para {len(active_queries)} tecnologías..."):
                 fig = self._create_hype_cycle_chart(
@@ -413,7 +497,7 @@ class CategoryAdminInterface:
                 )
             
             if fig and len(fig.data) > 0:
-                # MOSTRAR LA GRÁFICA CON CONFIGURACIÓN OPTIMIZADA
+                # Mostrar la gráfica con configuración optimizada
                 st.plotly_chart(
                     fig, 
                     use_container_width=True,
@@ -428,12 +512,12 @@ class CategoryAdminInterface:
                             'filename': f'hype_cycle_{selected_category_name}',
                             'height': 750,
                             'width': 1200,
-                            'scale': 2  # Alta resolución para presentaciones
+                            'scale': 2
                         }
                     }
                 )
                 
-                # INFORMACIÓN ADICIONAL PARA PRESENTACIONES
+                # Información adicional para presentaciones
                 with st.expander("📋 Información para Presentaciones", expanded=False):
                     st.write("### 🎯 Consejos para Presentar")
                     st.write("""
@@ -470,11 +554,13 @@ class CategoryAdminInterface:
                             st.write(f"• {time_est}: {count}")
                     
                     with col3:
-                        # Menciones totales
-                        total_mentions = sum(
-                            q.get("hype_metrics", {}).get("total_mentions", 0) 
-                            for q in active_queries
-                        )
+                        # Menciones totales con formateo seguro
+                        total_mentions = 0
+                        for q in active_queries:
+                            mentions_raw = q.get("hype_metrics", {}).get("total_mentions", 0)
+                            mentions_int = self._safe_int_format(mentions_raw, 0)
+                            total_mentions += mentions_int
+                        
                         st.metric("Total Menciones", f"{total_mentions:,}")
                         
                         # Fecha más reciente
@@ -511,29 +597,19 @@ class CategoryAdminInterface:
     def _create_hype_cycle_chart(self, queries: List[Dict], category_name: str, 
                         show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
         """
-        Crea la gráfica del Hype Cycle estilo Gartner - VERSIÓN CORREGIDA CON LÍNEAS CONECTORAS
-        Optimizada para hasta 45 tecnologías con posicionamiento inteligente de etiquetas
+        Crea la gráfica del Hype Cycle estilo Gartner con formateo seguro
         """
         # Crear figura con dimensiones amplias
         fig = go.Figure()
         
-        # CURVA AMPLIADA CON ZONA PEAK MÁS EXTENSA
+        # Curva ampliada con zona peak más extensa
         x_curve = np.linspace(0, 100, 1000)
         
         # Rediseñar curva con Peak más amplio y definido
-        # Innovation Trigger: x=5-18
         trigger = 15 * np.exp(-((x_curve - 12)/8)**2)
-        
-        # Peak ampliado: x=18-35 (más espacio para tecnologías)
         peak = 70 * np.exp(-((x_curve - 26)/12)**2)
-        
-        # Trough: x=45-65
         trough = -25 * np.exp(-((x_curve - 55)/12)**2)
-        
-        # Slope: x=65-85
         slope_rise = 15 * (1 / (1 + np.exp(-(x_curve - 75)/5)))
-        
-        # Plateau: x=85-98
         plateau = 25 * (1 / (1 + np.exp(-(x_curve - 90)/4)))
         
         baseline = 25
@@ -550,7 +626,7 @@ class CategoryAdminInterface:
         
         y_curve = np.clip(y_curve, 8, 90)
         
-        # FUNCIÓN PARA OBTENER POSICIÓN EXACTA SOBRE LA CURVA
+        # Función para obtener posición exacta sobre la curva
         def get_exact_position_on_curve(x_pos):
             if x_pos < 0 or x_pos > 100:
                 return None
@@ -558,12 +634,11 @@ class CategoryAdminInterface:
             idx = min(max(idx, 0), len(y_curve) - 1)
             return float(x_curve[idx]), float(y_curve[idx])
         
-        # FUNCIÓN PARA CALCULAR PENDIENTE DE LA CURVA
+        # Función para calcular pendiente de la curva
         def get_curve_slope(x_pos):
             if x_pos <= 1 or x_pos >= 99:
                 return 0
             
-            # Calcular pendiente usando diferencias finitas
             x1 = max(0, x_pos - 1)
             x2 = min(100, x_pos + 1)
             
@@ -573,7 +648,7 @@ class CategoryAdminInterface:
             slope = (y2 - y1) / (x2 - x1)
             return slope
         
-        # AÑADIR CURVA PRINCIPAL
+        # Añadir curva principal
         fig.add_trace(go.Scatter(
             x=x_curve, 
             y=y_curve,
@@ -589,26 +664,26 @@ class CategoryAdminInterface:
             hoverinfo='skip'
         ))
         
-        # DEFINIR ZONAS CON POSICIONES ESPECÍFICAS SOBRE LA CURVA
+        # Definir zonas con posiciones específicas sobre la curva
         phase_positions = {
             "Innovation Trigger": {
-                "x_range": list(range(8, 18, 2)),  # [8, 10, 12, 14, 16]
+                "x_range": list(range(8, 18, 2)),
                 "max_capacity": 5
             },
             "Peak of Inflated Expectations": {
-                "x_range": list(range(20, 36, 1)),  # [20, 21, 22... 35] - MÁS ESPACIO
-                "max_capacity": 16  # Capacidad ampliada para zona congestionada
+                "x_range": list(range(20, 36, 1)),
+                "max_capacity": 16
             },
             "Trough of Disillusionment": {
-                "x_range": list(range(45, 66, 2)),  # [45, 47, 49... 65]
+                "x_range": list(range(45, 66, 2)),
                 "max_capacity": 11
             },
             "Slope of Enlightenment": {
-                "x_range": list(range(68, 83, 2)),  # [68, 70, 72... 82]
+                "x_range": list(range(68, 83, 2)),
                 "max_capacity": 8
             },
             "Plateau of Productivity": {
-                "x_range": list(range(85, 97, 2)),  # [85, 87, 89... 95]
+                "x_range": list(range(85, 97, 2)),
                 "max_capacity": 6
             },
             "Unknown": {
@@ -617,7 +692,7 @@ class CategoryAdminInterface:
             }
         }
         
-        # PROCESAR Y POSICIONAR TECNOLOGÍAS
+        # Procesar y posicionar tecnologías
         technologies = []
         phase_counters = {phase: 0 for phase in phase_positions.keys()}
         
@@ -625,21 +700,24 @@ class CategoryAdminInterface:
         limited_queries = queries[:45] if len(queries) > 45 else queries
         
         for i, query in enumerate(limited_queries):
-            # EXTRACCIÓN SEGURA DE DATOS
+            # Extracción segura de datos
             try:
-                # Verificar que query es un diccionario
                 if not isinstance(query, dict):
                     continue
                     
                 hype_metrics = query.get("hype_metrics", {})
                 
-                # Verificar que hype_metrics es un diccionario
                 if not isinstance(hype_metrics, dict):
                     hype_metrics = {}
                 
                 phase = hype_metrics.get("phase", "Unknown")
-                confidence = float(hype_metrics.get("confidence", 0.5))
-                total_mentions = int(hype_metrics.get("total_mentions", 0))
+                
+                # FORMATEO SEGURO DE VALORES NUMÉRICOS
+                confidence_raw = hype_metrics.get("confidence", 0.5)
+                confidence = float(self._safe_float_format(confidence_raw, "", "0.5"))
+                
+                total_mentions_raw = hype_metrics.get("total_mentions", 0)
+                total_mentions = self._safe_int_format(total_mentions_raw, 0)
                 
                 # Obtener posición X según disponibilidad en la fase
                 phase_info = phase_positions.get(phase, phase_positions["Unknown"])
@@ -649,13 +727,12 @@ class CategoryAdminInterface:
                 if counter < len(available_positions):
                     x_pos = available_positions[counter]
                 else:
-                    # Si excede capacidad, distribuir en posiciones intermedias
                     base_idx = counter % len(available_positions)
                     x_pos = available_positions[base_idx] + (counter // len(available_positions)) * 0.5
                 
                 phase_counters[phase] += 1
                 
-                # OBTENER POSICIÓN EXACTA SOBRE LA CURVA
+                # Obtener posición exacta sobre la curva
                 exact_x, exact_y = get_exact_position_on_curve(x_pos)
                 
                 # Extraer información de la tecnología
@@ -667,6 +744,10 @@ class CategoryAdminInterface:
                 
                 time_to_plateau = hype_metrics.get("time_to_plateau", "N/A")
                 
+                # FORMATEO SEGURO DE SENTIMENT
+                sentiment_avg_raw = hype_metrics.get("sentiment_avg", 0)
+                sentiment_avg = float(self._safe_float_format(sentiment_avg_raw, "", "0.0"))
+                
                 technologies.append({
                     "name": tech_name,
                     "phase": phase,
@@ -676,7 +757,7 @@ class CategoryAdminInterface:
                     "query_id": query.get("query_id", f"query_{i}"),
                     "time_to_plateau": time_to_plateau,
                     "total_mentions": total_mentions,
-                    "sentiment_avg": float(hype_metrics.get("sentiment_avg", 0)),
+                    "sentiment_avg": sentiment_avg,
                     "slope": get_curve_slope(x_pos)
                 })
                 
@@ -685,7 +766,7 @@ class CategoryAdminInterface:
                 print(f"Error procesando tecnología {i}: {str(e)}")
                 continue
         
-        # AÑADIR TECNOLOGÍAS CON POSICIONAMIENTO INTELIGENTE DE ETIQUETAS ESTILO GARTNER
+        # Añadir tecnologías con posicionamiento inteligente de etiquetas estilo Gartner
         for i, tech in enumerate(technologies):
             # Tamaño del punto basado en métricas
             base_size = 12
@@ -695,7 +776,7 @@ class CategoryAdminInterface:
             
             color = self._get_classic_color_for_time_to_plateau(tech["time_to_plateau"])
             
-            # PUNTO EXACTAMENTE SOBRE LA CURVA
+            # Punto exactamente sobre la curva
             fig.add_trace(go.Scatter(
                 x=[tech["position_x"]],
                 y=[tech["position_y"]],
@@ -719,13 +800,13 @@ class CategoryAdminInterface:
                 showlegend=False
             ))
             
-            # ETIQUETAS ESTILO GARTNER CON LÍNEAS CONECTORAS
+            # Etiquetas estilo Gartner con líneas conectoras
             if show_labels:
                 label_x, label_y, _ = self._calculate_intelligent_label_position(
                     tech["position_x"], tech["position_y"], tech["slope"], tech["name"], i
                 )
                 
-                # 1. AÑADIR LÍNEA CONECTORA SIMPLE (estilo Gartner)
+                # Añadir línea conectora simple (estilo Gartner)
                 fig.add_shape(
                     type="line",
                     x0=tech["position_x"], 
@@ -739,12 +820,12 @@ class CategoryAdminInterface:
                     layer="below"
                 )
                 
-                # 2. AÑADIR ETIQUETA SIN FLECHA (estilo Gartner)
+                # Añadir etiqueta sin flecha (estilo Gartner)
                 fig.add_annotation(
                     x=label_x,
                     y=label_y,
                     text=f'<b style="font-size:10px">{tech["name"]}</b>',
-                    showarrow=False,  # SIN FLECHA - estilo Gartner real
+                    showarrow=False,
                     font=dict(
                         size=10, 
                         color='#2C3E50',
@@ -759,10 +840,10 @@ class CategoryAdminInterface:
                     opacity=0.95
                 )
         
-        # ETIQUETAS DE FASES
+        # Etiquetas de fases
         phase_labels = [
             {"name": "Innovation<br>Trigger", "x": 12, "y": -25},
-            {"name": "Peak of Inflated<br>Expectations", "x": 28, "y": -25},  # Centrado en zona ampliada
+            {"name": "Peak of Inflated<br>Expectations", "x": 28, "y": -25},
             {"name": "Trough of<br>Disillusionment", "x": 55, "y": -25},
             {"name": "Slope of<br>Enlightenment", "x": 75, "y": -25},
             {"name": "Plateau of<br>Productivity", "x": 90, "y": -25}
@@ -793,7 +874,7 @@ class CategoryAdminInterface:
                 layer="below"
             )
         
-        # LEYENDA DE TIEMPO AL PLATEAU
+        # Leyenda de tiempo al plateau
         legend_items = [
             {"label": "Ya alcanzado", "color": "#27AE60"},
             {"label": "< 2 años", "color": "#3498DB"},
@@ -811,7 +892,7 @@ class CategoryAdminInterface:
                 showlegend=True
             ))
         
-        # LAYOUT OPTIMIZADO ESTILO GARTNER
+        # Layout optimizado estilo Gartner
         fig.update_layout(
             title=dict(
                 text=f"<b>Hype Cycle - {category_name}</b><br><sub>({len(limited_queries)} tecnologías analizadas)</sub>",
@@ -839,18 +920,18 @@ class CategoryAdminInterface:
                 showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[-35, 120],  # ESPACIO AMPLIADO para etiquetas
+                range=[-35, 120],
                 showline=True,
                 linecolor='#bdc3c7',
                 linewidth=2
             ),
             plot_bgcolor='white',
             paper_bgcolor='white',
-            height=850,  # ALTURA AUMENTADA
+            height=850,
             width=1300,
             showlegend=True,
             font=dict(family="Arial"),
-            margin=dict(t=120, l=80, r=200, b=100),  # MÁRGENES AUMENTADOS
+            margin=dict(t=120, l=80, r=200, b=100),
             hovermode='closest',
             legend=dict(
                 title=dict(
@@ -874,18 +955,15 @@ class CategoryAdminInterface:
 
     def _calculate_intelligent_label_position(self, point_x: float, point_y: float, 
                                         slope: float, text: str, index: int) -> tuple:
-        """
-        Calcula posición inteligente de etiqueta estilo Gartner - VERSIÓN CORREGIDA
-        """
+        """Calcula posición inteligente de etiqueta estilo Gartner"""
         # Estrategia mejorada para zona del Peak
-        if point_y > 70:  # Zona alta (Peak) - DISTRIBUCIÓN MEJORADA
-            # Distribuir en múltiples niveles alternando arriba/abajo
-            level = index // 4  # Cada 4 tecnologías, nuevo nivel
+        if point_y > 70:  # Zona alta (Peak) - distribución mejorada
+            level = index // 4
             position_in_level = index % 4
             
             if level % 2 == 0:  # Niveles pares: arriba
-                label_x = point_x + (position_in_level - 1.5) * 10  # Más separación
-                label_y = point_y + 25 + (level * 15)  # Más espacio vertical
+                label_x = point_x + (position_in_level - 1.5) * 10
+                label_y = point_y + 25 + (level * 15)
             else:  # Niveles impares: abajo
                 label_x = point_x + (position_in_level - 1.5) * 10
                 label_y = point_y - 20 - (level * 10)
@@ -914,57 +992,8 @@ class CategoryAdminInterface:
         label_x = max(5, min(95, label_x))
         label_y = max(-30, min(115, label_y))
         
-        # RETORNAR FORMATO COMPATIBLE con tu código existente
-        return label_x, label_y, {"ax": 0, "ay": 0}  # ax, ay en 0 para líneas simples
+        return label_x, label_y, {"ax": 0, "ay": 0}
 
-    def _safe_get_tech_data(self, query, index):
-        """
-        Extrae datos de tecnología de forma segura para evitar errores de tipo
-        """
-        try:
-            # Verificar que query es un diccionario
-            if not isinstance(query, dict):
-                return None
-                
-            hype_metrics = query.get("hype_metrics", {})
-            
-            # Verificar que hype_metrics es un diccionario
-            if not isinstance(hype_metrics, dict):
-                hype_metrics = {}
-            
-            # Extraer datos de forma segura
-            tech_data = {
-                "name": (
-                    query.get("technology_name") or 
-                    query.get("name") or 
-                    query.get("search_query", f"Tech_{index}")[:20]
-                ),
-                "phase": hype_metrics.get("phase", "Unknown"),
-                "confidence": float(hype_metrics.get("confidence", 0.5)),
-                "position_x": 0,  # Se calculará después
-                "position_y": 0,  # Se calculará después
-                "query_id": query.get("query_id", f"id_{index}"),
-                "time_to_plateau": hype_metrics.get("time_to_plateau", "N/A"),
-                "total_mentions": int(hype_metrics.get("total_mentions", 0)),
-                "slope": 0
-            }
-            
-            return tech_data
-            
-        except Exception as e:
-            # En caso de error, retornar datos por defecto
-            return {
-                "name": f"Tech_{index}",
-                "phase": "Unknown",
-                "confidence": 0.5,
-                "position_x": 50,
-                "position_y": 50,
-                "query_id": f"error_id_{index}",
-                "time_to_plateau": "N/A",
-                "total_mentions": 0,
-                "slope": 0
-            }
-    
     def _get_classic_color_for_time_to_plateau(self, time_estimate: str) -> str:
         """Colores clásicos para tiempo al plateau"""
         time_colors = {
@@ -976,7 +1005,7 @@ class CategoryAdminInterface:
             "unknown": "#95A5A6"
         }
         
-        time_lower = time_estimate.lower()
+        time_lower = str(time_estimate).lower()
         
         if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
             return time_colors["already"]
@@ -990,299 +1019,9 @@ class CategoryAdminInterface:
             return time_colors[">10"]
         else:
             return time_colors["unknown"]
-
-    def _apply_advanced_separation(self, technologies: List[Dict]) -> List[Dict]:
-        """
-        Aplica algoritmo avanzado de separación para evitar superposición
-        """
-        min_distance = 18  # Distancia mínima entre puntos
-        max_iterations = 100
-        
-        for iteration in range(max_iterations):
-            moved = False
-            
-            for i, tech1 in enumerate(technologies):
-                for j, tech2 in enumerate(technologies[i+1:], i+1):
-                    distance = self._calculate_distance(tech1, tech2)
-                    
-                    if distance < min_distance:
-                        # Calcular vector de separación
-                        dx = tech2["position_x"] - tech1["position_x"]
-                        dy = tech2["position_y"] - tech1["position_y"]
-                        
-                        # Evitar división por cero
-                        if distance == 0:
-                            angle = np.random.uniform(0, 2*np.pi)
-                            dx = np.cos(angle) * 2
-                            dy = np.sin(angle) * 2
-                            distance = 2
-                        
-                        # Normalizar y escalar
-                        separation_factor = (min_distance - distance) / distance / 2
-                        move_x = dx * separation_factor
-                        move_y = dy * separation_factor
-                        
-                        # Mover ambas tecnologías
-                        tech1["position_x"] -= move_x
-                        tech1["position_y"] -= move_y
-                        tech2["position_x"] += move_x
-                        tech2["position_y"] += move_y
-                        
-                        # Mantener dentro de límites
-                        for tech in [tech1, tech2]:
-                            tech["position_x"] = max(2, min(97, tech["position_x"]))
-                            tech["position_y"] = max(8, min(88, tech["position_y"]))
-                        
-                        moved = True
-            
-            if not moved:
-                break
-        
-        return technologies
-
-    def _calculate_optimal_label_position(self, point_x: float, point_y: float, 
-                                        text: str, index: int) -> tuple:
-        """
-        Calcula la posición óptima para una etiqueta evitando superposición
-        """
-        # Estrategias de posicionamiento según la zona de la curva
-        if point_x < 30:  # Zona inicial - etiquetas arriba
-            label_x = point_x + 5
-            label_y = point_y + 15 + (index % 3) * 8
-        elif point_x < 60:  # Zona del valle - etiquetas abajo
-            label_x = point_x
-            label_y = point_y - 15 - (index % 3) * 6
-        else:  # Zona final - etiquetas arriba
-            label_x = point_x - 5
-            label_y = point_y + 12 + (index % 3) * 8
-        
-        # Asegurar que las etiquetas estén dentro de los límites
-        label_x = max(5, min(95, label_x))
-        label_y = max(-10, min(90, label_y))
-        
-        return label_x, label_y
-
-    def _calculate_distance(self, tech1: Dict, tech2: Dict) -> float:
-        """Calcula distancia euclidiana entre dos tecnologías"""
-        dx = tech1.get("position_x", 0) - tech2.get("position_x", 0)
-        dy = tech1.get("position_y", 0) - tech2.get("position_y", 0)
-        return math.sqrt(dx*dx + dy*dy)
-
-    def _get_classic_color_for_time_to_plateau(self, time_estimate: str) -> str:
-        """Colores clásicos para tiempo al plateau"""
-        time_colors = {
-            "already": "#27AE60",      # Verde
-            "<2": "#3498DB",           # Azul
-            "2-5": "#F39C12",          # Naranja
-            "5-10": "#E67E22",         # Naranja oscuro
-            ">10": "#E74C3C",          # Rojo
-            "unknown": "#95A5A6"       # Gris
-        }
-        
-        time_lower = time_estimate.lower()
-        
-        if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
-            return time_colors["already"]
-        elif any(x in time_lower for x in ["<2", "menos de 2", "1-2"]):
-            return time_colors["<2"]
-        elif any(x in time_lower for x in ["2-5", "3-5", "2-4"]):
-            return time_colors["2-5"]
-        elif any(x in time_lower for x in ["5-10", "6-10", "5-8"]):
-            return time_colors["5-10"]
-        elif any(x in time_lower for x in [">10", "más de 10", "10+"]):
-            return time_colors[">10"]
-        else:
-            return time_colors["unknown"]
-
-    def _add_classic_time_legend(self, fig: go.Figure):
-        """Leyenda clásica y limpia"""
-        legend_items = [
-            {"label": "Ya alcanzado", "color": "#27AE60"},
-            {"label": "< 2 años", "color": "#3498DB"},
-            {"label": "2-5 años", "color": "#F39C12"},
-            {"label": "5-10 años", "color": "#E67E22"},
-            {"label": "> 10 años", "color": "#E74C3C"}
-        ]
-        
-        for item in legend_items:
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(size=10, color=item["color"]),
-                name=item["label"],
-                showlegend=True
-            ))
-        
-        fig.update_layout(
-            legend=dict(
-                title="Tiempo al Plateau",
-                orientation="v",
-                yanchor="top",
-                y=0.95,
-                xanchor="left",
-                x=1.02,
-                bgcolor='white',
-                bordercolor='#BDC3C7',
-                borderwidth=1
-            )
-        )
-
-    def _get_enhanced_color_for_time_to_plateau(self, time_estimate: str) -> str:
-        """
-        Retorna color mejorado basado en tiempo estimado al plateau
-        """
-        # Paleta de colores más moderna y profesional
-        time_colors = {
-            "already": "#27AE60",      # Verde éxito
-            "<2": "#3498DB",           # Azul claro
-            "2-5": "#9B59B6",          # Púrpura
-            "5-10": "#E67E22",         # Naranja
-            ">10": "#E74C3C",          # Rojo
-            "unknown": "#95A5A6"       # Gris
-        }
-        
-        time_lower = time_estimate.lower()
-        
-        if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
-            return time_colors["already"]
-        elif any(x in time_lower for x in ["<2", "menos de 2", "1-2"]):
-            return time_colors["<2"]
-        elif any(x in time_lower for x in ["2-5", "3-5", "2-4"]):
-            return time_colors["2-5"]
-        elif any(x in time_lower for x in ["5-10", "6-10", "5-8"]):
-            return time_colors["5-10"]
-        elif any(x in time_lower for x in [">10", "más de 10", "10+"]):
-            return time_colors[">10"]
-        else:
-            return time_colors["unknown"]
-
-    def _add_enhanced_time_legend(self, fig: go.Figure):
-        """Añade leyenda de colores mejorada para tiempo al plateau"""
-        legend_items = [
-            {"label": "Ya alcanzado", "color": "#27AE60", "icon": "●"},
-            {"label": "< 2 años", "color": "#3498DB", "icon": "●"},
-            {"label": "2-5 años", "color": "#9B59B6", "icon": "●"},
-            {"label": "5-10 años", "color": "#E67E22", "icon": "●"},
-            {"label": "> 10 años", "color": "#E74C3C", "icon": "●"}
-        ]
-        
-        # Añadir puntos invisibles para la leyenda con mejor diseño
-        for i, item in enumerate(legend_items):
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(
-                    size=12, 
-                    color=item["color"],
-                    symbol='circle',
-                    line=dict(color='white', width=1)
-                ),
-                name=f"{item['icon']} {item['label']}",
-                showlegend=True
-            ))
-        
-        # Configurar leyenda mejorada
-        fig.update_layout(
-            legend=dict(
-                title=dict(
-                    text="<b>Tiempo al Plateau</b>",
-                    font=dict(size=12, color="#2E3440")
-                ),
-                orientation="v",
-                yanchor="top",
-                y=0.98,
-                xanchor="left",
-                x=1.02,
-                bgcolor='rgba(255,255,255,0.95)',
-                bordercolor='rgba(176, 196, 222, 0.8)',
-                borderwidth=1,
-                font=dict(size=10, color="#2E3440"),
-                itemsizing="constant"
-            )
-        )
-
-    def _add_enhanced_time_legend(self, fig: go.Figure):
-        """Añade leyenda de colores mejorada para tiempo al plateau"""
-        legend_items = [
-            {"label": "Ya alcanzado", "color": "#27AE60", "icon": "●"},
-            {"label": "< 2 años", "color": "#3498DB", "icon": "●"},
-            {"label": "2-5 años", "color": "#9B59B6", "icon": "●"},
-            {"label": "5-10 años", "color": "#E67E22", "icon": "●"},
-            {"label": "> 10 años", "color": "#E74C3C", "icon": "●"}
-        ]
-        
-        # Añadir puntos invisibles para la leyenda con mejor diseño
-        for i, item in enumerate(legend_items):
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(
-                    size=12, 
-                    color=item["color"],
-                    symbol='circle',
-                    line=dict(color='white', width=1)
-                ),
-                name=f"{item['icon']} {item['label']}",
-                showlegend=True
-            ))
-        
-        # Configurar leyenda mejorada
-        axis=dict(
-            legend=dict(
-                title=dict(
-                    text="<b>Tiempo al Plateau</b>",
-                    font=dict(size=12, color="#2E3440")
-                ),
-                orientation="v",
-                yanchor="top",
-                y=0.98,
-                xanchor="left",
-                x=1.02,
-                bgcolor='rgba(255,255,255,0.95)',
-                bordercolor='rgba(176, 196, 222, 0.8)',
-                borderwidth=1,
-                font=dict(size=10, color="#2E3440"),
-                itemsizing="constant"
-            )
-        )
-    
-    def _add_time_legend(self, fig: go.Figure):
-        """Añade leyenda de colores para tiempo al plateau"""
-        legend_items = [
-            {"label": "< 2 años", "color": "#E3F2FD"},
-            {"label": "2-5 años", "color": "#2196F3"},
-            {"label": "5-10 años", "color": "#1976D2"},
-            {"label": "> 10 años", "color": "#0D47A1"},
-            {"label": "Ya alcanzado", "color": "#4CAF50"}
-        ]
-        
-        # Añadir puntos invisibles para la leyenda
-        for i, item in enumerate(legend_items):
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(size=10, color=item["color"]),
-                name=item["label"],
-                showlegend=True
-            ))
-        
-        # Configurar leyenda
-        fig.update_layout(
-            legend=dict(
-                title="Tiempo al Plateau:",
-                orientation="v",
-                yanchor="top",
-                y=1,
-                xanchor="left",
-                x=1.02,
-                bgcolor='rgba(255,255,255,0.8)',
-                bordercolor='#bdc3c7',
-                borderwidth=1
-            )
-        )
     
     def _show_chart_legend(self, queries: List[Dict]):
-        """Muestra tabla explicativa de la gráfica"""
+        """Muestra tabla explicativa de la gráfica con formateo seguro"""
         st.subheader("📋 Tecnologías en la Gráfica")
         
         legend_data = []
@@ -1296,13 +1035,23 @@ class CategoryAdminInterface:
                 query.get("search_query", "")[:30]
             )
             
+            # FORMATEO SEGURO DE MÉTRICAS
+            confidence_raw = hype_metrics.get("confidence", 0)
+            confidence_formatted = self._safe_float_format(confidence_raw, ".2f", "0.00")
+            
+            total_mentions_raw = hype_metrics.get("total_mentions", 0)
+            total_mentions_formatted = self._safe_int_format(total_mentions_raw, 0)
+            
+            sentiment_avg_raw = hype_metrics.get("sentiment_avg", 0)
+            sentiment_formatted = self._safe_float_format(sentiment_avg_raw, ".2f", "0.00")
+            
             legend_data.append({
                 "🔬 Tecnología": tech_name,
                 "📍 Fase Actual": hype_metrics.get("phase", "Unknown"),
-                "🎯 Confianza": f"{hype_metrics.get('confidence', 0):.2f}",
+                "🎯 Confianza": confidence_formatted,
                 "⏱️ Tiempo al Plateau": hype_metrics.get("time_to_plateau", "N/A"),
-                "📊 Menciones": hype_metrics.get("total_mentions", 0),
-                "💭 Sentimiento": f"{hype_metrics.get('sentiment_avg', 0):.2f}"
+                "📊 Menciones": total_mentions_formatted,
+                "💭 Sentimiento": sentiment_formatted
             })
         
         # Ordenar por fase para mejor presentación
@@ -1319,7 +1068,7 @@ class CategoryAdminInterface:
         df_legend = pd.DataFrame(legend_data)
         st.dataframe(df_legend, use_container_width=True, hide_index=True)
         
-        # Estadísticas de la gráfica
+        # Estadísticas de la gráfica con formateo seguro
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -1327,16 +1076,42 @@ class CategoryAdminInterface:
             st.metric("Total Tecnologías", total_tech)
         
         with col2:
-            avg_confidence = sum(float(item["🎯 Confianza"]) for item in legend_data) / len(legend_data)
-            st.metric("Confianza Promedio", f"{avg_confidence:.2f}")
+            # Calcular confianza promedio de forma segura
+            confidences = []
+            for item in legend_data:
+                try:
+                    conf_val = float(item["🎯 Confianza"])
+                    confidences.append(conf_val)
+                except:
+                    confidences.append(0.0)
+            
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            st.metric("Confianza Promedio", self._safe_float_format(avg_confidence, ".2f"))
         
         with col3:
-            total_mentions = sum(item["📊 Menciones"] for item in legend_data)
+            # Calcular total menciones de forma segura
+            total_mentions = 0
+            for item in legend_data:
+                try:
+                    mentions_val = int(item["📊 Menciones"])
+                    total_mentions += mentions_val
+                except:
+                    pass
+            
             st.metric("Total Menciones", total_mentions)
         
         with col4:
-            avg_sentiment = sum(float(item["💭 Sentimiento"]) for item in legend_data) / len(legend_data)
-            st.metric("Sentimiento Promedio", f"{avg_sentiment:.2f}")
+            # Calcular sentimiento promedio de forma segura
+            sentiments = []
+            for item in legend_data:
+                try:
+                    sent_val = float(item["💭 Sentimiento"])
+                    sentiments.append(sent_val)
+                except:
+                    sentiments.append(0.0)
+            
+            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+            st.metric("Sentimiento Promedio", self._safe_float_format(avg_sentiment, ".2f"))
     
     def _show_advanced_management(self):
         """Gestión avanzada de categorías y tecnologías"""
@@ -1344,7 +1119,7 @@ class CategoryAdminInterface:
         
         st.write("""
         Herramientas adicionales para la gestión y mantenimiento de las categorías 
-        y tecnologías del Hype Cycle.
+        y tecnologías del Hype Cycle en DynamoDB.
         """)
         
         # Sección de operaciones masivas
@@ -1386,7 +1161,7 @@ class CategoryAdminInterface:
                     self._create_full_backup()
     
     def _show_global_statistics(self):
-        """Muestra estadísticas globales del sistema"""
+        """Muestra estadísticas globales del sistema con formateo seguro"""
         try:
             all_queries = self.storage.get_all_hype_cycle_queries()
             
@@ -1405,9 +1180,15 @@ class CategoryAdminInterface:
                 st.metric("Categorías Activas", len(categories))
             
             with col3:
-                confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in all_queries]
+                # Confianza promedio con formateo seguro
+                confidences = []
+                for q in all_queries:
+                    conf_raw = q.get("hype_metrics", {}).get("confidence", 0)
+                    conf_float = float(self._safe_float_format(conf_raw, "", "0"))
+                    confidences.append(conf_float)
+                
                 avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-                st.metric("Confianza Promedio", f"{avg_confidence:.2f}")
+                st.metric("Confianza Promedio", self._safe_float_format(avg_confidence, ".2f"))
             
             with col4:
                 # Tecnologías analizadas este mes
@@ -1465,13 +1246,19 @@ class CategoryAdminInterface:
             for query in all_queries:
                 hype_metrics = query.get("hype_metrics", {})
                 phase = hype_metrics.get("phase", "Unknown")
-                confidence = hype_metrics.get("confidence", 0.5)
-                total_mentions = hype_metrics.get("total_mentions", 0)
+                
+                # Formateo seguro de confidence
+                confidence_raw = hype_metrics.get("confidence", 0.5)
+                confidence = float(self._safe_float_format(confidence_raw, "", "0.5"))
+                
+                # Formateo seguro de total_mentions
+                total_mentions_raw = hype_metrics.get("total_mentions", 0)
+                total_mentions = self._safe_int_format(total_mentions_raw, 0)
                 
                 # Recalcular posición
                 pos_x, pos_y = self.positioner.calculate_position(phase, confidence, total_mentions)
                 
-                # Actualizar en el objeto (esto es conceptual, en producción necesitarías update a BD)
+                # Actualizar en el objeto (esto es conceptual)
                 hype_metrics["hype_cycle_position_x"] = pos_x
                 hype_metrics["hype_cycle_position_y"] = pos_y
                 
@@ -1485,7 +1272,6 @@ class CategoryAdminInterface:
     def _cleanup_inactive_queries(self):
         """Limpia consultas marcadas como inactivas"""
         st.info("🔄 Funcionalidad de limpieza - En desarrollo")
-        # Implementar lógica de limpieza según necesidades
     
     def _detect_duplicates(self):
         """Detecta posibles consultas duplicadas"""
@@ -1506,1235 +1292,13 @@ class CategoryAdminInterface:
             
             if duplicates:
                 st.warning(f"⚠️ Encontrados {len(duplicates)} posibles duplicados")
-                for dup in duplicates[:5]:  # Mostrar solo los primeros 5
+                for dup in duplicates[:5]:
                     st.write(f"• Query: {dup['duplicate'].get('search_query', '')[:50]}...")
             else:
                 st.success("✅ No se encontraron duplicados")
                 
         except Exception as e:
             st.error(f"Error detectando duplicados: {str(e)}")
-
-    def _show_advanced_management(self):
-        """Gestión avanzada de categorías y tecnologías con funcionalidades completas"""
-        st.subheader("⚙️ Gestión Avanzada")
-        
-        st.write("""
-        Herramientas avanzadas para la gestión completa de categorías y tecnologías.
-        **¡Cuidado!** Algunas operaciones son irreversibles.
-        """)
-        
-        # Pestañas de gestión avanzada
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "🗑️ Eliminar Datos", 
-            "📝 Editar Categorías", 
-            "🔄 Mover Tecnologías",
-            "📊 Operaciones Masivas"
-        ])
-        
-        with tab1:
-            self._show_delete_management()
-        
-        with tab2:
-            self._show_edit_categories()
-        
-        with tab3:
-            self._show_move_technologies()
-        
-        with tab4:
-            self._show_mass_operations()
-
-    def _show_delete_management(self):
-        """Interfaz para eliminar categorías y tecnologías - VERSIÓN CORREGIDA"""
-        st.write("### 🗑️ Eliminación de Datos")
-        
-        st.warning("⚠️ **ADVERTENCIA**: Las eliminaciones son permanentes e irreversibles.")
-        
-        # Sección 1: Eliminar tecnologías individuales
-        with st.expander("🔬 Eliminar Tecnologías Individuales", expanded=True):
-            
-            all_queries = self.storage.get_all_hype_cycle_queries()
-            
-            if not all_queries:
-                st.info("No hay tecnologías para eliminar.")
-            else:
-                # Crear lista de tecnologías con información detallada
-                tech_options = {}
-                for query in all_queries:
-                    query_id = query.get("query_id", query.get("analysis_id"))
-                    tech_name = (
-                        query.get("technology_name") or 
-                        query.get("name") or 
-                        query.get("search_query", "")[:30]
-                    )
-                    category_id = query.get("category_id", "unknown")
-                    
-                    # Obtener nombre de categoría
-                    try:
-                        category = self.storage.storage.get_category_by_id(category_id)
-                        category_name = category.get("name") if category else "Sin categoría"
-                    except:
-                        category_name = "Sin categoría"
-                    
-                    # Fecha y fase para mostrar
-                    exec_date = query.get("execution_date", "")
-                    try:
-                        if exec_date:
-                            date_obj = datetime.fromisoformat(exec_date.replace('Z', '+00:00'))
-                            formatted_date = date_obj.strftime("%Y-%m-%d")
-                        else:
-                            formatted_date = "Sin fecha"
-                    except:
-                        formatted_date = "Fecha inválida"
-                    
-                    phase = query.get("hype_metrics", {}).get("phase", "Unknown")
-                    
-                    display_name = f"{tech_name} | {category_name} | {phase} | {formatted_date}"
-                    tech_options[display_name] = {
-                        "query_id": query_id,
-                        "tech_name": tech_name,
-                        "category_name": category_name,
-                        "query": query,
-                        "formatted_date": formatted_date
-                    }
-                
-                # Filtros para tecnologías
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Filtro por categoría
-                    categories = set(info["category_name"] for info in tech_options.values())
-                    filter_category = st.selectbox(
-                        "Filtrar por categoría:",
-                        options=["Todas"] + sorted(list(categories)),
-                        key=f"delete_filter_category_{self.unique_id}"
-                    )
-                
-                with col2:
-                    # Filtro por fase
-                    phases = set(
-                        info["query"].get("hype_metrics", {}).get("phase", "Unknown") 
-                        for info in tech_options.values()
-                    )
-                    filter_phase = st.selectbox(
-                        "Filtrar por fase:",
-                        options=["Todas"] + sorted(list(phases)),
-                        key=f"delete_filter_phase_{self.unique_id}"
-                    )
-                
-                # Aplicar filtros
-                filtered_options = tech_options.copy()
-                
-                if filter_category != "Todas":
-                    filtered_options = {
-                        name: info for name, info in filtered_options.items()
-                        if info["category_name"] == filter_category
-                    }
-                
-                if filter_phase != "Todas":
-                    filtered_options = {
-                        name: info for name, info in filtered_options.items()
-                        if info["query"].get("hype_metrics", {}).get("phase", "Unknown") == filter_phase
-                    }
-                
-                if not filtered_options:
-                    st.info("No hay tecnologías que coincidan con los filtros seleccionados.")
-                    return
-                
-                # Selector de tecnología a eliminar
-                selected_tech = st.selectbox(
-                    f"Selecciona la tecnología a eliminar ({len(filtered_options)} disponibles):",
-                    options=list(filtered_options.keys()),
-                    key=f"delete_tech_selector_{self.unique_id}"
-                )
-                
-                if selected_tech:
-                    tech_info = filtered_options[selected_tech]
-                    
-                    # Mostrar información detallada de la tecnología
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("**📋 Información de la tecnología:**")
-                        st.write(f"• **Nombre:** {tech_info['tech_name']}")
-                        st.write(f"• **Categoría:** {tech_info['category_name']}")
-                        st.write(f"• **ID:** {tech_info['query_id']}")
-                        st.write(f"• **Fecha:** {tech_info['formatted_date']}")
-                    
-                    with col2:
-                        st.write("**📊 Métricas del Hype Cycle:**")
-                        hype_metrics = tech_info['query'].get('hype_metrics', {})
-                        
-                        st.write(f"• **Fase:** {hype_metrics.get('phase', 'Unknown')}")
-                        st.write(f"• **Confianza:** {hype_metrics.get('confidence', 0):.2f}")
-                        st.write(f"• **Menciones:** {hype_metrics.get('total_mentions', 0)}")
-                        
-                        # Tiempo al plateau
-                        time_to_plateau = hype_metrics.get('time_to_plateau', 'N/A')
-                        st.write(f"• **Tiempo al Plateau:** {time_to_plateau}")
-                    
-                    # ZONA DE PELIGRO - Confirmación de eliminación
-                    st.write("---")
-                    st.error("🚨 **ZONA DE PELIGRO**")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        # Doble confirmación
-                        confirm_delete = st.checkbox(
-                            f"Confirmar eliminación de '{tech_info['tech_name']}'",
-                            key=f"confirm_delete_tech_{self.unique_id}"
-                        )
-                        
-                        if confirm_delete:
-                            final_confirm = st.checkbox(
-                                "Estoy seguro de que quiero eliminar esta tecnología permanentemente",
-                                key=f"final_confirm_delete_tech_{self.unique_id}"
-                            )
-                        else:
-                            final_confirm = False
-                    
-                    with col2:
-                        if confirm_delete and final_confirm and st.button(
-                            "🗑️ ELIMINAR TECNOLOGÍA", 
-                            type="secondary",
-                            key=f"delete_tech_btn_{self.unique_id}"
-                        ):
-                            with st.spinner(f"Eliminando '{tech_info['tech_name']}'..."):
-                                success = self._delete_technology(tech_info['query_id'])
-                                
-                                if success:
-                                    st.success(f"✅ Tecnología '{tech_info['tech_name']}' eliminada correctamente")
-                                    
-                                    # Limpiar caché
-                                    for key in list(st.session_state.keys()):
-                                        if key.startswith('chart_cache_'):
-                                            del st.session_state[key]
-                                    
-                                    time.sleep(1)
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Error al eliminar la tecnología")
-        
-        # Sección 2: Eliminar categorías completas - VERSIÓN CORREGIDA
-        with st.expander("📁 Eliminar Categorías Completas", expanded=False):
-            
-            categories = self.storage.storage.get_all_categories()
-            
-            # Filtrar categorías que no sean "default"
-            deletable_categories = [
-                category for category in categories 
-                if category.get("id") != "default" and category.get("category_id") != "default"
-            ]
-            
-            if not deletable_categories:
-                st.info("No hay categorías eliminables (la categoría 'default' no se puede eliminar).")
-            else:
-                st.warning("⚠️ **ATENCIÓN**: Eliminar una categoría también eliminará TODAS las tecnologías asociadas.")
-                
-                # Mostrar información detallada de categorías
-                for category in deletable_categories:
-                    # CORREGIDO: usar 'category' en lugar de 'cat'
-                    cat_id = category.get("id") or category.get("category_id")
-                    cat_name = category.get("name", "Sin nombre")
-                    
-                    # Obtener información completa de la categoría
-                    cat_info = self._get_category_info(cat_id)
-                    stats = cat_info.get("statistics", {})
-                    tech_count = stats.get("total_technologies", 0)
-                    
-                    with st.container():
-                        st.write(f"### 📁 {cat_name}")
-                        
-                        col1, col2, col3 = st.columns([2, 1, 1])
-                        
-                        with col1:
-                            st.write(f"• **Tecnologías:** {tech_count}")
-                            st.write(f"• **ID:** {cat_id}")
-                            st.write(f"• **Activas:** {stats.get('active_technologies', 0)}")
-                            
-                            if tech_count > 0:
-                                st.error(f"⚠️ **PELIGRO**: Eliminar esta categoría también eliminará {tech_count} tecnologías")
-                                
-                                # Mostrar distribución de fases
-                                phase_dist = stats.get("phase_distribution", {})
-                                if phase_dist:
-                                    st.write("**Tecnologías por fase:**")
-                                    for phase, count in phase_dist.items():
-                                        st.write(f"  • {phase}: {count}")
-                        
-                        with col2:
-                            # Confirmaciones múltiples para categorías
-                            confirm_cat = st.checkbox(
-                                "Entiendo los riesgos",
-                                key=f"confirm_delete_cat_risk_{cat_id}_{self.unique_id}"
-                            )
-                            
-                            if confirm_cat and tech_count > 0:
-                                confirm_tech_loss = st.checkbox(
-                                    f"Acepto perder {tech_count} tecnologías",
-                                    key=f"confirm_tech_loss_{cat_id}_{self.unique_id}"
-                                )
-                            else:
-                                confirm_tech_loss = True  # Si no hay tecnologías, no necesita confirmación adicional
-                        
-                        with col3:
-                            if confirm_cat and confirm_tech_loss and st.button(
-                                "🗑️ ELIMINAR CATEGORÍA", 
-                                type="secondary",
-                                key=f"delete_cat_btn_{cat_id}_{self.unique_id}"
-                            ):
-                                with st.spinner(f"Eliminando categoría '{cat_name}' y {tech_count} tecnologías..."):
-                                    success = self._delete_category(cat_id)
-                                    
-                                    if success:
-                                        st.success(f"✅ Categoría '{cat_name}' eliminada correctamente")
-                                        
-                                        # Limpiar caché
-                                        for key in list(st.session_state.keys()):
-                                            if key.startswith('chart_cache_'):
-                                                del st.session_state[key]
-                                        
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Error al eliminar la categoría")
-                        
-                        st.write("---")
-
-    def _show_edit_categories(self):
-        """Interfaz para editar categorías - VERSIÓN CORREGIDA"""
-        st.write("### 📝 Editar Categorías")
-        
-        categories = self.storage.storage.get_all_categories()
-        
-        if not categories:
-            st.info("No hay categorías para editar.")
-            return
-        
-        # Filtrar categorías editables
-        editable_categories = [
-            category for category in categories  # CORRECTO: usar 'category'
-            if category.get("id") != "default" and category.get("category_id") != "default"  # CORRECTO
-        ]
-        
-        if not editable_categories:
-            st.info("Solo existe la categoría 'default' que no se puede editar.")
-            return
-        
-        # Selector de categoría a editar
-        category_options = {}
-        for category in editable_categories:  # CORRECTO: usar 'category'
-            cat_id = category.get("id") or category.get("category_id")  # CORRECTO: usar 'category'
-            cat_name = category.get("name", "Sin nombre")  # CORRECTO: usar 'category'
-            
-            # Obtener estadísticas de la categoría
-            cat_info = self._get_category_info(cat_id)
-            tech_count = cat_info.get("statistics", {}).get("total_technologies", 0)
-            
-            display_name = f"{cat_name} ({tech_count} tecnologías)"
-            category_options[display_name] = {
-                "category": category,  # CORRECTO
-                "cat_id": cat_id,
-                "info": cat_info
-            }
-        
-        selected_cat_display = st.selectbox(
-            "Selecciona una categoría para editar:",
-            options=list(category_options.keys()),
-            key=f"edit_cat_selector_{self.unique_id}"
-        )
-        
-        if selected_cat_display:
-            cat_data = category_options[selected_cat_display]
-            category = cat_data["category"]
-            cat_id = cat_data["cat_id"]
-            cat_info = cat_data["info"]
-            
-            # Mostrar información actual de la categoría
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                # Formulario de edición
-                with st.form(f"edit_category_form_{self.unique_id}"):
-                    st.write(f"**Editando categoría:** {category.get('name', 'Sin nombre')}")
-                    
-                    # Campos editables
-                    new_name = st.text_input(
-                        "Nuevo nombre:",
-                        value=category.get("name", ""),
-                        key=f"edit_cat_name_{self.unique_id}",
-                        help="Nombre que aparecerá en las listas y gráficas"
-                    )
-                    
-                    new_description = st.text_area(
-                        "Nueva descripción:",
-                        value=category.get("description", ""),
-                        height=100,
-                        key=f"edit_cat_desc_{self.unique_id}",
-                        help="Descripción opcional para documentar el propósito de la categoría"
-                    )
-                    
-                    # Validaciones en tiempo real
-                    if new_name:
-                        # Verificar que no existe otra categoría con el mismo nombre
-                        existing_names = [
-                            c.get("name", "") for c in categories 
-                            if (c.get("id") != cat_id and c.get("category_id") != cat_id)
-                        ]
-                        
-                        if new_name in existing_names:
-                            st.error("❌ Ya existe una categoría con ese nombre")
-                            name_valid = False
-                        elif len(new_name.strip()) < 2:
-                            st.warning("⚠️ El nombre debe tener al menos 2 caracteres")
-                            name_valid = False
-                        else:
-                            st.success(f"✅ Nombre válido: '{new_name}'")
-                            name_valid = True
-                    else:
-                        st.error("❌ El nombre no puede estar vacío")
-                        name_valid = False
-                    
-                    # Mostrar preview de cambios
-                    if new_name != category.get("name", "") or new_description != category.get("description", ""):
-                        st.info("📝 **Preview de cambios:**")
-                        if new_name != category.get("name", ""):
-                            st.write(f"• **Nombre:** '{category.get('name', '')}' → '{new_name}'")
-                        if new_description != category.get("description", ""):
-                            st.write(f"• **Descripción:** Actualizada")
-                    
-                    # Botón de guardar
-                    submit_changes = st.form_submit_button(
-                        "💾 Guardar Cambios", 
-                        disabled=not name_valid,
-                        type="primary"
-                    )
-                    
-                    if submit_changes and name_valid:
-                        with st.spinner(f"Actualizando categoría '{new_name}'..."):
-                            success = self._update_category(cat_id, new_name, new_description)
-                            
-                            if success:
-                                st.success(f"✅ Categoría actualizada correctamente")
-                                
-                                # Limpiar cualquier caché relacionado
-                                for key in list(st.session_state.keys()):
-                                    if key.startswith('chart_cache_') or key.startswith('category_'):
-                                        del st.session_state[key]
-                                
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error("❌ Error al actualizar la categoría")
-            
-            with col2:
-                # Información y estadísticas de la categoría
-                st.write("#### 📊 Información de la Categoría")
-                
-                stats = cat_info.get("statistics", {})
-                
-                # Métricas principales
-                st.metric("Total Tecnologías", stats.get("total_technologies", 0))
-                st.metric("Tecnologías Activas", stats.get("active_technologies", 0))
-                st.metric("Confianza Promedio", f"{stats.get('average_confidence', 0):.2f}")
-                
-                # Información adicional
-                st.write("**📋 Detalles:**")
-                st.write(f"• **ID:** {cat_id}")
-                
-                # Fecha de creación
-                created_at = category.get("created_at")
-                if created_at:
-                    try:
-                        date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                        formatted_date = date_obj.strftime("%Y-%m-%d")
-                        st.write(f"• **Creada:** {formatted_date}")
-                    except:
-                        st.write(f"• **Creada:** {created_at}")
-                
-                # Distribución de fases
-                phase_dist = stats.get("phase_distribution", {})
-                if phase_dist:
-                    st.write("**🎯 Distribución por Fases:**")
-                    total_tech = sum(phase_dist.values())
-                    
-                    for phase, count in sorted(phase_dist.items()):
-                        percentage = (count / total_tech * 100) if total_tech > 0 else 0
-                        st.write(f"• {phase}: {count} ({percentage:.1f}%)")
-                
-                # Acciones adicionales
-                st.write("---")
-                st.write("**⚙️ Acciones:**")
-                
-                if st.button(
-                    "📊 Ver Tecnologías", 
-                    key=f"view_tech_in_cat_{cat_id}_{self.unique_id}"
-                ):
-                    self._show_technologies_in_category(cat_info)
-                
-                if st.button(
-                    "📈 Ver en Gráfica", 
-                    key=f"view_chart_from_edit_{cat_id}_{self.unique_id}"
-                ):
-                    # Configurar para mostrar en la gráfica
-                    st.session_state['selected_category_for_chart'] = cat_id
-                    st.session_state['chart_category_id'] = cat_id
-                    st.session_state['chart_category_name'] = category.get("name", "Sin nombre")
-                    
-                    st.success(f"✅ Categoría seleccionada para visualización. Ve a la pestaña 'Gráfica Hype Cycle'.")
-
-    def _show_technologies_in_category(self, cat_info: dict):
-        """Muestra detalles de las tecnologías en una categoría"""
-        st.write("### 🔬 Tecnologías en la Categoría")
-        
-        technologies = cat_info.get("technologies", [])
-        
-        if not technologies:
-            st.info("No hay tecnologías en esta categoría.")
-            return
-        
-        # Crear tabla de tecnologías
-        tech_data = []
-        for tech in technologies:
-            hype_metrics = tech.get("hype_metrics", {})
-            
-            # Nombre de tecnología
-            tech_name = (
-                tech.get("technology_name") or 
-                tech.get("name") or 
-                tech.get("search_query", "")[:30]
-            )
-            
-            # Fecha
-            exec_date = tech.get("execution_date", "")
-            try:
-                if exec_date:
-                    date_obj = datetime.fromisoformat(exec_date.replace('Z', '+00:00'))
-                    formatted_date = date_obj.strftime("%Y-%m-%d")
-                else:
-                    formatted_date = "Sin fecha"
-            except:
-                formatted_date = "Fecha inválida"
-            
-            tech_data.append({
-                "🔬 Tecnología": tech_name,
-                "📍 Fase": hype_metrics.get("phase", "Unknown"),
-                "🎯 Confianza": f"{hype_metrics.get('confidence', 0):.2f}",
-                "📊 Menciones": hype_metrics.get("total_mentions", 0),
-                "⏱️ Tiempo al Plateau": hype_metrics.get("time_to_plateau", "N/A"),
-                "📅 Fecha": formatted_date,
-                "✅ Activa": "Sí" if tech.get("is_active", True) else "No",
-                "🆔 ID": tech.get("query_id", tech.get("analysis_id", ""))[:8]
-            })
-        
-        # Mostrar tabla
-        if tech_data:
-            df = pd.DataFrame(tech_data)
-            
-            # Opciones de filtrado
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                phase_filter = st.selectbox(
-                    "Filtrar por fase:",
-                    options=["Todas"] + sorted(df["📍 Fase"].unique().tolist()),
-                    key=f"tech_phase_filter_{self.unique_id}"
-                )
-            
-            with col2:
-                status_filter = st.selectbox(
-                    "Filtrar por estado:",
-                    options=["Todas", "Activas", "Inactivas"],
-                    key=f"tech_status_filter_{self.unique_id}"
-                )
-            
-            with col3:
-                sort_by = st.selectbox(
-                    "Ordenar por:",
-                    options=["Fecha", "Confianza", "Menciones", "Nombre"],
-                    key=f"tech_sort_filter_{self.unique_id}"
-                )
-            
-            # Aplicar filtros
-            filtered_df = df.copy()
-            
-            if phase_filter != "Todas":
-                filtered_df = filtered_df[filtered_df["📍 Fase"] == phase_filter]
-            
-            if status_filter == "Activas":
-                filtered_df = filtered_df[filtered_df["✅ Activa"] == "Sí"]
-            elif status_filter == "Inactivas":
-                filtered_df = filtered_df[filtered_df["✅ Activa"] == "No"]
-            
-            # Aplicar ordenamiento
-            if sort_by == "Fecha":
-                filtered_df = filtered_df.sort_values("📅 Fecha", ascending=False)
-            elif sort_by == "Confianza":
-                filtered_df["_conf_sort"] = filtered_df["🎯 Confianza"].astype(float)
-                filtered_df = filtered_df.sort_values("_conf_sort", ascending=False)
-                filtered_df = filtered_df.drop("_conf_sort", axis=1)
-            elif sort_by == "Menciones":
-                filtered_df = filtered_df.sort_values("📊 Menciones", ascending=False)
-            elif sort_by == "Nombre":
-                filtered_df = filtered_df.sort_values("🔬 Tecnología")
-            
-            # Mostrar tabla filtrada
-            st.write(f"**Mostrando {len(filtered_df)} de {len(df)} tecnologías**")
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-            
-            # Estadísticas de la vista filtrada
-            if len(filtered_df) > 0:
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    avg_conf = filtered_df["🎯 Confianza"].astype(float).mean()
-                    st.metric("Confianza Promedio", f"{avg_conf:.2f}")
-                
-                with col2:
-                    total_mentions = filtered_df["📊 Menciones"].sum()
-                    st.metric("Total Menciones", total_mentions)
-                
-                with col3:
-                    active_count = (filtered_df["✅ Activa"] == "Sí").sum()
-                    st.metric("Activas", active_count)
-                
-                with col4:
-                    # Fase más común
-                    most_common_phase = filtered_df["📍 Fase"].mode().iloc[0] if not filtered_df["📍 Fase"].mode().empty else "N/A"
-                    st.metric("Fase Más Común", most_common_phase)
-
-    def _show_category_statistics(self):
-        """Muestra estadísticas globales de categorías"""
-        st.write("### 📊 Estadísticas Globales de Categorías")
-        
-        # Obtener todas las categorías y sus estadísticas
-        categories = self.storage.storage.get_all_categories()
-        all_queries = self.storage.get_all_hype_cycle_queries()
-        
-        if not categories or not all_queries:
-            st.info("No hay suficientes datos para mostrar estadísticas.")
-            return
-        
-        # Calcular estadísticas por categoría
-        category_stats = []
-        
-        for cat in categories:
-            cat_id = cat.get("id") or cat.get("category_id")
-            cat_name = cat.get("name", "Sin nombre")
-            
-            cat_info = self._get_category_info(cat_id)
-            stats = cat_info.get("statistics", {})
-            
-            category_stats.append({
-                "Categoría": cat_name,
-                "Total Tecnologías": stats.get("total_technologies", 0),
-                "Tecnologías Activas": stats.get("active_technologies", 0),
-                "Confianza Promedio": stats.get("average_confidence", 0),
-                "ID": cat_id
-            })
-        
-        # Crear DataFrame para análisis
-        df_stats = pd.DataFrame(category_stats)
-        
-        # Métricas globales
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            total_categories = len(df_stats)
-            st.metric("Total Categorías", total_categories)
-        
-        with col2:
-            total_technologies = df_stats["Total Tecnologías"].sum()
-            st.metric("Total Tecnologías", total_technologies)
-        
-        with col3:
-            active_technologies = df_stats["Tecnologías Activas"].sum()
-            st.metric("Tecnologías Activas", active_technologies)
-        
-        with col4:
-            overall_avg_conf = df_stats["Confianza Promedio"].mean()
-            st.metric("Confianza Global", f"{overall_avg_conf:.2f}")
-        
-        # Tabla de estadísticas por categoría
-        st.write("#### 📋 Estadísticas por Categoría")
-        
-        # Ordenar por número de tecnologías
-        df_display = df_stats.sort_values("Total Tecnologías", ascending=False)
-        
-        # Configurar columnas para mostrar
-        column_config = {
-            "Categoría": st.column_config.TextColumn("Categoría", width="medium"),
-            "Total Tecnologías": st.column_config.NumberColumn("Total", width="small"),
-            "Tecnologías Activas": st.column_config.NumberColumn("Activas", width="small"),
-            "Confianza Promedio": st.column_config.NumberColumn("Confianza", format="%.2f", width="small"),
-            "ID": st.column_config.TextColumn("ID", width="small")
-        }
-        
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config=column_config
-        )
-        
-        # Gráficos de distribución
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Gráfico de barras de tecnologías por categoría
-            if not df_stats.empty:
-                import plotly.express as px
-                
-                fig_bar = px.bar(
-                    df_stats.sort_values("Total Tecnologías", ascending=True),
-                    x="Total Tecnologías",
-                    y="Categoría",
-                    orientation='h',
-                    title="Tecnologías por Categoría",
-                    color="Confianza Promedio",
-                    color_continuous_scale="viridis"
-                )
-                
-                fig_bar.update_layout(height=400)
-                st.plotly_chart(fig_bar, use_container_width=True)
-        
-        with col2:
-            # Gráfico de pastel de distribución
-            if not df_stats.empty and df_stats["Total Tecnologías"].sum() > 0:
-                fig_pie = px.pie(
-                    df_stats[df_stats["Total Tecnologías"] > 0],
-                    values="Total Tecnologías",
-                    names="Categoría",
-                    title="Distribución de Tecnologías"
-                )
-                
-                fig_pie.update_layout(height=400)
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-    def _show_move_technologies(self):
-        """Interfaz para mover tecnologías entre categorías - VERSIÓN CON FLAG DE RESET"""
-        st.write("### 🔄 Mover Tecnologías Entre Categorías")
-        
-        all_queries = self.storage.get_all_hype_cycle_queries()
-        categories = self.storage.storage.get_all_categories()
-        
-        if not all_queries or not categories:
-            st.info("No hay suficientes datos para mover tecnologías.")
-            return
-        
-        # CLAVES ESTABLES PARA SESSION STATE
-        FILTER_CAT_KEY = "move_tech_filter_category_stable"
-        TECH_SELECTOR_KEY = "move_tech_selector_stable"
-        TARGET_CAT_KEY = "move_target_category_stable"
-        RESET_FLAG_KEY = "move_tech_reset_flag"
-        
-        # PROCESAR FLAG DE RESET ANTES DE CREAR WIDGETS
-        if st.session_state.get(RESET_FLAG_KEY, False):
-            # Eliminar las keys para forzar reinicialización
-            keys_to_reset = [FILTER_CAT_KEY, TECH_SELECTOR_KEY, TARGET_CAT_KEY, RESET_FLAG_KEY]
-            for key in keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
-            # Forzar rerun para reinicializar con valores limpios
-            st.rerun()
-        
-        # Preparar opciones de categorías (ESTABLE)
-        category_options = {}
-        for cat in categories:
-            cat_id = cat.get("id") or cat.get("category_id")
-            cat_name = cat.get("name", "Sin nombre")
-            category_options[cat_name] = cat_id
-        
-        # INICIALIZAR ESTADOS CON VALORES REALES
-        filter_options = ["Todas"] + list(category_options.keys())
-        if FILTER_CAT_KEY not in st.session_state:
-            st.session_state[FILTER_CAT_KEY] = "Todas"
-        
-        # Preparar TODAS las opciones de tecnologías (ESTABLE)
-        all_tech_options = {}
-        for query in all_queries:
-            query_id = query.get("query_id", query.get("analysis_id"))
-            tech_name = (
-                query.get("technology_name") or 
-                query.get("name") or 
-                query.get("search_query", "")[:30]
-            )
-            current_cat_id = query.get("category_id", "unknown")
-            
-            # Obtener nombre de categoría actual
-            current_cat_name = "Sin categoría"
-            for cat in categories:
-                cat_id = cat.get("id") or cat.get("category_id")
-                if cat_id == current_cat_id:
-                    current_cat_name = cat.get("name", "Sin nombre")
-                    break
-            
-            display_name = f"{tech_name} (Actual: {current_cat_name})"
-            all_tech_options[display_name] = {
-                "query_id": query_id,
-                "tech_name": tech_name,
-                "current_category_id": current_cat_id,
-                "current_category_name": current_cat_name,
-                "query": query
-            }
-        
-        # INTERFAZ CON ESTADOS ESTABLES
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.write("#### 📋 Seleccionar Tecnología")
-            
-            # Filtro por categoría actual
-            filter_category = st.selectbox(
-                "Filtrar por categoría actual:",
-                options=filter_options,
-                key=FILTER_CAT_KEY
-            )
-            
-            # FILTRAR TECNOLOGÍAS BASADO EN SELECCIÓN ACTUAL
-            if filter_category != "Todas":
-                filter_cat_id = category_options[filter_category]
-                filtered_tech_options = {
-                    name: info for name, info in all_tech_options.items()
-                    if info["current_category_id"] == filter_cat_id
-                }
-            else:
-                filtered_tech_options = all_tech_options
-            
-            if not filtered_tech_options:
-                st.info("No hay tecnologías en la categoría seleccionada.")
-                return
-            
-            # TECNOLOGÍA SELECTOR
-            tech_options_list = list(filtered_tech_options.keys())
-            
-            # VALIDAR Y CORREGIR VALOR DE TECNOLOGÍA
-            if (TECH_SELECTOR_KEY not in st.session_state or 
-                st.session_state[TECH_SELECTOR_KEY] not in tech_options_list):
-                st.session_state[TECH_SELECTOR_KEY] = tech_options_list[0] if tech_options_list else None
-            
-            if st.session_state[TECH_SELECTOR_KEY] is None:
-                st.error("No hay tecnologías disponibles para seleccionar.")
-                return
-            
-            selected_tech = st.selectbox(
-                "Tecnología a mover:",
-                options=tech_options_list,
-                key=TECH_SELECTOR_KEY
-            )
-            
-            tech_info = filtered_tech_options[selected_tech]
-            
-            # Mostrar información de la tecnología seleccionada
-            with st.expander("ℹ️ Información de la Tecnología", expanded=True):
-                query_details = tech_info["query"]
-                
-                st.write(f"**Nombre:** {tech_info['tech_name']}")
-                st.write(f"**Categoría actual:** {tech_info['current_category_name']}")
-                st.write(f"**ID:** {tech_info['query_id']}")
-                
-                # Métricas del Hype Cycle con manejo seguro
-                hype_metrics = query_details.get("hype_metrics", {})
-                if hype_metrics:
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        phase = hype_metrics.get("phase", "Unknown")
-                        confidence = hype_metrics.get("confidence", 0)
-                        st.metric("Fase", phase)
-                        
-                        try:
-                            if isinstance(confidence, (int, float)):
-                                st.metric("Confianza", f"{confidence:.2f}")
-                            else:
-                                st.metric("Confianza", str(confidence))
-                        except:
-                            st.metric("Confianza", "N/A")
-                            
-                    with col_b:
-                        mentions = hype_metrics.get("total_mentions", 0)
-                        st.metric("Menciones", mentions)
-                        
-                        # Fecha de análisis
-                        try:
-                            exec_date = query_details.get("execution_date", "")
-                            if exec_date:
-                                date_obj = datetime.fromisoformat(exec_date.replace('Z', '+00:00'))
-                                formatted_date = date_obj.strftime("%Y-%m-%d")
-                                st.write(f"**Fecha:** {formatted_date}")
-                        except:
-                            st.write("**Fecha:** No disponible")
-        
-        with col2:
-            st.write("#### 🎯 Categoría Destino")
-            
-            # Excluir la categoría actual de las opciones
-            current_cat_id = tech_info["current_category_id"]
-            available_categories = {
-                name: cat_id for name, cat_id in category_options.items()
-                if cat_id != current_cat_id
-            }
-            
-            if not available_categories:
-                st.warning("No hay otras categorías disponibles para mover la tecnología.")
-                return
-            
-            # CATEGORÍA DESTINO SELECTOR
-            available_cat_list = list(available_categories.keys())
-            
-            # VALIDAR Y CORREGIR VALOR DE CATEGORÍA DESTINO
-            if (TARGET_CAT_KEY not in st.session_state or 
-                st.session_state[TARGET_CAT_KEY] not in available_cat_list):
-                st.session_state[TARGET_CAT_KEY] = available_cat_list[0] if available_cat_list else None
-            
-            if st.session_state[TARGET_CAT_KEY] is None:
-                st.error("No hay categorías destino disponibles.")
-                return
-            
-            target_category = st.selectbox(
-                "Mover a categoría:",
-                options=available_cat_list,
-                key=TARGET_CAT_KEY
-            )
-            
-            target_cat_id = available_categories[target_category]
-            
-            # Mostrar información de la categoría destino
-            target_cat_info = self._get_category_info(target_cat_id)
-            
-            if target_cat_info:
-                with st.expander("ℹ️ Información de Categoría Destino", expanded=True):
-                    stats = target_cat_info.get("statistics", {})
-                    
-                    st.write(f"**Nombre:** {target_category}")
-                    st.write(f"**Tecnologías actuales:** {stats.get('total_technologies', 0)}")
-                    st.write(f"**Tecnologías activas:** {stats.get('active_technologies', 0)}")
-                    
-                    # Distribución de fases en categoría destino
-                    phase_dist = stats.get("phase_distribution", {})
-                    if phase_dist:
-                        st.write("**Distribución por fases:**")
-                        for phase, count in phase_dist.items():
-                            st.write(f"• {phase}: {count}")
-            
-            # BOTONES DE ACCIÓN
-            st.write("---")
-            
-            # Confirmación visual del movimiento
-            st.info(f"**Movimiento:** '{tech_info['tech_name']}' de '{tech_info['current_category_name']}' → '{target_category}'")
-            
-            # Crear keys determinísticas basadas en contenido
-            move_hash = abs(hash(f"{tech_info['query_id']}_{target_cat_id}")) % 10000
-            
-            # Checkbox de confirmación
-            confirm_move = st.checkbox(
-                f"Confirmar movimiento de tecnología",
-                key=f"confirm_move_{move_hash}"
-            )
-            
-            # Botones de acción
-            col_a, col_b = st.columns(2)
-            
-            with col_a:
-                if confirm_move and st.button(
-                    "🔄 MOVER TECNOLOGÍA", 
-                    type="primary",
-                    key=f"execute_move_{move_hash}"
-                ):
-                    with st.spinner(f"Moviendo '{tech_info['tech_name']}'..."):
-                        success = self._move_technology(tech_info["query_id"], target_cat_id)
-                        
-                        if success:
-                            st.success(f"✅ '{tech_info['tech_name']}' movida exitosamente a '{target_category}'")
-                            
-                            # Limpiar caché de gráficas
-                            for key in list(st.session_state.keys()):
-                                if key.startswith('chart_cache_'):
-                                    del st.session_state[key]
-                            
-                            # USAR FLAG PARA RESETEAR EN EL PRÓXIMO RENDER
-                            st.session_state[RESET_FLAG_KEY] = True
-                            
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("❌ Error al mover la tecnología")
-            
-            with col_b:
-                if st.button(
-                    "📊 Preview Destino", 
-                    key=f"preview_move_{move_hash}"
-                ):
-                    # Mostrar preview de cómo quedaría la categoría destino
-                    self._show_move_preview(tech_info, target_cat_info)
-
-    def _show_move_preview(self, tech_info: dict, target_cat_info: dict):
-        """Muestra preview de cómo quedaría la categoría después del movimiento"""
-        st.write("### 👀 Preview del Movimiento")
-        
-        # Información actual
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("#### 📊 Estado Actual")
-            current_stats = target_cat_info.get("statistics", {})
-            
-            total_current = current_stats.get("total_technologies", 0)
-            avg_current = current_stats.get("average_confidence", 0)
-            
-            st.metric("Tecnologías", total_current)
-            
-            try:
-                if isinstance(avg_current, (int, float)):
-                    st.metric("Promedio Confianza", f"{avg_current:.2f}")
-                else:
-                    st.metric("Promedio Confianza", "N/A")
-            except:
-                st.metric("Promedio Confianza", "N/A")
-        
-        with col2:
-            st.write("#### 📈 Después del Movimiento")
-            
-            # Calcular nuevas estadísticas
-            new_total = total_current + 1
-            
-            # Calcular nuevo promedio de confianza de forma segura
-            try:
-                tech_confidence = tech_info["query"].get("hype_metrics", {}).get("confidence", 0)
-                
-                if (isinstance(tech_confidence, (int, float)) and 
-                    isinstance(avg_current, (int, float)) and 
-                    total_current > 0):
-                    new_avg = ((avg_current * total_current) + tech_confidence) / new_total
-                elif isinstance(tech_confidence, (int, float)):
-                    new_avg = tech_confidence
-                else:
-                    new_avg = 0
-                    
-            except (TypeError, ZeroDivisionError, ValueError):
-                new_avg = 0
-            
-            st.metric("Tecnologías", new_total, delta=1)
-            
-            # Mostrar delta de confianza
-            try:
-                if isinstance(avg_current, (int, float)) and isinstance(new_avg, (int, float)):
-                    delta_conf = new_avg - avg_current
-                    st.metric("Promedio Confianza", f"{new_avg:.2f}", delta=f"{delta_conf:+.2f}")
-                else:
-                    st.metric("Promedio Confianza", f"{new_avg:.2f}")
-            except:
-                st.metric("Promedio Confianza", "N/A")
-        
-        # Distribución de fases actualizada
-        st.write("#### 📊 Nueva Distribución por Fases")
-        
-        try:
-            current_stats = target_cat_info.get("statistics", {})
-            phase_dist = current_stats.get("phase_distribution", {}).copy()
-            tech_phase = tech_info["query"].get("hype_metrics", {}).get("phase", "Unknown")
-            phase_dist[tech_phase] = phase_dist.get(tech_phase, 0) + 1
-            
-            # Mostrar distribución como texto
-            if phase_dist:
-                st.write("**Distribución actualizada:**")
-                total_tech = sum(phase_dist.values())
-                for phase, count in sorted(phase_dist.items()):
-                    percentage = (count / total_tech * 100) if total_tech > 0 else 0
-                    st.write(f"• **{phase}:** {count} tecnologías ({percentage:.1f}%)")
-            else:
-                st.info("No hay datos de distribución de fases disponibles.")
-                
-        except Exception as e:
-            st.warning(f"No se pudo calcular la distribución de fases: {str(e)}")
-
-    def _reset_move_states_safe(self):
-        """Método auxiliar para resetear estados de forma segura usando flag"""
-        RESET_FLAG_KEY = "move_tech_reset_flag"
-        st.session_state[RESET_FLAG_KEY] = True
-
-    def _show_move_preview(self, tech_info: dict, target_cat_info: dict):
-        """Muestra preview de cómo quedaría la categoría después del movimiento"""
-        st.write("### 👀 Preview del Movimiento")
-        
-        # Información actual
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("#### 📊 Estado Actual")
-            current_stats = target_cat_info.get("statistics", {})
-            
-            st.metric("Tecnologías", current_stats.get("total_technologies", 0))
-            st.metric("Promedio Confianza", f"{current_stats.get('average_confidence', 0):.2f}")
-        
-        with col2:
-            st.write("#### 📈 Después del Movimiento")
-            
-            # Calcular nuevas estadísticas
-            new_total = current_stats.get("total_technologies", 0) + 1
-            
-            # Calcular nuevo promedio de confianza
-            current_avg = current_stats.get("average_confidence", 0)
-            current_total = current_stats.get("total_technologies", 0)
-            tech_confidence = tech_info["query"].get("hype_metrics", {}).get("confidence", 0)
-            
-            if current_total > 0:
-                new_avg = ((current_avg * current_total) + tech_confidence) / new_total
-            else:
-                new_avg = tech_confidence
-            
-            st.metric("Tecnologías", new_total, delta=1)
-            st.metric("Promedio Confianza", f"{new_avg:.2f}", delta=f"{new_avg - current_avg:+.2f}")
-        
-        # Distribución de fases actualizada
-        st.write("#### 📊 Nueva Distribución por Fases")
-        
-        phase_dist = current_stats.get("phase_distribution", {}).copy()
-        tech_phase = tech_info["query"].get("hype_metrics", {}).get("phase", "Unknown")
-        phase_dist[tech_phase] = phase_dist.get(tech_phase, 0) + 1
-        
-        # Crear gráfico de distribución
-        if phase_dist:
-            import plotly.express as px
-            
-            phases = list(phase_dist.keys())
-            counts = list(phase_dist.values())
-            
-            fig = px.pie(
-                values=counts,
-                names=phases,
-                title="Distribución de Fases Después del Movimiento"
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-
-    def _show_mass_operations(self):
-        """Operaciones masivas"""
-        st.write("### 📊 Operaciones Masivas")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("#### 🔄 Actualización Masiva")
-            
-            if st.button("🔄 Recalcular Todas las Posiciones", type="secondary", key=f"recalc_positions_{self.unique_id}"):
-                with st.spinner("Recalculando posiciones..."):
-                    result = self._recalculate_all_positions()
-                    if result:
-                        st.success(f"✅ {result} posiciones recalculadas")
-                    else:
-                        st.error("❌ Error en el recálculo")
-            
-            if st.button("📊 Regenerar Estadísticas", type="secondary", key=f"regen_stats_{self.unique_id}"):
-                st.info("🔄 Funcionalidad en desarrollo")
-        
-        with col2:
-            st.write("#### 🗑️ Limpieza Masiva")
-            
-            if st.button("🗑️ Limpiar Consultas Inactivas", type="secondary", key=f"cleanup_{self.unique_id}"):
-                result = self._cleanup_inactive_queries()
-                if result > 0:
-                    st.success(f"✅ {result} consultas inactivas eliminadas")
-                else:
-                    st.info("No hay consultas inactivas para limpiar")
-            
-            if st.button("🔍 Detectar y Eliminar Duplicados", type="secondary", key=f"detect_dupes_{self.unique_id}"):
-                result = self._detect_and_remove_duplicates()
-                if result > 0:
-                    st.success(f"✅ {result} duplicados eliminados")
-                else:
-                    st.info("No se encontraron duplicados")
-
-    # MÉTODOS AUXILIARES PARA LAS OPERACIONES
-
-    def _delete_technology(self, query_id: str) -> bool:
-        """Elimina una tecnología específica"""
-        try:
-            return self.storage.delete_query(query_id)
-        except Exception as e:
-            st.error(f"Error eliminando tecnología: {str(e)}")
-            return False
-
-    def _delete_category(self, category_id: str) -> bool:
-        """Elimina una categoría y todas sus tecnologías"""
-        try:
-            # Primero eliminar todas las tecnologías de la categoría
-            cat_queries = self.storage.get_queries_by_category(category_id)
-            
-            for query in cat_queries:
-                query_id = query.get("query_id", query.get("analysis_id"))
-                if query_id:
-                    self.storage.delete_query(query_id)
-            
-            # Luego eliminar la categoría (esto depende de tu implementación)
-            # Por ahora, simplemente marcamos como eliminada
-            st.info("Categoría marcada para eliminación (funcionalidad completa en desarrollo)")
-            return True
-            
-        except Exception as e:
-            st.error(f"Error eliminando categoría: {str(e)}")
-            return False
-
-    def _update_category(self, category_id: str, new_name: str, new_description: str) -> bool:
-        """Actualiza los datos de una categoría"""
-        try:
-            # Esta funcionalidad depende de tu implementación específica de storage
-            st.info("Funcionalidad de edición en desarrollo")
-            return True
-        except Exception as e:
-            st.error(f"Error actualizando categoría: {str(e)}")
-            return False
-
-    def _move_technology(self, query_id: str, target_category_id: str) -> bool:
-        """Mueve una tecnología a otra categoría"""
-        try:
-            # Esta funcionalidad requiere actualizar el campo category_id en la BD
-            st.info("Funcionalidad de movimiento en desarrollo")
-            return True
-        except Exception as e:
-            st.error(f"Error moviendo tecnología: {str(e)}")
-            return False
-
-    def _cleanup_inactive_queries(self) -> int:
-        """Elimina consultas marcadas como inactivas"""
-        try:
-            all_queries = self.storage.get_all_hype_cycle_queries()
-            inactive_count = 0
-            
-            for query in all_queries:
-                if not query.get("is_active", True):
-                    query_id = query.get("query_id", query.get("analysis_id"))
-                    if query_id and self.storage.delete_query(query_id):
-                        inactive_count += 1
-            
-            return inactive_count
-        except Exception as e:
-            st.error(f"Error en limpieza: {str(e)}")
-            return 0
-
-    def _detect_and_remove_duplicates(self) -> int:
-        """Detecta y elimina consultas duplicadas"""
-        try:
-            all_queries = self.storage.get_all_hype_cycle_queries()
-            seen_queries = {}
-            duplicates_removed = 0
-            
-            for query in all_queries:
-                search_query = query.get("search_query", "").lower().strip()
-                category_id = query.get("category_id", "")
-                key = f"{search_query}_{category_id}"
-                
-                if key in seen_queries:
-                    # Es un duplicado, eliminar el más antiguo
-                    query_id = query.get("query_id", query.get("analysis_id"))
-                    if query_id and self.storage.delete_query(query_id):
-                        duplicates_removed += 1
-                else:
-                    seen_queries[key] = query
-            
-            return duplicates_removed
-        except Exception as e:
-            st.error(f"Error detectando duplicados: {str(e)}")
-            return 0
     
     def _export_all_categories(self):
         """Exporta datos de todas las categorías"""
@@ -2743,495 +1307,3 @@ class CategoryAdminInterface:
     def _create_full_backup(self):
         """Crea un backup completo del sistema"""
         st.info("💾 Funcionalidad de backup - En desarrollo")
-    
-    def _move_technology(self, query_id: str, target_category_id: str) -> bool:
-        """
-        Mueve una tecnología a otra categoría - IMPLEMENTACIÓN COMPLETA
-        
-        Args:
-            query_id: ID de la consulta/tecnología a mover
-            target_category_id: ID de la categoría destino
-            
-        Returns:
-            bool: True si se movió exitosamente, False en caso contrario
-        """
-        try:
-            # 1. Obtener la tecnología actual
-            current_query = self.storage.get_query_by_id(query_id)
-            
-            if not current_query:
-                st.error(f"❌ No se encontró la tecnología con ID: {query_id}")
-                return False
-            
-            current_category_id = current_query.get("category_id", "default")
-            
-            # 2. Verificar que la categoría destino existe
-            target_category = self.storage.storage.get_category_by_id(target_category_id)
-            if not target_category:
-                st.error(f"❌ La categoría destino no existe: {target_category_id}")
-                return False
-            
-            # 3. Verificar que no es la misma categoría
-            if current_category_id == target_category_id:
-                st.warning("⚠️ La tecnología ya está en esa categoría.")
-                return False
-            
-            # 4. Actualizar la tecnología según el tipo de storage
-            if hasattr(self.storage.storage, 'analyses_table'):
-                # DYNAMODB - Actualizar item
-                return self._move_technology_dynamodb(current_query, target_category_id)
-            else:
-                # LOCAL STORAGE - Actualizar archivo
-                return self._move_technology_local(current_query, target_category_id)
-                
-        except Exception as e:
-            st.error(f"❌ Error moviendo tecnología: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
-            return False
-
-    def _move_technology_dynamodb(self, query: dict, target_category_id: str) -> bool:
-        """Mueve tecnología en DynamoDB"""
-        try:
-            # Obtener claves primarias
-            analysis_id = query.get("analysis_id") or query.get("query_id")
-            timestamp = query.get("timestamp") or query.get("execution_date")
-            
-            if not analysis_id or not timestamp:
-                st.error("❌ No se pueden obtener las claves primarias para DynamoDB")
-                return False
-            
-            # Actualizar el item en DynamoDB
-            response = self.storage.storage.analyses_table.update_item(
-                Key={
-                    'analysis_id': analysis_id,
-                    'timestamp': timestamp
-                },
-                UpdateExpression='SET category_id = :cat_id, last_updated = :updated',
-                ExpressionAttributeValues={
-                    ':cat_id': target_category_id,
-                    ':updated': datetime.now().isoformat()
-                },
-                ReturnValues='UPDATED_NEW'
-            )
-            
-            # Verificar que la actualización fue exitosa
-            if response.get('Attributes'):
-                st.success(f"✅ Tecnología movida exitosamente en DynamoDB")
-                return True
-            else:
-                st.error("❌ No se pudo confirmar la actualización en DynamoDB")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error en DynamoDB: {str(e)}")
-            return False
-
-    def _move_technology_local(self, query: dict, target_category_id: str) -> bool:
-        """Mueve tecnología en almacenamiento local"""
-        try:
-            query_id = query.get("query_id") or query.get("analysis_id")
-            
-            # Buscar y actualizar en hype_cycle_queries
-            hype_queries = self.storage.storage.data.get("hype_cycle_queries", [])
-            updated = False
-            
-            for i, stored_query in enumerate(hype_queries):
-                stored_id = stored_query.get("query_id") or stored_query.get("analysis_id")
-                if stored_id == query_id:
-                    # Actualizar categoría y timestamp
-                    hype_queries[i]["category_id"] = target_category_id
-                    hype_queries[i]["last_updated"] = datetime.now().isoformat()
-                    updated = True
-                    break
-            
-            # También buscar en searches generales (por compatibilidad)
-            searches = self.storage.storage.data.get("searches", [])
-            for i, search in enumerate(searches):
-                search_id = search.get("id") or search.get("analysis_id")
-                if search_id == query_id:
-                    searches[i]["category_id"] = target_category_id
-                    searches[i]["last_updated"] = datetime.now().isoformat()
-                    updated = True
-                    break
-            
-            if updated:
-                # Guardar cambios
-                success = self.storage.storage.save_data()
-                if success:
-                    st.success(f"✅ Tecnología movida exitosamente en almacenamiento local")
-                    return True
-                else:
-                    st.error("❌ Error guardando cambios en almacenamiento local")
-                    return False
-            else:
-                st.error(f"❌ No se encontró la tecnología con ID: {query_id}")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error en almacenamiento local: {str(e)}")
-            return False
-
-    def _delete_technology(self, query_id: str) -> bool:
-        """
-        Elimina una tecnología específica - IMPLEMENTACIÓN COMPLETA
-        
-        Args:
-            query_id: ID de la consulta/tecnología a eliminar
-            
-        Returns:
-            bool: True si se eliminó exitosamente, False en caso contrario
-        """
-        try:
-            # Verificar que la tecnología existe
-            query = self.storage.get_query_by_id(query_id)
-            if not query:
-                st.error(f"❌ No se encontró la tecnología con ID: {query_id}")
-                return False
-            
-            # Eliminar según el tipo de storage
-            if hasattr(self.storage.storage, 'analyses_table'):
-                # DYNAMODB
-                return self._delete_technology_dynamodb(query)
-            else:
-                # LOCAL STORAGE
-                return self._delete_technology_local(query_id)
-                
-        except Exception as e:
-            st.error(f"❌ Error eliminando tecnología: {str(e)}")
-            return False
-
-    def _delete_technology_dynamodb(self, query: dict) -> bool:
-        """Elimina tecnología de DynamoDB"""
-        try:
-            analysis_id = query.get("analysis_id") or query.get("query_id")
-            timestamp = query.get("timestamp") or query.get("execution_date")
-            
-            if not analysis_id or not timestamp:
-                st.error("❌ No se pueden obtener las claves primarias para eliminar")
-                return False
-            
-            # Eliminar item de DynamoDB
-            self.storage.storage.analyses_table.delete_item(
-                Key={
-                    'analysis_id': analysis_id,
-                    'timestamp': timestamp
-                }
-            )
-            
-            st.success(f"✅ Tecnología eliminada de DynamoDB")
-            return True
-            
-        except Exception as e:
-            st.error(f"❌ Error eliminando de DynamoDB: {str(e)}")
-            return False
-
-    def _delete_technology_local(self, query_id: str) -> bool:
-        """Elimina tecnología del almacenamiento local"""
-        try:
-            # Eliminar de hype_cycle_queries
-            hype_queries = self.storage.storage.data.get("hype_cycle_queries", [])
-            original_count = len(hype_queries)
-            
-            hype_queries[:] = [
-                q for q in hype_queries 
-                if q.get("query_id") != query_id and q.get("analysis_id") != query_id
-            ]
-            
-            # Eliminar de searches generales (por compatibilidad)
-            searches = self.storage.storage.data.get("searches", [])
-            searches[:] = [
-                s for s in searches 
-                if s.get("id") != query_id and s.get("analysis_id") != query_id
-            ]
-            
-            deleted_count = original_count - len(hype_queries)
-            
-            if deleted_count > 0:
-                # Guardar cambios
-                success = self.storage.storage.save_data()
-                if success:
-                    st.success(f"✅ Tecnología eliminada del almacenamiento local")
-                    return True
-                else:
-                    st.error("❌ Error guardando cambios")
-                    return False
-            else:
-                st.warning(f"⚠️ No se encontró la tecnología para eliminar: {query_id}")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error en almacenamiento local: {str(e)}")
-            return False
-
-    def _update_category(self, category_id: str, new_name: str, new_description: str) -> bool:
-        """
-        Actualiza los datos de una categoría - IMPLEMENTACIÓN COMPLETA
-        
-        Args:
-            category_id: ID de la categoría a actualizar
-            new_name: Nuevo nombre de la categoría
-            new_description: Nueva descripción
-            
-        Returns:
-            bool: True si se actualizó exitosamente, False en caso contrario
-        """
-        try:
-            # Validar datos de entrada
-            if not new_name.strip():
-                st.error("❌ El nombre de la categoría no puede estar vacío")
-                return False
-            
-            # Verificar que la categoría existe
-            current_category = self.storage.storage.get_category_by_id(category_id)
-            if not current_category:
-                st.error(f"❌ No se encontró la categoría con ID: {category_id}")
-                return False
-            
-            # Actualizar según el tipo de storage
-            if hasattr(self.storage.storage, 'categories_table'):
-                # DYNAMODB
-                return self._update_category_dynamodb(category_id, new_name, new_description)
-            else:
-                # LOCAL STORAGE
-                return self._update_category_local(category_id, new_name, new_description)
-                
-        except Exception as e:
-            st.error(f"❌ Error actualizando categoría: {str(e)}")
-            return False
-
-    def _update_category_dynamodb(self, category_id: str, new_name: str, new_description: str) -> bool:
-        """Actualiza categoría en DynamoDB"""
-        try:
-            # Actualizar item en DynamoDB
-            response = self.storage.storage.categories_table.update_item(
-                Key={'category_id': category_id},
-                UpdateExpression='SET #name = :name, description = :desc, updated_at = :updated',
-                ExpressionAttributeNames={'#name': 'name'},  # 'name' es palabra reservada
-                ExpressionAttributeValues={
-                    ':name': new_name,
-                    ':desc': new_description,
-                    ':updated': datetime.now().isoformat()
-                },
-                ReturnValues='UPDATED_NEW'
-            )
-            
-            if response.get('Attributes'):
-                st.success(f"✅ Categoría actualizada en DynamoDB")
-                return True
-            else:
-                st.error("❌ No se pudo confirmar la actualización")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error actualizando en DynamoDB: {str(e)}")
-            return False
-
-    def _update_category_local(self, category_id: str, new_name: str, new_description: str) -> bool:
-        """Actualiza categoría en almacenamiento local"""
-        try:
-            categories = self.storage.storage.categories.get("categories", [])
-            updated = False
-            
-            for i, category in enumerate(categories):
-                cat_id = category.get("id") or category.get("category_id")
-                if cat_id == category_id:
-                    # Actualizar datos
-                    categories[i]["name"] = new_name
-                    categories[i]["description"] = new_description
-                    categories[i]["updated_at"] = datetime.now().isoformat()
-                    updated = True
-                    break
-            
-            if updated:
-                # Guardar cambios
-                success = self.storage.storage.save_categories()
-                if success:
-                    st.success(f"✅ Categoría actualizada en almacenamiento local")
-                    return True
-                else:
-                    st.error("❌ Error guardando cambios de categoría")
-                    return False
-            else:
-                st.error(f"❌ No se encontró la categoría con ID: {category_id}")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error en almacenamiento local: {str(e)}")
-            return False
-
-    def _delete_category(self, category_id: str) -> bool:
-        """
-        Elimina una categoría y todas sus tecnologías - IMPLEMENTACIÓN COMPLETA
-        
-        Args:
-            category_id: ID de la categoría a eliminar
-            
-        Returns:
-            bool: True si se eliminó exitosamente, False en caso contrario
-        """
-        try:
-            # Verificar que no sea la categoría default
-            if category_id == "default":
-                st.error("❌ No se puede eliminar la categoría 'default'")
-                return False
-            
-            # Verificar que la categoría existe
-            category = self.storage.storage.get_category_by_id(category_id)
-            if not category:
-                st.error(f"❌ No se encontró la categoría con ID: {category_id}")
-                return False
-            
-            # Obtener tecnologías de esta categoría
-            cat_queries = self.storage.get_queries_by_category(category_id)
-            
-            # Confirmar eliminación si hay tecnologías
-            if cat_queries:
-                st.warning(f"⚠️ Esta operación eliminará {len(cat_queries)} tecnologías asociadas")
-                
-                # Eliminar todas las tecnologías primero
-                deleted_tech_count = 0
-                for query in cat_queries:
-                    query_id = query.get("query_id") or query.get("analysis_id")
-                    if query_id and self._delete_technology(query_id):
-                        deleted_tech_count += 1
-                
-                st.info(f"📊 {deleted_tech_count} tecnologías eliminadas")
-            
-            # Eliminar la categoría según el tipo de storage
-            if hasattr(self.storage.storage, 'categories_table'):
-                # DYNAMODB
-                return self._delete_category_dynamodb(category_id)
-            else:
-                # LOCAL STORAGE
-                return self._delete_category_local(category_id)
-                
-        except Exception as e:
-            st.error(f"❌ Error eliminando categoría: {str(e)}")
-            return False
-
-    def _delete_category_dynamodb(self, category_id: str) -> bool:
-        """Elimina categoría de DynamoDB"""
-        try:
-            # Eliminar item de DynamoDB
-            self.storage.storage.categories_table.delete_item(
-                Key={'category_id': category_id}
-            )
-            
-            st.success(f"✅ Categoría eliminada de DynamoDB")
-            return True
-            
-        except Exception as e:
-            st.error(f"❌ Error eliminando categoría de DynamoDB: {str(e)}")
-            return False
-
-    def _delete_category_local(self, category_id: str) -> bool:
-        """Elimina categoría del almacenamiento local"""
-        try:
-            categories = self.storage.storage.categories.get("categories", [])
-            original_count = len(categories)
-            
-            # Filtrar categoría a eliminar
-            categories[:] = [
-                cat for cat in categories 
-                if cat.get("id") != category_id and cat.get("category_id") != category_id
-            ]
-            
-            deleted_count = original_count - len(categories)
-            
-            if deleted_count > 0:
-                # Guardar cambios
-                success = self.storage.storage.save_categories()
-                if success:
-                    st.success(f"✅ Categoría eliminada del almacenamiento local")
-                    return True
-                else:
-                    st.error("❌ Error guardando cambios")
-                    return False
-            else:
-                st.warning(f"⚠️ No se encontró la categoría para eliminar: {category_id}")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Error en almacenamiento local: {str(e)}")
-            return False
-
-    # MÉTODO AUXILIAR PARA OBTENER INFORMACIÓN DE CATEGORÍA
-    def _get_category_info(self, category_id: str) -> dict:
-        """
-        Obtiene información completa de una categoría incluyendo tecnologías asociadas - VERSIÓN CORREGIDA
-        """
-        try:
-            # Obtener datos básicos de la categoría
-            category = self.storage.storage.get_category_by_id(category_id)
-            if not category:
-                return {}
-            
-            # Obtener tecnologías asociadas
-            queries = self.storage.get_queries_by_category(category_id)
-            
-            # Calcular estadísticas
-            total_technologies = len(queries)
-            active_technologies = len([q for q in queries if q.get("is_active", True)])
-            
-            # Distribución por fases
-            phase_distribution = {}
-            for query in queries:
-                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
-                phase_distribution[phase] = phase_distribution.get(phase, 0) + 1
-            
-            # Promedio de confianza
-            confidences = [
-                q.get("hype_metrics", {}).get("confidence", 0) 
-                for q in queries if q.get("hype_metrics", {}).get("confidence")
-            ]
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-            
-            return {
-                "category": category,
-                "statistics": {
-                    "total_technologies": total_technologies,
-                    "active_technologies": active_technologies,
-                    "phase_distribution": phase_distribution,
-                    "average_confidence": avg_confidence
-                },
-                "technologies": queries
-            }
-            
-        except Exception as e:
-            st.error(f"❌ Error obteniendo información de categoría: {str(e)}")
-            return {}
-
-    def _validate_category_data(self, category_data):
-        """Valida que los datos de categoría estén completos"""
-        if not category_data:
-            return False, "Datos de categoría vacíos"
-        
-        # Verificar campos obligatorios
-        required_fields = ["id", "name"]
-        for field in required_fields:
-            if field not in category_data and f"category_{field}" not in category_data:
-                return False, f"Campo requerido faltante: {field}"
-        
-        return True, "Válido"
-
-    # 5. Método auxiliar para debug de errores de variables
-    def _debug_category_data(self, categories):
-        """Método de debug para verificar estructura de datos"""
-        st.write("**🔍 Debug de Categorías:**")
-        
-        if not categories:
-            st.write("• No hay categorías")
-            return
-        
-        for i, category in enumerate(categories):
-            st.write(f"**Categoría {i+1}:**")
-            st.write(f"• Tipo: {type(category)}")
-            st.write(f"• Keys disponibles: {list(category.keys()) if isinstance(category, dict) else 'No es dict'}")
-            
-            # Verificar campos comunes
-            cat_id = category.get("id") or category.get("category_id", "NO_ID")
-            cat_name = category.get("name", "NO_NAME")
-            st.write(f"• ID: {cat_id}")
-            st.write(f"• Nombre: {cat_name}")
-            st.write("---")
