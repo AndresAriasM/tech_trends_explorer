@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import json
 import time
+import math
 from datetime import datetime, timedelta
 
 import plotly.graph_objects as go
@@ -265,12 +266,13 @@ class CategoryAdminInterface:
                 st.write("No hay estados de categoría activos")
     
     def _show_hype_cycle_chart(self):
-        """Muestra la gráfica principal del Hype Cycle - VERSIÓN CORREGIDA"""
+        """Muestra la gráfica principal del Hype Cycle - VERSIÓN MEJORADA PARA PRESENTACIONES"""
         st.subheader("🎯 Gráfica del Hype Cycle por Categorías")
         
         st.write("""
-        Visualiza todas las tecnologías de una categoría posicionadas en el Hype Cycle de Gartner.
-        Cada punto representa una tecnología, con colores que indican el tiempo estimado hasta llegar al plateau.
+        **Visualización profesional del Hype Cycle de Gartner optimizada para presentaciones.**  
+        Cada punto representa una tecnología, con flechas que conectan a etiquetas explicativas 
+        y colores que indican el tiempo estimado hasta llegar al plateau de productividad.
         """)
         
         # Obtener categorías disponibles
@@ -299,7 +301,7 @@ class CategoryAdminInterface:
             st.info("No hay categorías con tecnologías analizadas para mostrar en la gráfica.")
             return
         
-        # CLAVE ESTÁTICA PARA EL SELECTBOX (SIN TIMESTAMP)
+        # CLAVE ESTÁTICA PARA EL SELECTBOX
         CHART_CATEGORY_KEY = "hype_chart_category_selector_static"
         
         # Inicializar el estado si no existe
@@ -322,18 +324,29 @@ class CategoryAdminInterface:
                 # Usar la primera categoría disponible
                 st.session_state[CHART_CATEGORY_KEY] = list(category_options.keys())[0]
         
-        # SELECTOR DE CATEGORÍA CON KEY ESTÁTICA
-        selected_category_name = st.selectbox(
-            "🏷️ Selecciona una categoría para visualizar:",
-            options=list(category_options.keys()),
-            index=list(category_options.keys()).index(st.session_state[CHART_CATEGORY_KEY]),
-            key=CHART_CATEGORY_KEY  # KEY ESTÁTICA
-        )
+        # INTERFAZ DE CONTROL MEJORADA
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            # SELECTOR DE CATEGORÍA
+            selected_category_name = st.selectbox(
+                "🏷️ Selecciona una categoría para visualizar:",
+                options=list(category_options.keys()),
+                index=list(category_options.keys()).index(st.session_state[CHART_CATEGORY_KEY]),
+                key=CHART_CATEGORY_KEY
+            )
+        
+        with col2:
+            # OPCIONES DE VISUALIZACIÓN
+            show_labels = st.checkbox("📝 Etiquetas con flechas", value=True, key="show_labels_hype_chart")
+        
+        with col3:
+            show_confidence = st.checkbox("🎯 Mostrar confianza", value=False, key="show_confidence_hype_chart")
         
         # Obtener ID de categoría seleccionada
         selected_category_id = category_options[selected_category_name]
         
-        # DETECTAR CAMBIO DE CATEGORÍA Y LIMPIAR ESTADOS PREVIOS
+        # DETECTAR CAMBIO DE CATEGORÍA
         previous_category_key = "hype_chart_previous_category"
         if previous_category_key not in st.session_state:
             st.session_state[previous_category_key] = selected_category_id
@@ -341,18 +354,11 @@ class CategoryAdminInterface:
         category_changed = st.session_state[previous_category_key] != selected_category_id
         if category_changed:
             st.session_state[previous_category_key] = selected_category_id
-            # Limpiar cualquier estado relacionado con gráficas previas
+            # Limpiar caché de gráficas previas
             for key in list(st.session_state.keys()):
                 if key.startswith('chart_cache_') or key.startswith('plot_data_'):
                     del st.session_state[key]
             st.info(f"📊 Categoría cambiada a: **{selected_category_name}**")
-        
-        # Opciones de visualización
-        col1, col2 = st.columns(2)
-        with col1:
-            show_labels = st.checkbox("📝 Mostrar etiquetas de tecnologías", value=True, key="show_labels_hype_chart")
-        with col2:
-            show_confidence = st.checkbox("🎯 Mostrar niveles de confianza", value=False, key="show_confidence_hype_chart")
         
         # Obtener tecnologías de la categoría seleccionada
         queries = self.storage.get_queries_by_category(selected_category_id)
@@ -376,13 +382,29 @@ class CategoryAdminInterface:
                         st.write(f"  • {tech_name}: {status}")
             return
         
-        # GENERAR Y MOSTRAR GRÁFICA
+        # INFORMACIÓN PREVIA A LA GRÁFICA
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("🔬 Tecnologías", len(active_queries))
+        
+        with col2:
+            # Fase más común
+            phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in active_queries]
+            if phases:
+                most_common_phase = max(set(phases), key=phases.count)
+                st.metric("📍 Fase Dominante", most_common_phase)
+        
+        with col3:
+            # Confianza promedio
+            confidences = [q.get("hype_metrics", {}).get("confidence", 0) for q in active_queries]
+            if confidences:
+                avg_confidence = sum(confidences) / len(confidences)
+                st.metric("🎯 Confianza Promedio", f"{avg_confidence:.2f}")
+        
+        # GENERAR Y MOSTRAR GRÁFICA MEJORADA
         try:
-            # Usar cache simple basado en la categoría y número de queries
-            cache_key = f"chart_cache_{selected_category_id}_{len(active_queries)}"
-            
-            # Mostrar progreso
-            with st.spinner(f"📊 Generando gráfica para {len(active_queries)} tecnologías de '{selected_category_name}'..."):
+            with st.spinner(f"🎨 Generando visualización profesional para {len(active_queries)} tecnologías..."):
                 fig = self._create_hype_cycle_chart(
                     active_queries, 
                     selected_category_name,
@@ -391,8 +413,79 @@ class CategoryAdminInterface:
                 )
             
             if fig and len(fig.data) > 0:
-                # Mostrar la gráfica
-                st.plotly_chart(fig, use_container_width=True, key=f"hype_chart_plot_{selected_category_id}")
+                # MOSTRAR LA GRÁFICA CON CONFIGURACIÓN OPTIMIZADA
+                st.plotly_chart(
+                    fig, 
+                    use_container_width=True,
+                    key=f"hype_chart_plot_{selected_category_id}",
+                    config={
+                        'displayModeBar': True,
+                        'displaylogo': False,
+                        'modeBarButtonsToAdd': ['downloadSvg'],
+                        'modeBarButtonsToRemove': ['select2d', 'lasso2d', 'autoScale2d'],
+                        'toImageButtonOptions': {
+                            'format': 'png',
+                            'filename': f'hype_cycle_{selected_category_name}',
+                            'height': 750,
+                            'width': 1200,
+                            'scale': 2  # Alta resolución para presentaciones
+                        }
+                    }
+                )
+                
+                # INFORMACIÓN ADICIONAL PARA PRESENTACIONES
+                with st.expander("📋 Información para Presentaciones", expanded=False):
+                    st.write("### 🎯 Consejos para Presentar")
+                    st.write("""
+                    - **📱 Descargar:** Usa el botón de descarga para obtener la imagen en alta resolución
+                    - **🖥️ Proyección:** La gráfica está optimizada para pantallas de presentación
+                    - **🎨 Colores:** Los colores representan tiempo estimado hasta el plateau
+                    - **➡️ Flechas:** Conectan cada tecnología con su etiqueta explicativa
+                    - **📊 Dimensiones:** 1200x750px optimizado para slides y documentos
+                    """)
+                    
+                    # Estadísticas de la gráfica para contexto en presentaciones
+                    st.write("### 📊 Datos de Contexto")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        phases_dist = {}
+                        for q in active_queries:
+                            phase = q.get("hype_metrics", {}).get("phase", "Unknown")
+                            phases_dist[phase] = phases_dist.get(phase, 0) + 1
+                        
+                        st.write("**Distribución por Fases:**")
+                        for phase, count in phases_dist.items():
+                            percentage = (count / len(active_queries)) * 100
+                            st.write(f"• {phase}: {count} ({percentage:.1f}%)")
+                    
+                    with col2:
+                        time_dist = {}
+                        for q in active_queries:
+                            time_to_plateau = q.get("hype_metrics", {}).get("time_to_plateau", "N/A")
+                            time_dist[time_to_plateau] = time_dist.get(time_to_plateau, 0) + 1
+                        
+                        st.write("**Tiempo al Plateau:**")
+                        for time_est, count in time_dist.items():
+                            st.write(f"• {time_est}: {count}")
+                    
+                    with col3:
+                        # Menciones totales
+                        total_mentions = sum(
+                            q.get("hype_metrics", {}).get("total_mentions", 0) 
+                            for q in active_queries
+                        )
+                        st.metric("Total Menciones", f"{total_mentions:,}")
+                        
+                        # Fecha más reciente
+                        dates = [q.get("execution_date", "") for q in active_queries if q.get("execution_date")]
+                        if dates:
+                            latest_date = max(dates)
+                            try:
+                                formatted_date = datetime.fromisoformat(latest_date.replace('Z', '+00:00')).strftime("%Y-%m-%d")
+                                st.write(f"**Análisis más reciente:** {formatted_date}")
+                            except:
+                                st.write(f"**Análisis más reciente:** {latest_date[:10]}")
                 
                 # Mostrar leyenda de la gráfica
                 self._show_chart_legend(active_queries)
@@ -402,7 +495,7 @@ class CategoryAdminInterface:
                     del st.session_state['selected_category_for_chart']
                 if 'chart_category_id' in st.session_state:
                     del st.session_state['chart_category_id']
-                
+            
             else:
                 st.error("❌ Error: La gráfica está vacía o no se pudo generar")
                 st.write("**Información de debug:**")
@@ -416,54 +509,69 @@ class CategoryAdminInterface:
                 st.code(traceback.format_exc())
     
     def _create_hype_cycle_chart(self, queries: List[Dict], category_name: str, 
-                        show_labels: bool = True, show_confidence: bool = False,
-                        chart_key: str = None) -> go.Figure:
+                        show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
         """
-        Crea la gráfica del Hype Cycle estilo Gartner clásico - VERSIÓN CORREGIDA
-        
-        Args:
-            queries: Lista de consultas/tecnologías
-            category_name: Nombre de la categoría
-            show_labels: Si mostrar etiquetas
-            show_confidence: Si mostrar niveles de confianza
-            chart_key: Clave única para evitar problemas de caché
+        Crea la gráfica del Hype Cycle estilo Gartner - VERSIÓN CORREGIDA CON LÍNEAS CONECTORAS
+        Optimizada para hasta 45 tecnologías con posicionamiento inteligente de etiquetas
         """
-        # VALIDACIÓN: Asegurar que tenemos datos válidos
-        if not queries:
-            st.warning("No hay consultas para procesar en la gráfica")
-            return go.Figure()
-        
-        # DEBUG: Mostrar información de las consultas que se están procesando
-        st.write(f"**DEBUG:** Procesando {len(queries)} consultas para '{category_name}'")
-        for i, q in enumerate(queries[:3]):  # Mostrar solo las primeras 3 para debug
-            tech_name = q.get("technology_name", q.get("name", "Sin nombre"))
-            phase = q.get("hype_metrics", {}).get("phase", "Unknown")
-            st.write(f"  • {tech_name}: {phase}")
-        
-        # Crear figura
+        # Crear figura con dimensiones amplias
         fig = go.Figure()
         
-        # CURVA MEJORADA Y SUAVE ESTILO GARTNER
-        x_curve = np.linspace(0, 100, 500)
+        # CURVA AMPLIADA CON ZONA PEAK MÁS EXTENSA
+        x_curve = np.linspace(0, 100, 1000)
         
-        # Crear curva suave usando funciones gaussianas superpuestas
-        peak1 = 70 * np.exp(-((x_curve - 20)/12)**2)
-        trough = -25 * np.exp(-((x_curve - 50)/15)**2)
-        plateau = 25 * (1 / (1 + np.exp(-(x_curve - 80)/8)))
-        baseline = 20
+        # Rediseñar curva con Peak más amplio y definido
+        # Innovation Trigger: x=5-18
+        trigger = 15 * np.exp(-((x_curve - 12)/8)**2)
         
-        y_curve = baseline + peak1 + trough + plateau
+        # Peak ampliado: x=18-35 (más espacio para tecnologías)
+        peak = 70 * np.exp(-((x_curve - 26)/12)**2)
+        
+        # Trough: x=45-65
+        trough = -25 * np.exp(-((x_curve - 55)/12)**2)
+        
+        # Slope: x=65-85
+        slope_rise = 15 * (1 / (1 + np.exp(-(x_curve - 75)/5)))
+        
+        # Plateau: x=85-98
+        plateau = 25 * (1 / (1 + np.exp(-(x_curve - 90)/4)))
+        
+        baseline = 25
+        y_curve = baseline + trigger + peak + trough + slope_rise + plateau
         
         # Suavizar la curva
         try:
             from scipy.ndimage import gaussian_filter1d
-            y_curve = gaussian_filter1d(y_curve, sigma=1.5)
+            y_curve = gaussian_filter1d(y_curve, sigma=2.5)
         except:
-            window = 5
+            window = 9
             y_smooth = np.convolve(y_curve, np.ones(window)/window, mode='same')
             y_curve = y_smooth
         
-        y_curve = np.clip(y_curve, 5, 85)
+        y_curve = np.clip(y_curve, 8, 90)
+        
+        # FUNCIÓN PARA OBTENER POSICIÓN EXACTA SOBRE LA CURVA
+        def get_exact_position_on_curve(x_pos):
+            if x_pos < 0 or x_pos > 100:
+                return None
+            idx = int(x_pos * (len(x_curve) - 1) / 100)
+            idx = min(max(idx, 0), len(y_curve) - 1)
+            return float(x_curve[idx]), float(y_curve[idx])
+        
+        # FUNCIÓN PARA CALCULAR PENDIENTE DE LA CURVA
+        def get_curve_slope(x_pos):
+            if x_pos <= 1 or x_pos >= 99:
+                return 0
+            
+            # Calcular pendiente usando diferencias finitas
+            x1 = max(0, x_pos - 1)
+            x2 = min(100, x_pos + 1)
+            
+            _, y1 = get_exact_position_on_curve(x1)
+            _, y2 = get_exact_position_on_curve(x2)
+            
+            slope = (y2 - y1) / (x2 - x1)
+            return slope
         
         # AÑADIR CURVA PRINCIPAL
         fig.add_trace(go.Scatter(
@@ -472,8 +580,8 @@ class CategoryAdminInterface:
             mode='lines',
             name='Hype Cycle',
             line=dict(
-                color='#1f77b4',
-                width=5,
+                color='#2E86AB',
+                width=6,
                 shape='spline',
                 smoothing=1.3
             ),
@@ -481,84 +589,105 @@ class CategoryAdminInterface:
             hoverinfo='skip'
         ))
         
-        # Función mejorada para obtener Y en la curva
-        def get_y_on_curve(x_pos):
-            if x_pos < 0:
-                return y_curve[0]
-            elif x_pos > 100:
-                return y_curve[-1]
-            else:
-                idx = int(x_pos * (len(x_curve) - 1) / 100)
-                idx = min(max(idx, 0), len(y_curve) - 1)
-                return float(y_curve[idx])
-        
-        # Procesar tecnologías
-        technologies = []
-        colors_palette = [
-            '#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6',
-            '#1ABC9C', '#E67E22', '#34495E', '#E91E63', '#00BCD4'
-        ]
-        
-        # POSICIONES X MEJORADAS PARA EVITAR SUPERPOSICIÓN
-        phase_x_positions = {
-            "Innovation Trigger": [8, 12],
-            "Peak of Inflated Expectations": [18, 24],
-            "Trough of Disillusionment": [42, 48, 54],
-            "Slope of Enlightenment": [65, 72, 78],
-            "Plateau of Productivity": [85, 91],
-            "Unknown": [50]
+        # DEFINIR ZONAS CON POSICIONES ESPECÍFICAS SOBRE LA CURVA
+        phase_positions = {
+            "Innovation Trigger": {
+                "x_range": list(range(8, 18, 2)),  # [8, 10, 12, 14, 16]
+                "max_capacity": 5
+            },
+            "Peak of Inflated Expectations": {
+                "x_range": list(range(20, 36, 1)),  # [20, 21, 22... 35] - MÁS ESPACIO
+                "max_capacity": 16  # Capacidad ampliada para zona congestionada
+            },
+            "Trough of Disillusionment": {
+                "x_range": list(range(45, 66, 2)),  # [45, 47, 49... 65]
+                "max_capacity": 11
+            },
+            "Slope of Enlightenment": {
+                "x_range": list(range(68, 83, 2)),  # [68, 70, 72... 82]
+                "max_capacity": 8
+            },
+            "Plateau of Productivity": {
+                "x_range": list(range(85, 97, 2)),  # [85, 87, 89... 95]
+                "max_capacity": 6
+            },
+            "Unknown": {
+                "x_range": [50],
+                "max_capacity": 1
+            }
         }
         
-        phase_counters = {phase: 0 for phase in phase_x_positions.keys()}
+        # PROCESAR Y POSICIONAR TECNOLOGÍAS
+        technologies = []
+        phase_counters = {phase: 0 for phase in phase_positions.keys()}
         
-        for i, query in enumerate(queries):
-            hype_metrics = query.get("hype_metrics", {})
-            phase = hype_metrics.get("phase", "Unknown")
-            confidence = float(hype_metrics.get("confidence", 0.5))
-            total_mentions = int(hype_metrics.get("total_mentions", 0))
-            
-            # Obtener posición X
-            available_positions = phase_x_positions.get(phase, [50])
-            counter = phase_counters[phase]
-            
-            if counter < len(available_positions):
-                pos_x = available_positions[counter]
-            else:
-                base_x = available_positions[counter % len(available_positions)]
-                offset = (counter // len(available_positions)) * 6
-                pos_x = base_x + offset
-            
-            phase_counters[phase] += 1
-            
-            # Obtener Y de la curva
-            pos_y = get_y_on_curve(pos_x)
-            pos_y += np.random.uniform(-1, 3)  # Variación mínima
-            pos_x += np.random.uniform(-0.5, 0.5)
-            
-            # Extraer nombre de tecnología
-            tech_name = (
-                query.get("technology_name") or 
-                query.get("name") or 
-                query.get("search_query", "")[:20]
-            )
-            
-            time_to_plateau = hype_metrics.get("time_to_plateau", "N/A")
-            
-            technologies.append({
-                "name": tech_name,
-                "phase": phase,
-                "confidence": confidence,
-                "position_x": pos_x,
-                "position_y": pos_y,
-                "query_id": query.get("query_id", ""),
-                "time_to_plateau": time_to_plateau,
-                "total_mentions": total_mentions,
-                "sentiment_avg": float(hype_metrics.get("sentiment_avg", 0)),
-                "color": colors_palette[i % len(colors_palette)]
-            })
+        # Limitar a 45 tecnologías para optimal display
+        limited_queries = queries[:45] if len(queries) > 45 else queries
         
-        # AÑADIR TECNOLOGÍAS CON ETIQUETAS MEJORADAS
+        for i, query in enumerate(limited_queries):
+            # EXTRACCIÓN SEGURA DE DATOS
+            try:
+                # Verificar que query es un diccionario
+                if not isinstance(query, dict):
+                    continue
+                    
+                hype_metrics = query.get("hype_metrics", {})
+                
+                # Verificar que hype_metrics es un diccionario
+                if not isinstance(hype_metrics, dict):
+                    hype_metrics = {}
+                
+                phase = hype_metrics.get("phase", "Unknown")
+                confidence = float(hype_metrics.get("confidence", 0.5))
+                total_mentions = int(hype_metrics.get("total_mentions", 0))
+                
+                # Obtener posición X según disponibilidad en la fase
+                phase_info = phase_positions.get(phase, phase_positions["Unknown"])
+                available_positions = phase_info["x_range"]
+                counter = phase_counters[phase]
+                
+                if counter < len(available_positions):
+                    x_pos = available_positions[counter]
+                else:
+                    # Si excede capacidad, distribuir en posiciones intermedias
+                    base_idx = counter % len(available_positions)
+                    x_pos = available_positions[base_idx] + (counter // len(available_positions)) * 0.5
+                
+                phase_counters[phase] += 1
+                
+                # OBTENER POSICIÓN EXACTA SOBRE LA CURVA
+                exact_x, exact_y = get_exact_position_on_curve(x_pos)
+                
+                # Extraer información de la tecnología
+                tech_name = (
+                    query.get("technology_name") or 
+                    query.get("name") or 
+                    query.get("search_query", f"Tecnología_{i}")[:20]
+                )
+                
+                time_to_plateau = hype_metrics.get("time_to_plateau", "N/A")
+                
+                technologies.append({
+                    "name": tech_name,
+                    "phase": phase,
+                    "confidence": confidence,
+                    "position_x": exact_x,
+                    "position_y": exact_y,
+                    "query_id": query.get("query_id", f"query_{i}"),
+                    "time_to_plateau": time_to_plateau,
+                    "total_mentions": total_mentions,
+                    "sentiment_avg": float(hype_metrics.get("sentiment_avg", 0)),
+                    "slope": get_curve_slope(x_pos)
+                })
+                
+            except Exception as e:
+                # En caso de error con una tecnología específica, continuar con la siguiente
+                print(f"Error procesando tecnología {i}: {str(e)}")
+                continue
+        
+        # AÑADIR TECNOLOGÍAS CON POSICIONAMIENTO INTELIGENTE DE ETIQUETAS ESTILO GARTNER
         for i, tech in enumerate(technologies):
+            # Tamaño del punto basado en métricas
             base_size = 12
             confidence_factor = tech["confidence"] * 6
             mentions_factor = min(tech["total_mentions"] / 200, 4)
@@ -566,16 +695,7 @@ class CategoryAdminInterface:
             
             color = self._get_classic_color_for_time_to_plateau(tech["time_to_plateau"])
             
-            hover_text = f"""
-                <b style="font-size:14px">{tech['name']}</b><br>
-                <b>Fase:</b> {tech['phase']}<br>
-                <b>Confianza:</b> {tech['confidence']:.1%}<br>
-                <b>Tiempo al Plateau:</b> {tech['time_to_plateau']}<br>
-                <b>Menciones:</b> {tech['total_mentions']:,}<br>
-                <b>Sentimiento:</b> {tech['sentiment_avg']:+.2f}
-            """
-            
-            # Punto principal
+            # PUNTO EXACTAMENTE SOBRE LA CURVA
             fig.add_trace(go.Scatter(
                 x=[tech["position_x"]],
                 y=[tech["position_y"]],
@@ -586,55 +706,66 @@ class CategoryAdminInterface:
                     color=color,
                     symbol='circle',
                     line=dict(color='white', width=2),
-                    opacity=0.9
+                    opacity=0.95
                 ),
-                hovertemplate=hover_text + "<extra></extra>",
+                hovertemplate=f"""
+                    <b style="font-size:14px">{tech['name']}</b><br>
+                    <b>Fase:</b> {tech['phase']}<br>
+                    <b>Confianza:</b> {tech['confidence']:.1%}<br>
+                    <b>Tiempo al Plateau:</b> {tech['time_to_plateau']}<br>
+                    <b>Menciones:</b> {tech['total_mentions']:,}<br>
+                    <extra></extra>
+                """,
                 showlegend=False
             ))
             
-            # ETIQUETAS CON MEJOR CONTRASTE Y POSICIONAMIENTO
+            # ETIQUETAS ESTILO GARTNER CON LÍNEAS CONECTORAS
             if show_labels:
-                # Determinar posición de etiqueta para evitar superposición
-                label_y = tech["position_y"] + 8
+                label_x, label_y, _ = self._calculate_intelligent_label_position(
+                    tech["position_x"], tech["position_y"], tech["slope"], tech["name"], i
+                )
                 
-                # Ajustar posición Y si está muy arriba
-                if label_y > 80:
-                    label_y = tech["position_y"] - 8
-                    arrow_direction = 15
-                else:
-                    arrow_direction = -15
+                # 1. AÑADIR LÍNEA CONECTORA SIMPLE (estilo Gartner)
+                fig.add_shape(
+                    type="line",
+                    x0=tech["position_x"], 
+                    y0=tech["position_y"],
+                    x1=label_x, 
+                    y1=label_y,
+                    line=dict(
+                        color=color,
+                        width=1.5
+                    ),
+                    layer="below"
+                )
                 
-                # FONDO CON MEJOR CONTRASTE
+                # 2. AÑADIR ETIQUETA SIN FLECHA (estilo Gartner)
                 fig.add_annotation(
-                    x=tech["position_x"],
+                    x=label_x,
                     y=label_y,
-                    text=f'<b>{tech["name"]}</b>',
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=2,
-                    arrowcolor=color,
+                    text=f'<b style="font-size:10px">{tech["name"]}</b>',
+                    showarrow=False,  # SIN FLECHA - estilo Gartner real
                     font=dict(
                         size=10, 
-                        color='white',  # TEXTO BLANCO
-                        family="Arial Black"
+                        color='#2C3E50',
+                        family="Arial"
                     ),
-                    bgcolor=color,  # FONDO DEL MISMO COLOR QUE EL PUNTO
-                    bordercolor='white',
-                    borderwidth=2,
-                    borderpad=5,
-                    ax=0,
-                    ay=arrow_direction,
-                    opacity=0.9
+                    bgcolor='rgba(255, 255, 255, 0.95)',
+                    bordercolor=color,
+                    borderwidth=1,
+                    borderpad=4,
+                    xanchor='center',
+                    yanchor='middle',
+                    opacity=0.95
                 )
         
-        # ETIQUETAS DE FASES SIN SUPERPOSICIÓN
+        # ETIQUETAS DE FASES
         phase_labels = [
-            {"name": "Innovation<br>Trigger", "x": 10, "y": -8},
-            {"name": "Peak of Inflated<br>Expectations", "x": 21, "y": -8},
-            {"name": "Trough of<br>Disillusionment", "x": 48, "y": -8},
-            {"name": "Slope of<br>Enlightenment", "x": 72, "y": -8},
-            {"name": "Plateau of<br>Productivity", "x": 88, "y": -8}
+            {"name": "Innovation<br>Trigger", "x": 12, "y": -25},
+            {"name": "Peak of Inflated<br>Expectations", "x": 28, "y": -25},  # Centrado en zona ampliada
+            {"name": "Trough of<br>Disillusionment", "x": 55, "y": -25},
+            {"name": "Slope of<br>Enlightenment", "x": 75, "y": -25},
+            {"name": "Plateau of<br>Productivity", "x": 90, "y": -25}
         ]
         
         for label in phase_labels:
@@ -643,30 +774,26 @@ class CategoryAdminInterface:
                 y=label["y"],
                 text=f"<b>{label['name']}</b>",
                 showarrow=False,
-                font=dict(
-                    size=10, 
-                    color='white',  # TEXTO BLANCO
-                    family="Arial"
-                ),
-                bgcolor='#34495E',  # FONDO GRIS OSCURO
-                bordercolor='white',
-                borderwidth=2,
+                font=dict(size=10, color='#7f8c8d', family="Arial"),
+                bgcolor='rgba(255,255,255,0.9)',
+                bordercolor='#bdc3c7',
+                borderwidth=1,
                 borderpad=6,
                 xanchor='center',
                 yanchor='top',
                 opacity=0.9
             )
         
-        # Líneas divisorias más sutiles
-        division_lines = [16, 30, 60, 82]
+        # Líneas divisorias suaves
+        division_lines = [18, 36, 65, 83]
         for x_pos in division_lines:
             fig.add_vline(
                 x=x_pos, 
-                line=dict(color="rgba(189, 195, 199, 0.4)", width=1, dash="dot"),
+                line=dict(color="rgba(123, 139, 158, 0.2)", width=1, dash="dot"),
                 layer="below"
             )
         
-        # LEYENDA MEJORADA CON MEJOR CONTRASTE
+        # LEYENDA DE TIEMPO AL PLATEAU
         legend_items = [
             {"label": "Ya alcanzado", "color": "#27AE60"},
             {"label": "< 2 años", "color": "#3498DB"},
@@ -679,55 +806,51 @@ class CategoryAdminInterface:
             fig.add_trace(go.Scatter(
                 x=[None], y=[None],
                 mode='markers',
-                marker=dict(
-                    size=12, 
-                    color=item["color"],
-                    symbol='circle',
-                    line=dict(color='white', width=2)
-                ),
+                marker=dict(size=12, color=item["color"]),
                 name=item["label"],
                 showlegend=True
             ))
         
-        # LAYOUT OPTIMIZADO
+        # LAYOUT OPTIMIZADO ESTILO GARTNER
         fig.update_layout(
             title=dict(
-                text=f"<b>Hype Cycle - {category_name}</b>",
+                text=f"<b>Hype Cycle - {category_name}</b><br><sub>({len(limited_queries)} tecnologías analizadas)</sub>",
                 x=0.5,
-                font=dict(size=20, color='#2C3E50', family="Arial")
+                font=dict(size=20, color='#2C3E50')
             ),
             xaxis=dict(
                 title=dict(
                     text="<b>TIME</b>",
-                    font=dict(size=14, color='#2C3E50')
+                    font=dict(size=14, color='#7f8c8d')
                 ),
                 showgrid=False,
                 showticklabels=False,
                 zeroline=False,
                 range=[0, 100],
                 showline=True,
-                linecolor='#BDC3C7',
+                linecolor='#bdc3c7',
                 linewidth=2
             ),
             yaxis=dict(
                 title=dict(
                     text="<b>EXPECTATIONS</b>",
-                    font=dict(size=14, color='#2C3E50')
+                    font=dict(size=14, color='#7f8c8d')
                 ),
                 showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[-15, 90],  # RANGO AMPLIADO PARA LAS ETIQUETAS
+                range=[-35, 120],  # ESPACIO AMPLIADO para etiquetas
                 showline=True,
-                linecolor='#BDC3C7',
+                linecolor='#bdc3c7',
                 linewidth=2
             ),
             plot_bgcolor='white',
             paper_bgcolor='white',
-            height=650,
+            height=850,  # ALTURA AUMENTADA
+            width=1300,
             showlegend=True,
-            font=dict(family="Arial, sans-serif"),
-            margin=dict(t=80, l=80, r=160, b=100),
+            font=dict(family="Arial"),
+            margin=dict(t=120, l=80, r=200, b=100),  # MÁRGENES AUMENTADOS
             hovermode='closest',
             legend=dict(
                 title=dict(
@@ -739,28 +862,211 @@ class CategoryAdminInterface:
                 y=0.95,
                 xanchor="left",
                 x=1.02,
-                bgcolor='rgba(248,249,250,0.95)',  # FONDO MÁS CONTRASTANTE
-                bordercolor='#34495E',
-                borderwidth=2,
-                font=dict(size=11, color="#2C3E50"),
+                bgcolor='rgba(255,255,255,0.95)',
+                bordercolor='#bdc3c7',
+                borderwidth=1,
+                font=dict(size=10, color="#2C3E50"),
                 itemsizing="constant"
             )
         )
-        if chart_key:
-            fig.update_layout(
-                annotations=[
-                    dict(
-                        text=f"Chart Key: {chart_key}",
-                        x=0.99, y=0.01,
-                        xref="paper", yref="paper",
-                        showarrow=False,
-                        font=dict(size=8, color="lightgray"),
-                        visible=False  # Oculto pero presente para forzar regeneración
-                    )
-                ]
-            )
-
+        
         return fig
+
+    def _calculate_intelligent_label_position(self, point_x: float, point_y: float, 
+                                        slope: float, text: str, index: int) -> tuple:
+        """
+        Calcula posición inteligente de etiqueta estilo Gartner - VERSIÓN CORREGIDA
+        """
+        # Estrategia mejorada para zona del Peak
+        if point_y > 70:  # Zona alta (Peak) - DISTRIBUCIÓN MEJORADA
+            # Distribuir en múltiples niveles alternando arriba/abajo
+            level = index // 4  # Cada 4 tecnologías, nuevo nivel
+            position_in_level = index % 4
+            
+            if level % 2 == 0:  # Niveles pares: arriba
+                label_x = point_x + (position_in_level - 1.5) * 10  # Más separación
+                label_y = point_y + 25 + (level * 15)  # Más espacio vertical
+            else:  # Niveles impares: abajo
+                label_x = point_x + (position_in_level - 1.5) * 10
+                label_y = point_y - 20 - (level * 10)
+                
+        elif point_x < 25:  # Innovation Trigger
+            label_x = point_x - 3 + (index % 3) * 4
+            label_y = point_y + 18 + (index % 2) * 8
+            
+        elif point_x > 75:  # Plateau
+            label_x = point_x + (index % 4 - 2) * 4
+            label_y = point_y + 16 + (index % 3) * 6
+            
+        elif point_y < 30:  # Trough
+            label_x = point_x + (index % 5 - 2) * 5
+            label_y = point_y - 16 - (index % 3) * 5
+            
+        else:  # Slope - distribución mixta
+            if index % 2 == 0:
+                label_x = point_x + (index % 4 - 1.5) * 4
+                label_y = point_y + 15 + (index % 2) * 7
+            else:
+                label_x = point_x + (index % 4 - 1.5) * 4
+                label_y = point_y - 12 - (index % 2) * 6
+        
+        # Mantener dentro de límites
+        label_x = max(5, min(95, label_x))
+        label_y = max(-30, min(115, label_y))
+        
+        # RETORNAR FORMATO COMPATIBLE con tu código existente
+        return label_x, label_y, {"ax": 0, "ay": 0}  # ax, ay en 0 para líneas simples
+
+    def _safe_get_tech_data(self, query, index):
+        """
+        Extrae datos de tecnología de forma segura para evitar errores de tipo
+        """
+        try:
+            # Verificar que query es un diccionario
+            if not isinstance(query, dict):
+                return None
+                
+            hype_metrics = query.get("hype_metrics", {})
+            
+            # Verificar que hype_metrics es un diccionario
+            if not isinstance(hype_metrics, dict):
+                hype_metrics = {}
+            
+            # Extraer datos de forma segura
+            tech_data = {
+                "name": (
+                    query.get("technology_name") or 
+                    query.get("name") or 
+                    query.get("search_query", f"Tech_{index}")[:20]
+                ),
+                "phase": hype_metrics.get("phase", "Unknown"),
+                "confidence": float(hype_metrics.get("confidence", 0.5)),
+                "position_x": 0,  # Se calculará después
+                "position_y": 0,  # Se calculará después
+                "query_id": query.get("query_id", f"id_{index}"),
+                "time_to_plateau": hype_metrics.get("time_to_plateau", "N/A"),
+                "total_mentions": int(hype_metrics.get("total_mentions", 0)),
+                "slope": 0
+            }
+            
+            return tech_data
+            
+        except Exception as e:
+            # En caso de error, retornar datos por defecto
+            return {
+                "name": f"Tech_{index}",
+                "phase": "Unknown",
+                "confidence": 0.5,
+                "position_x": 50,
+                "position_y": 50,
+                "query_id": f"error_id_{index}",
+                "time_to_plateau": "N/A",
+                "total_mentions": 0,
+                "slope": 0
+            }
+    
+    def _get_classic_color_for_time_to_plateau(self, time_estimate: str) -> str:
+        """Colores clásicos para tiempo al plateau"""
+        time_colors = {
+            "already": "#27AE60",
+            "<2": "#3498DB", 
+            "2-5": "#F39C12",
+            "5-10": "#E67E22",
+            ">10": "#E74C3C",
+            "unknown": "#95A5A6"
+        }
+        
+        time_lower = time_estimate.lower()
+        
+        if any(x in time_lower for x in ["ya alcanzado", "already", "reached"]):
+            return time_colors["already"]
+        elif any(x in time_lower for x in ["<2", "menos de 2", "1-2"]):
+            return time_colors["<2"]
+        elif any(x in time_lower for x in ["2-5", "3-5", "2-4"]):
+            return time_colors["2-5"]
+        elif any(x in time_lower for x in ["5-10", "6-10", "5-8"]):
+            return time_colors["5-10"]
+        elif any(x in time_lower for x in [">10", "más de 10", "10+"]):
+            return time_colors[">10"]
+        else:
+            return time_colors["unknown"]
+
+    def _apply_advanced_separation(self, technologies: List[Dict]) -> List[Dict]:
+        """
+        Aplica algoritmo avanzado de separación para evitar superposición
+        """
+        min_distance = 18  # Distancia mínima entre puntos
+        max_iterations = 100
+        
+        for iteration in range(max_iterations):
+            moved = False
+            
+            for i, tech1 in enumerate(technologies):
+                for j, tech2 in enumerate(technologies[i+1:], i+1):
+                    distance = self._calculate_distance(tech1, tech2)
+                    
+                    if distance < min_distance:
+                        # Calcular vector de separación
+                        dx = tech2["position_x"] - tech1["position_x"]
+                        dy = tech2["position_y"] - tech1["position_y"]
+                        
+                        # Evitar división por cero
+                        if distance == 0:
+                            angle = np.random.uniform(0, 2*np.pi)
+                            dx = np.cos(angle) * 2
+                            dy = np.sin(angle) * 2
+                            distance = 2
+                        
+                        # Normalizar y escalar
+                        separation_factor = (min_distance - distance) / distance / 2
+                        move_x = dx * separation_factor
+                        move_y = dy * separation_factor
+                        
+                        # Mover ambas tecnologías
+                        tech1["position_x"] -= move_x
+                        tech1["position_y"] -= move_y
+                        tech2["position_x"] += move_x
+                        tech2["position_y"] += move_y
+                        
+                        # Mantener dentro de límites
+                        for tech in [tech1, tech2]:
+                            tech["position_x"] = max(2, min(97, tech["position_x"]))
+                            tech["position_y"] = max(8, min(88, tech["position_y"]))
+                        
+                        moved = True
+            
+            if not moved:
+                break
+        
+        return technologies
+
+    def _calculate_optimal_label_position(self, point_x: float, point_y: float, 
+                                        text: str, index: int) -> tuple:
+        """
+        Calcula la posición óptima para una etiqueta evitando superposición
+        """
+        # Estrategias de posicionamiento según la zona de la curva
+        if point_x < 30:  # Zona inicial - etiquetas arriba
+            label_x = point_x + 5
+            label_y = point_y + 15 + (index % 3) * 8
+        elif point_x < 60:  # Zona del valle - etiquetas abajo
+            label_x = point_x
+            label_y = point_y - 15 - (index % 3) * 6
+        else:  # Zona final - etiquetas arriba
+            label_x = point_x - 5
+            label_y = point_y + 12 + (index % 3) * 8
+        
+        # Asegurar que las etiquetas estén dentro de los límites
+        label_x = max(5, min(95, label_x))
+        label_y = max(-10, min(90, label_y))
+        
+        return label_x, label_y
+
+    def _calculate_distance(self, tech1: Dict, tech2: Dict) -> float:
+        """Calcula distancia euclidiana entre dos tecnologías"""
+        dx = tech1.get("position_x", 0) - tech2.get("position_x", 0)
+        dy = tech1.get("position_y", 0) - tech2.get("position_y", 0)
+        return math.sqrt(dx*dx + dy*dy)
 
     def _get_classic_color_for_time_to_plateau(self, time_estimate: str) -> str:
         """Colores clásicos para tiempo al plateau"""
@@ -921,7 +1227,7 @@ class CategoryAdminInterface:
             ))
         
         # Configurar leyenda mejorada
-        fig.update_layout(
+        axis=dict(
             legend=dict(
                 title=dict(
                     text="<b>Tiempo al Plateau</b>",
@@ -1906,7 +2212,7 @@ class CategoryAdminInterface:
                 st.plotly_chart(fig_pie, use_container_width=True)
 
     def _show_move_technologies(self):
-        """Interfaz para mover tecnologías entre categorías - VERSIÓN IMPLEMENTADA"""
+        """Interfaz para mover tecnologías entre categorías - VERSIÓN CON FLAG DE RESET"""
         st.write("### 🔄 Mover Tecnologías Entre Categorías")
         
         all_queries = self.storage.get_all_hype_cycle_queries()
@@ -1916,8 +2222,36 @@ class CategoryAdminInterface:
             st.info("No hay suficientes datos para mover tecnologías.")
             return
         
-        # Preparar opciones de tecnologías
-        tech_options = {}
+        # CLAVES ESTABLES PARA SESSION STATE
+        FILTER_CAT_KEY = "move_tech_filter_category_stable"
+        TECH_SELECTOR_KEY = "move_tech_selector_stable"
+        TARGET_CAT_KEY = "move_target_category_stable"
+        RESET_FLAG_KEY = "move_tech_reset_flag"
+        
+        # PROCESAR FLAG DE RESET ANTES DE CREAR WIDGETS
+        if st.session_state.get(RESET_FLAG_KEY, False):
+            # Eliminar las keys para forzar reinicialización
+            keys_to_reset = [FILTER_CAT_KEY, TECH_SELECTOR_KEY, TARGET_CAT_KEY, RESET_FLAG_KEY]
+            for key in keys_to_reset:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # Forzar rerun para reinicializar con valores limpios
+            st.rerun()
+        
+        # Preparar opciones de categorías (ESTABLE)
+        category_options = {}
+        for cat in categories:
+            cat_id = cat.get("id") or cat.get("category_id")
+            cat_name = cat.get("name", "Sin nombre")
+            category_options[cat_name] = cat_id
+        
+        # INICIALIZAR ESTADOS CON VALORES REALES
+        filter_options = ["Todas"] + list(category_options.keys())
+        if FILTER_CAT_KEY not in st.session_state:
+            st.session_state[FILTER_CAT_KEY] = "Todas"
+        
+        # Preparar TODAS las opciones de tecnologías (ESTABLE)
+        all_tech_options = {}
         for query in all_queries:
             query_id = query.get("query_id", query.get("analysis_id"))
             tech_name = (
@@ -1936,7 +2270,7 @@ class CategoryAdminInterface:
                     break
             
             display_name = f"{tech_name} (Actual: {current_cat_name})"
-            tech_options[display_name] = {
+            all_tech_options[display_name] = {
                 "query_id": query_id,
                 "tech_name": tech_name,
                 "current_category_id": current_cat_id,
@@ -1944,14 +2278,7 @@ class CategoryAdminInterface:
                 "query": query
             }
         
-        # Preparar opciones de categorías
-        category_options = {}
-        for cat in categories:
-            cat_id = cat.get("id") or cat.get("category_id")
-            cat_name = cat.get("name", "Sin nombre")
-            category_options[cat_name] = cat_id
-        
-        # INTERFAZ MEJORADA DE MOVIMIENTO
+        # INTERFAZ CON ESTADOS ESTABLES
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -1960,28 +2287,40 @@ class CategoryAdminInterface:
             # Filtro por categoría actual
             filter_category = st.selectbox(
                 "Filtrar por categoría actual:",
-                options=["Todas"] + list(category_options.keys()),
-                key=f"move_filter_category_{self.unique_id}"
+                options=filter_options,
+                key=FILTER_CAT_KEY
             )
             
-            # Filtrar tecnologías según categoría seleccionada
+            # FILTRAR TECNOLOGÍAS BASADO EN SELECCIÓN ACTUAL
             if filter_category != "Todas":
                 filter_cat_id = category_options[filter_category]
                 filtered_tech_options = {
-                    name: info for name, info in tech_options.items()
+                    name: info for name, info in all_tech_options.items()
                     if info["current_category_id"] == filter_cat_id
                 }
             else:
-                filtered_tech_options = tech_options
+                filtered_tech_options = all_tech_options
             
             if not filtered_tech_options:
                 st.info("No hay tecnologías en la categoría seleccionada.")
                 return
             
+            # TECNOLOGÍA SELECTOR
+            tech_options_list = list(filtered_tech_options.keys())
+            
+            # VALIDAR Y CORREGIR VALOR DE TECNOLOGÍA
+            if (TECH_SELECTOR_KEY not in st.session_state or 
+                st.session_state[TECH_SELECTOR_KEY] not in tech_options_list):
+                st.session_state[TECH_SELECTOR_KEY] = tech_options_list[0] if tech_options_list else None
+            
+            if st.session_state[TECH_SELECTOR_KEY] is None:
+                st.error("No hay tecnologías disponibles para seleccionar.")
+                return
+            
             selected_tech = st.selectbox(
                 "Tecnología a mover:",
-                options=list(filtered_tech_options.keys()),
-                key=f"move_tech_selector_{self.unique_id}"
+                options=tech_options_list,
+                key=TECH_SELECTOR_KEY
             )
             
             tech_info = filtered_tech_options[selected_tech]
@@ -1994,15 +2333,26 @@ class CategoryAdminInterface:
                 st.write(f"**Categoría actual:** {tech_info['current_category_name']}")
                 st.write(f"**ID:** {tech_info['query_id']}")
                 
-                # Métricas del Hype Cycle
+                # Métricas del Hype Cycle con manejo seguro
                 hype_metrics = query_details.get("hype_metrics", {})
                 if hype_metrics:
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.metric("Fase", hype_metrics.get("phase", "Unknown"))
-                        st.metric("Confianza", f"{hype_metrics.get('confidence', 0):.2f}")
+                        phase = hype_metrics.get("phase", "Unknown")
+                        confidence = hype_metrics.get("confidence", 0)
+                        st.metric("Fase", phase)
+                        
+                        try:
+                            if isinstance(confidence, (int, float)):
+                                st.metric("Confianza", f"{confidence:.2f}")
+                            else:
+                                st.metric("Confianza", str(confidence))
+                        except:
+                            st.metric("Confianza", "N/A")
+                            
                     with col_b:
-                        st.metric("Menciones", hype_metrics.get("total_mentions", 0))
+                        mentions = hype_metrics.get("total_mentions", 0)
+                        st.metric("Menciones", mentions)
                         
                         # Fecha de análisis
                         try:
@@ -2028,10 +2378,22 @@ class CategoryAdminInterface:
                 st.warning("No hay otras categorías disponibles para mover la tecnología.")
                 return
             
+            # CATEGORÍA DESTINO SELECTOR
+            available_cat_list = list(available_categories.keys())
+            
+            # VALIDAR Y CORREGIR VALOR DE CATEGORÍA DESTINO
+            if (TARGET_CAT_KEY not in st.session_state or 
+                st.session_state[TARGET_CAT_KEY] not in available_cat_list):
+                st.session_state[TARGET_CAT_KEY] = available_cat_list[0] if available_cat_list else None
+            
+            if st.session_state[TARGET_CAT_KEY] is None:
+                st.error("No hay categorías destino disponibles.")
+                return
+            
             target_category = st.selectbox(
                 "Mover a categoría:",
-                options=list(available_categories.keys()),
-                key=f"move_target_cat_{self.unique_id}"
+                options=available_cat_list,
+                key=TARGET_CAT_KEY
             )
             
             target_cat_id = available_categories[target_category]
@@ -2060,20 +2422,23 @@ class CategoryAdminInterface:
             # Confirmación visual del movimiento
             st.info(f"**Movimiento:** '{tech_info['tech_name']}' de '{tech_info['current_category_name']}' → '{target_category}'")
             
+            # Crear keys determinísticas basadas en contenido
+            move_hash = abs(hash(f"{tech_info['query_id']}_{target_cat_id}")) % 10000
+            
             # Checkbox de confirmación
             confirm_move = st.checkbox(
                 f"Confirmar movimiento de tecnología",
-                key=f"confirm_move_{self.unique_id}"
+                key=f"confirm_move_{move_hash}"
             )
             
-            # Botón de ejecutar movimiento
+            # Botones de acción
             col_a, col_b = st.columns(2)
             
             with col_a:
                 if confirm_move and st.button(
                     "🔄 MOVER TECNOLOGÍA", 
                     type="primary",
-                    key=f"execute_move_{self.unique_id}"
+                    key=f"execute_move_{move_hash}"
                 ):
                     with st.spinner(f"Moviendo '{tech_info['tech_name']}'..."):
                         success = self._move_technology(tech_info["query_id"], target_cat_id)
@@ -2081,10 +2446,13 @@ class CategoryAdminInterface:
                         if success:
                             st.success(f"✅ '{tech_info['tech_name']}' movida exitosamente a '{target_category}'")
                             
-                            # Limpiar caché de gráficas para que se actualicen
+                            # Limpiar caché de gráficas
                             for key in list(st.session_state.keys()):
                                 if key.startswith('chart_cache_'):
                                     del st.session_state[key]
+                            
+                            # USAR FLAG PARA RESETEAR EN EL PRÓXIMO RENDER
+                            st.session_state[RESET_FLAG_KEY] = True
                             
                             time.sleep(1)
                             st.rerun()
@@ -2094,10 +2462,95 @@ class CategoryAdminInterface:
             with col_b:
                 if st.button(
                     "📊 Preview Destino", 
-                    key=f"preview_move_{self.unique_id}"
+                    key=f"preview_move_{move_hash}"
                 ):
                     # Mostrar preview de cómo quedaría la categoría destino
                     self._show_move_preview(tech_info, target_cat_info)
+
+    def _show_move_preview(self, tech_info: dict, target_cat_info: dict):
+        """Muestra preview de cómo quedaría la categoría después del movimiento"""
+        st.write("### 👀 Preview del Movimiento")
+        
+        # Información actual
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("#### 📊 Estado Actual")
+            current_stats = target_cat_info.get("statistics", {})
+            
+            total_current = current_stats.get("total_technologies", 0)
+            avg_current = current_stats.get("average_confidence", 0)
+            
+            st.metric("Tecnologías", total_current)
+            
+            try:
+                if isinstance(avg_current, (int, float)):
+                    st.metric("Promedio Confianza", f"{avg_current:.2f}")
+                else:
+                    st.metric("Promedio Confianza", "N/A")
+            except:
+                st.metric("Promedio Confianza", "N/A")
+        
+        with col2:
+            st.write("#### 📈 Después del Movimiento")
+            
+            # Calcular nuevas estadísticas
+            new_total = total_current + 1
+            
+            # Calcular nuevo promedio de confianza de forma segura
+            try:
+                tech_confidence = tech_info["query"].get("hype_metrics", {}).get("confidence", 0)
+                
+                if (isinstance(tech_confidence, (int, float)) and 
+                    isinstance(avg_current, (int, float)) and 
+                    total_current > 0):
+                    new_avg = ((avg_current * total_current) + tech_confidence) / new_total
+                elif isinstance(tech_confidence, (int, float)):
+                    new_avg = tech_confidence
+                else:
+                    new_avg = 0
+                    
+            except (TypeError, ZeroDivisionError, ValueError):
+                new_avg = 0
+            
+            st.metric("Tecnologías", new_total, delta=1)
+            
+            # Mostrar delta de confianza
+            try:
+                if isinstance(avg_current, (int, float)) and isinstance(new_avg, (int, float)):
+                    delta_conf = new_avg - avg_current
+                    st.metric("Promedio Confianza", f"{new_avg:.2f}", delta=f"{delta_conf:+.2f}")
+                else:
+                    st.metric("Promedio Confianza", f"{new_avg:.2f}")
+            except:
+                st.metric("Promedio Confianza", "N/A")
+        
+        # Distribución de fases actualizada
+        st.write("#### 📊 Nueva Distribución por Fases")
+        
+        try:
+            current_stats = target_cat_info.get("statistics", {})
+            phase_dist = current_stats.get("phase_distribution", {}).copy()
+            tech_phase = tech_info["query"].get("hype_metrics", {}).get("phase", "Unknown")
+            phase_dist[tech_phase] = phase_dist.get(tech_phase, 0) + 1
+            
+            # Mostrar distribución como texto
+            if phase_dist:
+                st.write("**Distribución actualizada:**")
+                total_tech = sum(phase_dist.values())
+                for phase, count in sorted(phase_dist.items()):
+                    percentage = (count / total_tech * 100) if total_tech > 0 else 0
+                    st.write(f"• **{phase}:** {count} tecnologías ({percentage:.1f}%)")
+            else:
+                st.info("No hay datos de distribución de fases disponibles.")
+                
+        except Exception as e:
+            st.warning(f"No se pudo calcular la distribución de fases: {str(e)}")
+
+    def _reset_move_states_safe(self):
+        """Método auxiliar para resetear estados de forma segura usando flag"""
+        RESET_FLAG_KEY = "move_tech_reset_flag"
+        st.session_state[RESET_FLAG_KEY] = True
 
     def _show_move_preview(self, tech_info: dict, target_cat_info: dict):
         """Muestra preview de cómo quedaría la categoría después del movimiento"""
