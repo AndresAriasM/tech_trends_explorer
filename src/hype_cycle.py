@@ -1,10 +1,8 @@
-# src/hype_cycle.py - SOLO DYNAMODB
+# src/hype_cycle.py - VERSIÓN FINAL LIMPIA SIN LOGGING EN FRONTEND
 import streamlit as st
 import pandas as pd
 import time
-import plotly.express as px
-import plotly.graph_objects as go
-import requests
+import logging
 from datetime import datetime
 from analysis import NewsAnalyzer, QueryBuilder
 from category_admin import CategoryAdminInterface
@@ -19,10 +17,11 @@ from hype_cycle_storage import (
 )
 from data_storage import initialize_database
 
+# Configurar logging real (no visible en frontend)
+logger = logging.getLogger(__name__)
+
 def run_hype_cycle_analysis():
-    """
-    Ejecuta el análisis del Hype Cycle con DynamoDB únicamente
-    """
+    """Ejecuta el análisis del Hype Cycle con DynamoDB únicamente - VERSIÓN LIMPIA"""
     st.markdown('<p class="tab-subheader">📈 Análisis del Hype Cycle</p>', unsafe_allow_html=True)
     
     # Verificar configuración AWS
@@ -63,7 +62,7 @@ def _get_dynamodb_instance():
             aws_secret_access_key=st.session_state.aws_secret_access_key
         )
     except Exception as e:
-        st.error(f"Error conectando a DynamoDB: {str(e)}")
+        logger.error(f"Error conectando a DynamoDB: {str(e)}")
         return None
 
 def _show_admin_interface():
@@ -73,23 +72,17 @@ def _show_admin_interface():
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
-            
-            # Contexto único para evitar conflictos
-            unique_context = f"hype_admin_{int(time.time())}"
-            
-            admin_interface = CategoryAdminInterface(hype_storage, unique_context)
+            stable_context = "hype_admin_main"
+            admin_interface = CategoryAdminInterface(hype_storage, stable_context)
             admin_interface.show_admin_interface()
         else:
             st.error("No se pudo inicializar el sistema de almacenamiento DynamoDB")
             
     except Exception as e:
         st.error(f"Error en la interfaz de administración: {str(e)}")
-        import traceback
-        with st.expander("🔍 Ver detalles del error"):
-            st.code(traceback.format_exc())
 
 def _show_analysis_interface():
-    """Interfaz para realizar nuevos análisis"""
+    """VERSIÓN LIMPIA: Interfaz para realizar nuevos análisis"""
     st.write("""
     Esta herramienta te permite analizar tecnologías usando el modelo del Hype Cycle de Gartner.
     **Almacenamiento:** Todos los datos se guardan en DynamoDB en la nube.
@@ -103,159 +96,135 @@ def _show_analysis_interface():
         st.error("❌ No se pudo conectar a DynamoDB. Verifica tu configuración.")
         return
     
-    # Verificar si hay una consulta para reutilizar
+    # Estado base estable
+    STATE_PREFIX = "hype_analysis_main"
+    
+    # Verificar consulta reutilizada
     reuse_query = st.session_state.get('hype_reuse_query')
     if reuse_query:
         st.info("🔄 **Consulta cargada desde historial**")
         st.code(reuse_query['search_query'])
-        if st.button("Limpiar consulta cargada", key="hype_clear_reused_query_btn"):
+        
+        if st.button("Limpiar consulta cargada", key=f"{STATE_PREFIX}_clear_reused"):
             del st.session_state.hype_reuse_query
             st.rerun()
     
-    # Configuración de categoría para guardar
-    st.write("### 📂 Configuración de Almacenamiento en DynamoDB")
-    with st.expander("⚙️ Opciones de guardado", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Info de DynamoDB
-            st.success("🗄️ **Almacenamiento: DynamoDB**")
-            st.info(f"📍 Región: {st.session_state.get('aws_region')}")
+    # === CONFIGURACIÓN DE ALMACENAMIENTO ===
+    st.write("### 📂 Configuración de Almacenamiento")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.success(f"🗄️ **DynamoDB** - Región: {st.session_state.get('aws_region')}")
+        auto_save = st.checkbox(
+            "Guardar automáticamente", 
+            value=True,
+            key=f"{STATE_PREFIX}_auto_save"
+        )
+    
+    with col2:
+        try:
+            categories = hype_storage.storage.get_all_categories()
+            category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
             
-            # Auto-guardar
-            auto_save = st.checkbox(
-                "Guardar automáticamente", 
-                value=True,
-                help="Guarda automáticamente cada análisis realizado",
-                key="hype_analysis_auto_save_checkbox_dynamo"
+            selected_category_name = st.selectbox(
+                "Categoría para guardar",
+                options=list(category_options.keys()),
+                key=f"{STATE_PREFIX}_category_selector"
             )
-        
-        with col2:
-            # Selector de categoría
-            try:
-                categories = hype_storage.storage.get_all_categories()
-                category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
-                
-                selected_category_name = st.selectbox(
-                    "Categoría para guardar",
-                    options=list(category_options.keys()),
-                    help="Selecciona la categoría donde guardar este análisis",
-                    key="hype_analysis_category_selectbox_dynamo"
-                )
-                
-                selected_category_id = category_options[selected_category_name]
-                
-                # Opción para crear nueva categoría
-                if st.checkbox("Crear nueva categoría", key="hype_analysis_new_category_checkbox_dynamo"):
-                    new_cat_name = st.text_input("Nombre de la nueva categoría", key="hype_analysis_new_cat_name_input_dynamo")
-                    new_cat_desc = st.text_area("Descripción (opcional)", height=60, key="hype_analysis_new_cat_desc_textarea_dynamo")
-                    
-                    if st.button("Crear Categoría", key="hype_analysis_create_category_btn_dynamo") and new_cat_name:
-                        try:
-                            new_cat_id = hype_storage.storage.add_category(new_cat_name, new_cat_desc)
-                            if new_cat_id:
-                                st.success(f"✅ Categoría '{new_cat_name}' creada")
-                                selected_category_id = new_cat_id
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"Error creando categoría: {str(e)}")
+            selected_category_id = category_options[selected_category_name]
             
-            except Exception as e:
-                st.warning(f"Error cargando categorías: {str(e)}")
-                selected_category_id = "default"
+        except Exception as e:
+            logger.error(f"Error cargando categorías: {str(e)}")
+            selected_category_id = "default"
 
-    # Información de la tecnología
-    st.write("### 🔬 Información de la Tecnología")
-    with st.expander("📝 Detalles de la tecnología (opcional)", expanded=False):
+    # === INFORMACIÓN DE TECNOLOGÍA ===
+    with st.expander("📝 Información de la tecnología (opcional)", expanded=False):
         col1, col2 = st.columns(2)
         
         with col1:
             technology_name = st.text_input(
                 "Nombre de la tecnología",
-                placeholder="ej: Inteligencia Artificial, Blockchain, etc.",
-                help="Nombre simplificado que aparecerá en las gráficas",
-                key="hype_technology_name_input_dynamo"
+                placeholder="ej: Inteligencia Artificial, Blockchain",
+                key=f"{STATE_PREFIX}_tech_name"
             )
         
         with col2:
             technology_description = st.text_area(
                 "Descripción (opcional)",
-                placeholder="Breve descripción de la tecnología...",
                 height=60,
-                key="hype_technology_description_textarea_dynamo"
+                key=f"{STATE_PREFIX}_tech_desc"
             )
+
+    # === TÉRMINOS DE BÚSQUEDA SIMPLIFICADOS ===
+    st.write("### 🎯 Términos de búsqueda")
+    topics = _show_simple_topics_interface(STATE_PREFIX, reuse_query)
     
-    # Configuración de búsqueda
-    st.write("### 🎯 Define los términos para el análisis")
-    
-    # Si hay consulta reutilizada, cargar los términos
-    if reuse_query and reuse_query.get('search_terms'):
-        topics = reuse_query['search_terms']
-        st.write("**Términos cargados desde historial:**")
-        for i, term in enumerate(topics):
-            st.write(f"{i+1}. {term.get('value', '')} ({term.get('operator', 'AND')})")
-        
-        if st.button("Modificar términos", key="hype_modify_terms_btn_dynamo"):
-            topics = manage_topics("hype_dynamo", preset_topics=topics)
-    else:
-        topics = manage_topics("hype_dynamo")
-    
-    # Configuración adicional del Hype Cycle
+    # === OPCIONES AVANZADAS ===
     with st.expander("⚙️ Opciones avanzadas", expanded=False):
         col1, col2 = st.columns(2)
+        
         with col1:
             min_year = st.number_input(
                 "Año mínimo",
                 min_value=2010,
                 max_value=2025,
-                value=reuse_query.get('search_parameters', {}).get('min_year', 2015) if reuse_query else 2015,
-                help="Año desde el cual buscar resultados",
-                key="hype_analysis_min_year_input_dynamo"
+                value=2015,
+                key=f"{STATE_PREFIX}_min_year"
             )
+            
+            max_results = st.number_input(
+                "Máximo resultados",
+                min_value=50,
+                max_value=1000,
+                value=200,
+                key=f"{STATE_PREFIX}_max_results"
+            )
+        
         with col2:
             sources_filter = st.multiselect(
                 "Filtrar fuentes",
                 options=["Tech News", "Business News", "Academic Sources", "Blogs"],
-                default=reuse_query.get('search_parameters', {}).get('sources_filter', ["Tech News", "Business News"]) if reuse_query else ["Tech News", "Business News"],
-                help="Tipos de fuentes a incluir en el análisis",
-                key="hype_analysis_sources_filter_multiselect_dynamo"
+                default=["Tech News", "Business News"],
+                key=f"{STATE_PREFIX}_sources"
             )
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            max_results = st.number_input(
-                "Máximo resultados API",
-                min_value=50,
-                max_value=1000,
-                value=200,
-                help="Número máximo de resultados a obtener de la API",
-                key="hype_analysis_max_results_input_dynamo"
-            )
-        with col4:
+            
             analysis_notes = st.text_input(
                 "Notas del análisis",
-                placeholder="Ej: Análisis para Q1 2025, investigación de mercado...",
-                help="Notas que se guardarán con el análisis",
-                key="hype_analysis_notes_input_dynamo"
+                placeholder="Ej: Análisis Q1 2025",
+                key=f"{STATE_PREFIX}_notes"
             )
+
+    # === VALIDACIÓN Y ANÁLISIS ===
+    valid_topics = [t for t in topics if t.get('value', '').strip()]
+    can_analyze = len(valid_topics) > 0 and st.session_state.get('serp_api_key')
     
-    # Mostrar información de consulta actual
-    if topics:
-        current_query = build_search_equation(topics)
-        st.write("### 📝 Consulta actual")
-        st.code(current_query)
+    # Mostrar estado actual
+    if valid_topics:
+        equation = _build_search_equation(valid_topics)
+        st.write("### 📝 Consulta a ejecutar")
+        st.code(equation)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Términos válidos", len(valid_topics))
+        with col2:
+            st.metric("Año mínimo", min_year)
+        with col3:
+            st.metric("Fuentes", len(sources_filter))
     
-    # Botón de análisis
-    if st.button("📊 Analizar Hype Cycle", type="primary", key="hype_analyze_main_btn_dynamo"):
-        if not topics:
-            st.error("Por favor, ingresa al menos un tema para analizar")
-            return
-            
-        if not st.session_state.serp_api_key:
-            st.error("Se requiere una API key de SerpAPI. Por favor, configúrala en el panel lateral.")
-            return
-            
-        # Almacenar parámetros de búsqueda
+    # Mensajes de validación
+    if not valid_topics:
+        st.warning("⚠️ Añade al menos un término válido para continuar")
+    elif not st.session_state.get('serp_api_key'):
+        st.warning("⚠️ Configura tu API key de SerpAPI en el panel lateral")
+    
+    # === BOTÓN DE ANÁLISIS ===
+    if st.button(
+        "📊 Analizar Hype Cycle", 
+        type="primary", 
+        disabled=not can_analyze,
+        key=f"{STATE_PREFIX}_analyze_btn"
+    ):
         search_parameters = {
             "min_year": min_year,
             "sources_filter": sources_filter,
@@ -264,173 +233,240 @@ def _show_analysis_interface():
             "category_id": selected_category_id
         }
         
-        with st.spinner("🔄 Analizando el Hype Cycle..."):
-            start_time = time.time()
-            
-            # Inicializar analizador
-            news_analyzer = NewsAnalyzer()
-            
-            # Construir query
-            query_builder = QueryBuilder()
-            processed_topics = process_topics(topics)
-            google_query = query_builder.build_google_query(
-                processed_topics,
-                min_year,
-                include_patents=True
-            )
-            
-            # Crear objeto de información de queries
-            query_info = {
-                'google_query': google_query,
-                'scopus_query': query_builder.build_scopus_query(topics, min_year),
-                'search_query': google_query,
-                'time_range': f"{min_year}-{datetime.now().year}"
-            }
-            
-            # Realizar búsqueda en SerpAPI
-            serp_success, serp_results = news_analyzer.perform_news_search(
-                serp_api_key=st.session_state.serp_api_key,
-                query=google_query
-            )
-            
-            if serp_success and serp_results:
-                # Análisis del Hype Cycle
-                hype_data = news_analyzer.analyze_hype_cycle(serp_results)
-                
-                if hype_data:
-                    processing_time = time.time() - start_time
-                    
-                    # Mostrar resultados
-                    st.success(f"**Fase Actual:** {hype_data['phase']} (Confianza: {hype_data['confidence']:.2f})")
-                    
-                    # Descripción de la fase
-                    phase_descriptions = {
-                        "Innovation Trigger": """
-                            La tecnología está en su fase inicial de innovación. Se caracteriza por:
-                            - Alto nivel de interés y especulación
-                            - Pocos casos de implementación real
-                            - Gran potencial percibido
-                        """,
-                        "Peak of Inflated Expectations": """
-                            La tecnología está en su punto máximo de expectativas. Se observa:
-                            - Máxima cobertura mediática
-                            - Altas expectativas de mercado
-                            - Posible sobreestimación de capacidades
-                        """,
-                        "Trough of Disillusionment": """
-                            La tecnología está atravesando una fase de desilusión. Caracterizada por:
-                            - Disminución del interés inicial
-                            - Identificación de limitaciones reales
-                            - Reevaluación de expectativas
-                        """,
-                        "Slope of Enlightenment": """
-                            La tecnología está madurando hacia una comprensión realista. Se observa:
-                            - Casos de uso bien definidos
-                            - Beneficios comprobados
-                            - Adopción más estratégica
-                        """,
-                        "Plateau of Productivity": """
-                            La tecnología ha alcanzado un nivel de madurez estable. Caracterizada por:
-                            - Adopción generalizada
-                            - Beneficios claramente demostrados
-                            - Implementación sistemática
-                        """
-                    }
-                    
-                    st.info(phase_descriptions.get(hype_data['phase'], "Descripción no disponible"))
-                    
-                    # Mostrar gráfico del Hype Cycle
-                    fig = news_analyzer.plot_hype_cycle(hype_data, topics)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    # Análisis de puntos de inflexión
-                    st.write("### 📊 Análisis de Puntos de Inflexión")
-                    inflection_points = news_analyzer.analyze_gartner_points(hype_data['yearly_stats'])
-                    inflection_fig = news_analyzer.plot_gartner_analysis(
-                        hype_data['yearly_stats'], 
-                        inflection_points
-                    )
-                    if inflection_fig:
-                        st.plotly_chart(inflection_fig, use_container_width=True)
-                    
-                    # Guardar automáticamente en DynamoDB
-                    if auto_save and hype_storage:
-                        with st.spinner("💾 Guardando análisis en DynamoDB..."):
-                            try:
-                                query_id = hype_storage.save_hype_cycle_query(
-                                    search_query=google_query,
-                                    search_terms=processed_topics,
-                                    hype_analysis_results=hype_data,
-                                    news_results=serp_results,
-                                    category_id=selected_category_id,
-                                    search_parameters=search_parameters,
-                                    notes=analysis_notes,
-                                    technology_name=technology_name,
-                                    technology_description=technology_description
-                                )
-                                
-                                if query_id:
-                                    st.success(f"✅ Análisis guardado automáticamente en DynamoDB con ID: {query_id}")
-                                    
-                                    # Opción para ver en historial
-                                    if st.button("📚 Ver en Historial", key="hype_view_in_history_btn_dynamo"):
-                                        st.session_state.hype_show_query_id = query_id
-                                        st.rerun()
-                                        
-                            except Exception as e:
-                                st.error(f"❌ Error guardando análisis en DynamoDB: {str(e)}")
-                    
-                    # Opción manual de guardado
-                    elif hype_storage and not auto_save:
-                        st.write("### 💾 Guardar Análisis en DynamoDB")
-                        
-                        if st.button("Guardar este análisis", type="secondary", key="hype_manual_save_btn_dynamo"):
-                            with st.spinner("💾 Guardando análisis en DynamoDB..."):
-                                try:
-                                    query_id = hype_storage.save_hype_cycle_query(
-                                        search_query=google_query,
-                                        search_terms=processed_topics,
-                                        hype_analysis_results=hype_data,
-                                        news_results=serp_results,
-                                        category_id=selected_category_id,
-                                        search_parameters=search_parameters,
-                                        notes=analysis_notes,
-                                        technology_name=technology_name,
-                                        technology_description=technology_description
-                                    )
-                                    
-                                    if query_id:
-                                        st.success(f"✅ Análisis guardado en DynamoDB con ID: {query_id}")
-                                        
-                                except Exception as e:
-                                    st.error(f"❌ Error guardando análisis: {str(e)}")
-                    
-                    # Mostrar análisis detallado
-                    news_analyzer.display_advanced_analysis(serp_results, query_info, st)
-                    news_analyzer.display_results(serp_results, st)
-                      
-                else:
-                    st.warning("No se pudo generar el análisis del Hype Cycle con los datos disponibles")
-            else:
-                st.error("No se pudieron obtener datos de SerpAPI para el análisis del Hype Cycle")
-    else:
-        # Mostrar guía cuando no hay análisis
+        _execute_clean_analysis(
+            topics=valid_topics,
+            search_parameters=search_parameters,
+            analysis_notes=analysis_notes,
+            technology_name=technology_name,
+            technology_description=technology_description,
+            selected_category_id=selected_category_id,
+            auto_save=auto_save,
+            hype_storage=hype_storage,
+            state_prefix=STATE_PREFIX
+        )
+    
+    elif not can_analyze:
+        # Mostrar guía si no puede analizar
         st.info("""
         ### 📝 Guía del Hype Cycle
         
         El Hype Cycle de Gartner representa 5 fases en la evolución de una tecnología:
         
-        1. **Innovation Trigger**: Primer interés, pruebas de concepto iniciales
-        2. **Peak of Inflated Expectations**: Máximo entusiasmo, expectativas poco realistas
-        3. **Trough of Disillusionment**: Desencanto cuando la realidad no alcanza las expectativas
-        4. **Slope of Enlightenment**: Comprensión realista de beneficios y limitaciones
-        5. **Plateau of Productivity**: Adopción estable y generalizada
+        1. **Innovation Trigger** - Primer interés, pruebas de concepto iniciales
+        2. **Peak of Inflated Expectations** - Máximo entusiasmo, expectativas poco realistas  
+        3. **Trough of Disillusionment** - Desencanto cuando la realidad no alcanza las expectativas
+        4. **Slope of Enlightenment** - Comprensión realista de beneficios y limitaciones
+        5. **Plateau of Productivity** - Adopción estable y generalizada
         
-        **Almacenamiento:** Todos los análisis se guardan automáticamente en DynamoDB.
-        
-        Para comenzar, ingresa los términos de búsqueda y haz clic en "Analizar Hype Cycle".
+        Para comenzar, añade términos de búsqueda y configura tu API key de SerpAPI.
         """)
+
+def _show_simple_topics_interface(prefix, reuse_query=None):
+    """Interfaz simplificada para términos de búsqueda - SIN RERUNS PROBLEMÁTICOS"""
+    
+    # Key estable para el estado
+    topics_key = f"{prefix}_topics_simple"
+    
+    # Inicializar estado
+    if topics_key not in st.session_state:
+        if reuse_query and reuse_query.get('search_terms'):
+            st.session_state[topics_key] = reuse_query['search_terms']
+        else:
+            st.session_state[topics_key] = [{'value': '', 'operator': 'AND', 'exact_match': False}]
+    
+    # Mostrar términos actuales
+    topics_list = st.session_state[topics_key]
+    
+    # Contenedor para todos los términos
+    for i, topic in enumerate(topics_list):
+        col1, col2, col3, col4 = st.columns([4, 1.5, 1.5, 1])
+        
+        with col1:
+            # Input para el término
+            value_key = f"{prefix}_term_{i}_value"
+            new_value = st.text_input(
+                f"Término {i+1}",
+                value=topic.get('value', ''),
+                key=value_key,
+                placeholder="ej: artificial intelligence"
+            )
+            # Actualizar inmediatamente en el estado
+            st.session_state[topics_key][i]['value'] = new_value
+        
+        with col2:
+            # Selector de operador
+            op_key = f"{prefix}_term_{i}_operator"
+            new_operator = st.selectbox(
+                "Operador",
+                options=['AND', 'OR', 'NOT'],
+                index=['AND', 'OR', 'NOT'].index(topic.get('operator', 'AND')),
+                key=op_key
+            )
+            st.session_state[topics_key][i]['operator'] = new_operator
+        
+        with col3:
+            # Checkbox para exacto
+            exact_key = f"{prefix}_term_{i}_exact"
+            new_exact = st.checkbox(
+                "Exacto",
+                value=topic.get('exact_match', False),
+                key=exact_key
+            )
+            st.session_state[topics_key][i]['exact_match'] = new_exact
+        
+        with col4:
+            # Botón eliminar (solo si hay más de uno)
+            if len(topics_list) > 1:
+                remove_key = f"{prefix}_remove_{i}"
+                if st.button("❌", key=remove_key, help="Eliminar término"):
+                    st.session_state[topics_key].pop(i)
+                    st.rerun()
+    
+    # Botones de control
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("➕ Añadir término", key=f"{prefix}_add_term"):
+            st.session_state[topics_key].append({
+                'value': '', 
+                'operator': 'AND', 
+                'exact_match': False
+            })
+            st.rerun()
+    
+    with col2:
+        if st.button("🧹 Limpiar todo", key=f"{prefix}_clear_terms"):
+            st.session_state[topics_key] = [{'value': '', 'operator': 'AND', 'exact_match': False}]
+            st.rerun()
+    
+    with col3:
+        # Mostrar estado actual
+        valid_count = len([t for t in topics_list if t.get('value', '').strip()])
+        st.caption(f"📊 {len(topics_list)} término(s) | {valid_count} válido(s)")
+    
+    return st.session_state[topics_key]
+
+def _execute_clean_analysis(topics, search_parameters, analysis_notes, technology_name, 
+                          technology_description, selected_category_id, auto_save, 
+                          hype_storage, state_prefix):
+    """Ejecuta el análisis de forma limpia sin logging en frontend"""
+    
+    # Contenedor para progreso limpio
+    progress_placeholder = st.empty()
+    results_container = st.container()
+    
+    try:
+        # Progreso simple
+        with progress_placeholder:
+            with st.spinner("🔄 Ejecutando análisis del Hype Cycle..."):
+                
+                # Inicializar componentes
+                news_analyzer = NewsAnalyzer()
+                query_builder = QueryBuilder()
+                processed_topics = _process_topics(topics)
+                
+                # Construir query
+                google_query = query_builder.build_google_query(
+                    processed_topics,
+                    search_parameters["min_year"],
+                    include_patents=True
+                )
+                
+                # Realizar búsqueda
+                serp_success, serp_results = news_analyzer.perform_news_search(
+                    serp_api_key=st.session_state.serp_api_key,
+                    query=google_query
+                )
+                
+                if not serp_success or not serp_results:
+                    st.error("❌ No se pudieron obtener datos de SerpAPI")
+                    return
+                
+                # Analizar Hype Cycle
+                hype_data = news_analyzer.analyze_hype_cycle(serp_results)
+                
+                if not hype_data:
+                    st.error("❌ No se pudo generar el análisis del Hype Cycle")
+                    return
+        
+        # Limpiar progreso
+        progress_placeholder.empty()
+        
+        # Mostrar resultados
+        with results_container:
+            # Resultado principal
+            st.success(f"**Fase Detectada:** {hype_data['phase']} (Confianza: {hype_data['confidence']:.2f})")
+            
+            # Descripción de la fase
+            _show_phase_description(hype_data['phase'])
+            
+            # Gráfico principal
+            fig = news_analyzer.plot_hype_cycle(hype_data, topics)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Análisis de inflexión
+            st.subheader("📊 Análisis de Puntos de Inflexión")
+            inflection_points = news_analyzer.analyze_gartner_points(hype_data['yearly_stats'])
+            inflection_fig = news_analyzer.plot_gartner_analysis(hype_data['yearly_stats'], inflection_points)
+            if inflection_fig:
+                st.plotly_chart(inflection_fig, use_container_width=True)
+            
+            # Guardar si está habilitado
+            if auto_save and hype_storage:
+                with st.spinner("💾 Guardando en DynamoDB..."):
+                    try:
+                        query_id = hype_storage.save_hype_cycle_query(
+                            search_query=google_query,
+                            search_terms=processed_topics,
+                            hype_analysis_results=hype_data,
+                            news_results=serp_results,
+                            category_id=selected_category_id,
+                            search_parameters=search_parameters,
+                            notes=analysis_notes,
+                            technology_name=technology_name,
+                            technology_description=technology_description
+                        )
+                        
+                        if query_id:
+                            st.success(f"✅ Análisis guardado con ID: {query_id}")
+                            
+                            if st.button("📚 Ver en Historial", key=f"{state_prefix}_view_history_{query_id}"):
+                                st.session_state.hype_show_query_id = query_id
+                                st.rerun()
+                        else:
+                            st.warning("⚠️ Hubo problemas al guardar en DynamoDB")
+                            
+                    except Exception as save_error:
+                        logger.error(f"Error guardando: {str(save_error)}")
+                        st.error("❌ Error guardando en DynamoDB")
+            
+            # Análisis detallado
+            query_info = {
+                'google_query': google_query,
+                'search_query': google_query,
+                'time_range': f"{search_parameters['min_year']}-{datetime.now().year}"
+            }
+            
+            news_analyzer.display_advanced_analysis(serp_results, query_info, st)
+            news_analyzer.display_results(serp_results, st)
+            
+    except Exception as e:
+        logger.error(f"Error en análisis: {str(e)}")
+        st.error(f"❌ Error durante el análisis: {str(e)}")
+
+def _show_phase_description(phase):
+    """Muestra descripción de la fase detectada"""
+    descriptions = {
+        "Innovation Trigger": "🚀 **Fase inicial** - Alto interés y especulación, pocos casos reales",
+        "Peak of Inflated Expectations": "📈 **Máximo entusiasmo** - Cobertura mediática máxima, expectativas altas",
+        "Trough of Disillusionment": "📉 **Fase de desilusión** - Disminución del interés, reevaluación de expectativas",
+        "Slope of Enlightenment": "📊 **Maduración** - Casos de uso definidos, beneficios comprobados",
+        "Plateau of Productivity": "✅ **Madurez estable** - Adopción generalizada, beneficios demostrados"
+    }
+    
+    description = descriptions.get(phase, "📝 Descripción no disponible")
+    st.info(description)
 
 def _show_history_interface():
     """Interfaz para mostrar el historial de consultas"""
@@ -439,13 +475,9 @@ def _show_history_interface():
         
         if db:
             hype_storage = initialize_hype_cycle_storage(db.storage)
+            stable_context = "hype_history_main"
+            history_interface = create_hype_cycle_interface(hype_storage, stable_context)
             
-            # Contexto único
-            unique_context = f"hype_history_{int(time.time())}"
-            
-            history_interface = create_hype_cycle_interface(hype_storage, unique_context)
-            
-            # Mostrar interfaz completa de historial
             history_interface.show_history_interface()
             
             # Mostrar consulta específica si se solicita
@@ -458,7 +490,7 @@ def _show_history_interface():
                 else:
                     st.error("No se encontró la consulta especificada")
                 
-                if st.button("Volver al historial", key=f"back_to_history_{unique_context}"):
+                if st.button("Volver al historial", key=f"back_to_history_{stable_context}_{show_query_id}"):
                     del st.session_state.hype_show_query_id
                     st.rerun()
         else:
@@ -466,164 +498,51 @@ def _show_history_interface():
             
     except Exception as e:
         st.error(f"Error en la interfaz de historial: {str(e)}")
-        import traceback
-        with st.expander("🔍 Ver detalles del error"):
-            st.code(traceback.format_exc())
 
-# Funciones auxiliares reutilizadas del script principal
-def manage_topics(prefix="hype_dynamo", preset_topics=None):
-    """Maneja la adición y eliminación de topics."""
-    
-    state_key = f"{prefix}_topics_data"
-    
-    if preset_topics and state_key not in st.session_state:
-        st.session_state[state_key] = preset_topics
-    elif state_key not in st.session_state:
-        st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
-    
-    # Mostrar guía de búsqueda
-    with st.expander("📖 Guía de Búsqueda Avanzada", expanded=False):
-        st.markdown("""
-        ### Operadores de Búsqueda
-        - **AND**: Encuentra resultados que contienen TODOS los términos (Por defecto)
-        - **OR**: Encuentra resultados que contienen ALGUNO de los términos
-        
-        ### Opciones Adicionales
-        - **Coincidencia exacta** ("..."): Busca la frase exacta
-        - **Exclusión** (-): Excluye términos específicos
-        - **Comodín** (*): Busca variaciones de palabras
-        
-        ### Ejemplos
-        - `"machine learning" AND robotics`: Encuentra resultados que contengan exactamente "machine learning" Y también "robotics"
-        - `AI OR "artificial intelligence"`: Encuentra resultados que contengan "AI" O "artificial intelligence"
-        - `blockchain -crypto`: Encuentra resultados sobre blockchain pero excluye los que mencionan crypto
-        """)
-    
-    topics = []
-    
-    st.write("### 🔍 Construye tu búsqueda")
-    
-    with st.form(key=f"{prefix}_topics_form"):
-        for topic in st.session_state[state_key]:
-            col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
-            
-            with col1:
-                value = st.text_input(
-                    f"Término {topic['id'] + 1}",
-                    value=topic.get('value', ''),
-                    key=f"{prefix}_topic_{topic['id']}",
-                    placeholder="Ej: 'artificial intelligence' OR robot*"
-                )
-                topic['value'] = value
-            
-            with col2:
-                operator = st.selectbox(
-                    "Operador",
-                    options=['AND', 'OR', 'NOT'],
-                    index=['AND', 'OR', 'NOT'].index(topic.get('operator', 'AND')),
-                    key=f"{prefix}_operator_{topic['id']}"
-                )
-                topic['operator'] = operator
-            
-            with col3:
-                exact_match = st.checkbox(
-                    "Coincidencia exacta",
-                    value=topic.get('exact_match', False),
-                    key=f"{prefix}_exact_{topic['id']}"
-                )
-                topic['exact_match'] = exact_match
-            
-            with col4:
-                if len(st.session_state[state_key]) > 1:
-                    remove = st.checkbox(
-                        "❌", 
-                        key=f"{prefix}_remove_{topic['id']}",
-                        help="Marcar para eliminar"
-                    )
-                    topic['_remove'] = remove
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            add_topic = st.form_submit_button("➕ Añadir Término")
-        
-        with col2:
-            remove_topics = st.form_submit_button("🗑️ Eliminar Marcados")
-        
-        with col3:
-            clear_all = st.form_submit_button("🧹 Limpiar Todo")
-    
-    # Procesar acciones
-    if add_topic:
-        new_id = max([t['id'] for t in st.session_state[state_key]]) + 1
-        st.session_state[state_key].append({
-            'id': new_id,
-            'value': '',
-            'operator': 'AND',
-            'exact_match': False
-        })
-        st.rerun()
-    
-    if remove_topics:
-        st.session_state[state_key] = [
-            topic for topic in st.session_state[state_key] 
-            if not topic.get('_remove', False)
-        ]
-        if not st.session_state[state_key]:
-            st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
-        st.rerun()
-    
-    if clear_all:
-        st.session_state[state_key] = [{'id': 0, 'value': '', 'operator': 'AND', 'exact_match': False}]
-        st.rerun()
-    
-    # Construir lista de topics para retornar
-    for topic in st.session_state[state_key]:
-        topics.append({
-            'value': topic.get('value', ''),
-            'operator': topic.get('operator', 'AND'),
-            'exact_match': topic.get('exact_match', False)
-        })
-    
-    # Construir y mostrar la ecuación final
-    if any(t['value'].strip() for t in topics):
-        equation = build_search_equation(topics)
-        st.write("### 📝 Ecuación de búsqueda")
-        st.code(equation)
-    
-    return topics
+# ===== FUNCIONES AUXILIARES =====
 
-def build_search_equation(topics):
-    """Construye la ecuación de búsqueda en base a los términos y operadores."""
-    equation = ""
+def _build_search_equation(topics):
+    """Construye la ecuación de búsqueda"""
+    if not topics:
+        return ""
+    
+    parts = []
     for i, topic in enumerate(topics):
-        if topic['exact_match']:
-            term = f'"{topic["value"]}"'
+        value = topic.get('value', '').strip()
+        if not value:
+            continue
+            
+        if topic.get('exact_match', False):
+            term = f'"{value}"'
         else:
-            term = topic['value']
+            term = value
         
-        if i == len(topics) - 1:
-            equation += f"{term}"
-        else:
-            equation += f"{term} {topic['operator']} "
+        parts.append(term)
+        
+        # Añadir operador si no es el último
+        remaining = [t for t in topics[i+1:] if t.get('value', '').strip()]
+        if remaining:
+            parts.append(f" {topic.get('operator', 'AND')} ")
     
-    return equation
+    return "".join(parts)
 
-def process_topics(topics_data):
+def _process_topics(topics_data):
     """Procesa los topics antes de construir la query"""
-    processed_topics = []
+    processed = []
     
     for topic in topics_data:
-        if topic['value'].strip():
+        value = topic.get('value', '').strip()
+        if value:
             processed_topic = {
-                'value': topic['value'].strip(),
+                'value': value,
                 'operator': topic.get('operator', 'AND'),
                 'exact_match': topic.get('exact_match', False)
             }
             
-            if processed_topic['value'].startswith('"') and processed_topic['value'].endswith('"'):
+            # Si ya tiene comillas, no marcar como exact_match
+            if value.startswith('"') and value.endswith('"'):
                 processed_topic['exact_match'] = False
             
-            processed_topics.append(processed_topic)
+            processed.append(processed_topic)
     
-    return processed_topics
+    return processed

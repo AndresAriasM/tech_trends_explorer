@@ -1,4 +1,4 @@
-# src/category_admin.py - CORREGIDO PARA FORMATEO SEGURO
+# src/category_admin.py - CORREGIDO PARA ESTADOS ESTABLES
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -26,7 +26,7 @@ from hype_cycle_positioning import HypeCyclePositioner
 
 
 class CategoryAdminInterface:
-    """Interfaz de administración de categorías y tecnologías del Hype Cycle"""
+    """Interfaz de administración de categorías y tecnologías del Hype Cycle con estados estables"""
     
     def __init__(self, hype_storage, context_prefix: str = "default"):
         """
@@ -37,41 +37,42 @@ class CategoryAdminInterface:
             context_prefix: Prefijo único para evitar conflictos de keys
         """
         self.storage = hype_storage
-        self.context_prefix = context_prefix
+        
+        # FIJO: Usar context_prefix estable sin timestamps
+        if not context_prefix or context_prefix == "default":
+            self.context_prefix = "category_admin"
+        else:
+            self.context_prefix = context_prefix
+        
+        # BASE KEY ESTABLE para todos los estados
+        self._state_key_base = f"admin_state_{self.context_prefix}"
         
         # Importar positioner
         from hype_cycle_positioning import HypeCyclePositioner
         self.positioner = HypeCyclePositioner()
         
-        # Usar context_prefix estable
-        if not context_prefix or context_prefix == "default":
-            import time
-            self.unique_id = f"admin_{int(time.time())}"
-        else:
-            self.unique_id = f"admin_{context_prefix}"
+        # Inicializar estados estables
+        self._init_stable_states()
+    
+    def _init_stable_states(self):
+        """Inicializa estados estables que persisten entre reruns"""
+        # Estados principales con keys fijas
+        state_keys = {
+            f"{self._state_key_base}_selected_category_for_chart": None,
+            f"{self._state_key_base}_chart_category_name": None,
+            f"{self._state_key_base}_chart_show_labels": True,
+            f"{self._state_key_base}_chart_show_confidence": False,
+            f"{self._state_key_base}_refresh_trigger": 0
+        }
         
-        # Inicializar estados de manera controlada
-        admin_state_key = f"admin_state_{self.unique_id}"
-        if admin_state_key not in st.session_state:
-            st.session_state[admin_state_key] = {
-                'selected_category_for_chart': None,
-                'admin_refresh_trigger': 0,
-                'last_chart_category': None
-            }
-        
-        self.admin_state = st.session_state[admin_state_key]
+        # Solo inicializar si no existen
+        for key, default_value in state_keys.items():
+            if key not in st.session_state:
+                st.session_state[key] = default_value
     
     def _safe_float_format(self, value, format_str=".2f", default="0.00"):
         """
         Formatea un valor como float de forma segura
-        
-        Args:
-            value: Valor a formatear (puede ser float, Decimal, str, int, None)
-            format_str: String de formato (ej: ".2f", ".1%")
-            default: Valor por defecto si la conversión falla
-            
-        Returns:
-            String formateado
         """
         try:
             # Convertir Decimal, int, float a float
@@ -100,13 +101,6 @@ class CategoryAdminInterface:
     def _safe_int_format(self, value, default=0):
         """
         Convierte un valor a int de forma segura
-        
-        Args:
-            value: Valor a convertir
-            default: Valor por defecto si la conversión falla
-            
-        Returns:
-            int
         """
         try:
             if isinstance(value, Decimal):
@@ -149,7 +143,7 @@ class CategoryAdminInterface:
             self._show_advanced_management()
     
     def _show_category_overview(self):
-        """Vista general de categorías y tecnologías - VERSIÓN CORREGIDA"""
+        """CORREGIDO: Vista general de categorías y tecnologías"""
         st.subheader("📋 Vista General por Categorías")
         
         # Obtener todas las categorías
@@ -182,7 +176,7 @@ class CategoryAdminInterface:
                 self._show_category_details(category_id, category_name, queries)
     
     def _show_category_details(self, category_id: str, category_name: str, queries: List[Dict]):
-        """Muestra detalles de una categoría específica con formateo seguro"""
+        """CORREGIDO: Muestra detalles de una categoría específica con keys estables"""
         
         # Procesar datos de tecnologías
         tech_data = []
@@ -275,75 +269,45 @@ class CategoryAdminInterface:
                     st.write("**🕒 Más Reciente:**")
                     st.write("• Error calculando")
         
-        # Botones de acción
+        # BOTONES CON KEYS ESTABLES
         st.write("---")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # Botón "VER GRÁFICA" MEJORADO
-            chart_button_key = f"chart_btn_{category_id}_{self.context_prefix}"
+            # BOTÓN "VER GRÁFICA" CON KEY ESTABLE
+            chart_button_key = f"{self._state_key_base}_chart_btn_{category_id}"
             
             if st.button(f"📊 Ver Gráfica", key=chart_button_key, type="primary"):
-                # Establecer la categoría en el estado del selectbox
-                chart_selector_key = "hype_chart_category_selector_static"
-                st.session_state[chart_selector_key] = category_name
+                # Establecer la categoría seleccionada en estados estables
+                st.session_state[f"{self._state_key_base}_selected_category_for_chart"] = category_id
+                st.session_state[f"{self._state_key_base}_chart_category_name"] = category_name
                 
-                # Mantener compatibilidad con estados antiguos
-                st.session_state['selected_category_for_chart'] = category_id
-                st.session_state['chart_category_id'] = category_id
-                st.session_state['chart_category_name'] = category_name
-                
-                # Forzar actualización del estado de categoría previa
-                st.session_state['hype_chart_previous_category'] = None
-                
-                # Limpiar cache de gráficas previas
-                for key in list(st.session_state.keys()):
-                    if key.startswith('chart_cache_') or key.startswith('plot_data_'):
-                        del st.session_state[key]
+                # Incrementar trigger para forzar actualización
+                current_trigger = st.session_state.get(f"{self._state_key_base}_refresh_trigger", 0)
+                st.session_state[f"{self._state_key_base}_refresh_trigger"] = current_trigger + 1
                 
                 st.success(f"✅ Categoría '{category_name}' seleccionada para visualización.")
                 st.info("👆 **Haz clic en la pestaña '🎯 Gráfica Hype Cycle' arriba para ver la gráfica.**")
                 st.balloons()
         
         with col2:
-            export_button_key = f"export_btn_{category_id}_{self.context_prefix}"
+            export_button_key = f"{self._state_key_base}_export_btn_{category_id}"
             if st.button(f"📤 Exportar CSV", key=export_button_key):
                 self._export_category_data(category_name, tech_data)
         
         with col3:
-            update_button_key = f"update_btn_{category_id}_{self.context_prefix}"
+            update_button_key = f"{self._state_key_base}_update_btn_{category_id}"
             if st.button(f"🔄 Actualizar", key=update_button_key):
                 st.info(f"Funcionalidad de actualización para {category_name} - En desarrollo")
         
         with col4:
-            copy_button_key = f"copy_btn_{category_id}_{self.context_prefix}"
+            copy_button_key = f"{self._state_key_base}_copy_btn_{category_id}"
             if st.button(f"📋 Copiar IDs", key=copy_button_key):
                 ids = [item["🆔 ID"] for item in tech_data]
                 st.code(", ".join(ids))
-
-        # Botón de debug para limpiar todo el estado (temporal, para testing)
-        if st.checkbox("🔧 Modo Debug", key=f"debug_mode_{category_id}_{self.unique_id}"):
-            st.write("**Estado actual de la sesión (categorías):**")
-            category_states = {
-                k: v for k, v in st.session_state.items() 
-                if any(term in k.lower() for term in ['category', 'chart', 'hype'])
-            }
-            
-            if category_states:
-                for key, value in category_states.items():
-                    st.write(f"- {key}: {value}")
-                    
-                if st.button("🧹 Limpiar Estado Completo", key=f"clear_all_state_{category_id}_{self.unique_id}"):
-                    for key in list(category_states.keys()):
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    st.success("Estado limpiado completamente")
-                    st.rerun()
-            else:
-                st.write("No hay estados de categoría activos")
     
     def _show_hype_cycle_chart(self):
-        """Muestra la gráfica principal del Hype Cycle con formateo seguro"""
+        """CORREGIDO: Muestra la gráfica principal del Hype Cycle con estados estables"""
         st.subheader("🎯 Gráfica del Hype Cycle por Categorías")
         
         st.write("""
@@ -378,66 +342,72 @@ class CategoryAdminInterface:
             st.info("No hay categorías con tecnologías analizadas para mostrar en la gráfica.")
             return
         
-        # Clave estática para el selectbox
-        CHART_CATEGORY_KEY = "hype_chart_category_selector_static"
+        # SELECTBOX CON KEY ESTABLE
+        chart_category_selector_key = f"{self._state_key_base}_chart_category_selector"
         
-        # Inicializar el estado si no existe
-        if CHART_CATEGORY_KEY not in st.session_state:
-            # Verificar si hay categoría preseleccionada
-            preselected_id = (
-                st.session_state.get('selected_category_for_chart') or 
-                st.session_state.get('chart_category_id')
-            )
-            
-            if preselected_id and preselected_id in category_options.values():
-                # Encontrar el nombre de la categoría preseleccionada
-                preselected_name = None
+        # Determinar índice basado en categoría preseleccionada
+        selected_category_id = st.session_state.get(f"{self._state_key_base}_selected_category_for_chart")
+        selected_category_name_saved = st.session_state.get(f"{self._state_key_base}_chart_category_name")
+        
+        try:
+            if selected_category_name_saved and selected_category_name_saved in category_options.keys():
+                default_index = list(category_options.keys()).index(selected_category_name_saved)
+            elif selected_category_id and selected_category_id in category_options.values():
+                # Encontrar el nombre correspondiente al ID
+                found_name = None
                 for name, cat_id in category_options.items():
-                    if cat_id == preselected_id:
-                        preselected_name = name
+                    if cat_id == selected_category_id:
+                        found_name = name
                         break
-                st.session_state[CHART_CATEGORY_KEY] = preselected_name or list(category_options.keys())[0]
+                
+                if found_name:
+                    default_index = list(category_options.keys()).index(found_name)
+                else:
+                    default_index = 0
             else:
-                st.session_state[CHART_CATEGORY_KEY] = list(category_options.keys())[0]
+                default_index = 0
+        except:
+            default_index = 0
         
-        # Interfaz de control mejorada
+        # Interfaz de control
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            # Selector de categoría
+            # Selector de categoría con estado estable
             selected_category_name = st.selectbox(
                 "🏷️ Selecciona una categoría para visualizar:",
                 options=list(category_options.keys()),
-                index=list(category_options.keys()).index(st.session_state[CHART_CATEGORY_KEY]),
-                key=CHART_CATEGORY_KEY
+                index=default_index,
+                key=chart_category_selector_key
             )
         
         with col2:
-            # Opciones de visualización
-            show_labels = st.checkbox("📝 Etiquetas con flechas", value=True, key="show_labels_hype_chart")
+            # Opciones de visualización con keys estables
+            show_labels_key = f"{self._state_key_base}_show_labels"
+            show_labels = st.checkbox(
+                "📝 Etiquetas con flechas", 
+                value=st.session_state.get(f"{self._state_key_base}_chart_show_labels", True),
+                key=show_labels_key
+            )
+            st.session_state[f"{self._state_key_base}_chart_show_labels"] = show_labels
         
         with col3:
-            show_confidence = st.checkbox("🎯 Mostrar confianza", value=False, key="show_confidence_hype_chart")
+            show_confidence_key = f"{self._state_key_base}_show_confidence"
+            show_confidence = st.checkbox(
+                "🎯 Mostrar confianza", 
+                value=st.session_state.get(f"{self._state_key_base}_chart_show_confidence", False),
+                key=show_confidence_key
+            )
+            st.session_state[f"{self._state_key_base}_chart_show_confidence"] = show_confidence
         
-        # Obtener ID de categoría seleccionada
-        selected_category_id = category_options[selected_category_name]
-        
-        # Detectar cambio de categoría
-        previous_category_key = "hype_chart_previous_category"
-        if previous_category_key not in st.session_state:
-            st.session_state[previous_category_key] = selected_category_id
-        
-        category_changed = st.session_state[previous_category_key] != selected_category_id
-        if category_changed:
-            st.session_state[previous_category_key] = selected_category_id
-            # Limpiar caché de gráficas previas
-            for key in list(st.session_state.keys()):
-                if key.startswith('chart_cache_') or key.startswith('plot_data_'):
-                    del st.session_state[key]
-            st.info(f"📊 Categoría cambiada a: **{selected_category_name}**")
+        # Actualizar estados si hay cambio de categoría
+        current_selected_id = category_options[selected_category_name]
+        if current_selected_id != selected_category_id:
+            st.session_state[f"{self._state_key_base}_selected_category_for_chart"] = current_selected_id
+            st.session_state[f"{self._state_key_base}_chart_category_name"] = selected_category_name
         
         # Obtener tecnologías de la categoría seleccionada
-        queries = self.storage.get_queries_by_category(selected_category_id)
+        queries = self.storage.get_queries_by_category(current_selected_id)
         active_queries = [q for q in queries if q.get("is_active", True)]
         
         if not active_queries:
@@ -445,7 +415,7 @@ class CategoryAdminInterface:
             
             # Información de debug mejorada
             with st.expander("🔍 Información de Debug"):
-                st.write(f"- **Categoría seleccionada:** {selected_category_name} (ID: {selected_category_id})")
+                st.write(f"- **Categoría seleccionada:** {selected_category_name} (ID: {current_selected_id})")
                 st.write(f"- **Total queries encontradas:** {len(queries)}")
                 st.write(f"- **Queries activas:** {len(active_queries)}")
                 
@@ -497,11 +467,14 @@ class CategoryAdminInterface:
                 )
             
             if fig and len(fig.data) > 0:
+                # KEY ESTABLE para el gráfico
+                chart_plot_key = f"{self._state_key_base}_chart_plot_{current_selected_id}"
+                
                 # Mostrar la gráfica con configuración optimizada
                 st.plotly_chart(
                     fig, 
                     use_container_width=True,
-                    key=f"hype_chart_plot_{selected_category_id}",
+                    key=chart_plot_key,
                     config={
                         'displayModeBar': True,
                         'displaylogo': False,
@@ -575,12 +548,6 @@ class CategoryAdminInterface:
                 
                 # Mostrar leyenda de la gráfica
                 self._show_chart_legend(active_queries)
-                
-                # Limpiar estados de preselección después de mostrar exitosamente
-                if 'selected_category_for_chart' in st.session_state:
-                    del st.session_state['selected_category_for_chart']
-                if 'chart_category_id' in st.session_state:
-                    del st.session_state['chart_category_id']
             
             else:
                 st.error("❌ Error: La gráfica está vacía o no se pudo generar")
@@ -1128,20 +1095,30 @@ class CategoryAdminInterface:
             
             with col1:
                 st.write("#### Actualización de Datos")
-                if st.button("🔄 Recalcular Todas las Posiciones", type="secondary", key=f"recalc_positions_{self.unique_id}"):
+                
+                # KEYS ESTABLES para botones de operaciones
+                recalc_positions_key = f"{self._state_key_base}_recalc_positions"
+                regen_stats_key = f"{self._state_key_base}_regen_stats"
+                
+                if st.button("🔄 Recalcular Todas las Posiciones", type="secondary", key=recalc_positions_key):
                     with st.spinner("Recalculando posiciones..."):
                         self._recalculate_all_positions()
                 
-                if st.button("📊 Regenerar Estadísticas", type="secondary", key=f"regen_stats_{self.unique_id}"):
+                if st.button("📊 Regenerar Estadísticas", type="secondary", key=regen_stats_key):
                     with st.spinner("Regenerando estadísticas..."):
                         st.info("Funcionalidad en desarrollo - Regenerar estadísticas")
             
             with col2:
                 st.write("#### Limpieza de Datos")
-                if st.button("🗑️ Limpiar Consultas Inactivas", type="secondary", key=f"cleanup_{self.unique_id}"):
+                
+                # KEYS ESTABLES para botones de limpieza
+                cleanup_key = f"{self._state_key_base}_cleanup"
+                detect_dupes_key = f"{self._state_key_base}_detect_dupes"
+                
+                if st.button("🗑️ Limpiar Consultas Inactivas", type="secondary", key=cleanup_key):
                     self._cleanup_inactive_queries()
                 
-                if st.button("🔍 Detectar Duplicados", type="secondary", key=f"detect_dupes_{self.unique_id}"):
+                if st.button("🔍 Detectar Duplicados", type="secondary", key=detect_dupes_key):
                     self._detect_duplicates()
         
         # Sección de estadísticas globales
@@ -1153,11 +1130,14 @@ class CategoryAdminInterface:
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("📥 Exportar Todas las Categorías"):
+                # KEYS ESTABLES para botones de exportación
+                export_all_key = f"{self._state_key_base}_export_all"
+                if st.button("📥 Exportar Todas las Categorías", key=export_all_key):
                     self._export_all_categories()
             
             with col2:
-                if st.button("💾 Crear Backup Completo"):
+                backup_key = f"{self._state_key_base}_backup"
+                if st.button("💾 Crear Backup Completo", key=backup_key):
                     self._create_full_backup()
     
     def _show_global_statistics(self):
