@@ -1,4 +1,4 @@
-# src/hype_cycle.py - VERSIÓN FINAL LIMPIA SIN LOGGING EN FRONTEND
+# src/hype_cycle.py - VERSIÓN SIMPLE Y ÁGIL
 import streamlit as st
 import pandas as pd
 import time
@@ -21,7 +21,7 @@ from data_storage import initialize_database
 logger = logging.getLogger(__name__)
 
 def run_hype_cycle_analysis():
-    """Ejecuta el análisis del Hype Cycle con DynamoDB únicamente - VERSIÓN LIMPIA"""
+    """Ejecuta el análisis del Hype Cycle con interacción ágil"""
     st.markdown('<p class="tab-subheader">📈 Análisis del Hype Cycle</p>', unsafe_allow_html=True)
     
     # Verificar configuración AWS
@@ -82,7 +82,7 @@ def _show_admin_interface():
         st.error(f"Error en la interfaz de administración: {str(e)}")
 
 def _show_analysis_interface():
-    """VERSIÓN LIMPIA: Interfaz para realizar nuevos análisis"""
+    """Interfaz principal para realizar nuevos análisis"""
     st.write("""
     Esta herramienta te permite analizar tecnologías usando el modelo del Hype Cycle de Gartner.
     **Almacenamiento:** Todos los datos se guardan en DynamoDB en la nube.
@@ -96,16 +96,13 @@ def _show_analysis_interface():
         st.error("❌ No se pudo conectar a DynamoDB. Verifica tu configuración.")
         return
     
-    # Estado base estable
-    STATE_PREFIX = "hype_analysis_main"
-    
     # Verificar consulta reutilizada
     reuse_query = st.session_state.get('hype_reuse_query')
     if reuse_query:
         st.info("🔄 **Consulta cargada desde historial**")
         st.code(reuse_query['search_query'])
         
-        if st.button("Limpiar consulta cargada", key=f"{STATE_PREFIX}_clear_reused"):
+        if st.button("Limpiar consulta cargada", key="clear_reused_query"):
             del st.session_state.hype_reuse_query
             st.rerun()
     
@@ -118,7 +115,7 @@ def _show_analysis_interface():
         auto_save = st.checkbox(
             "Guardar automáticamente", 
             value=True,
-            key=f"{STATE_PREFIX}_auto_save"
+            key="auto_save_config"
         )
     
     with col2:
@@ -129,7 +126,7 @@ def _show_analysis_interface():
             selected_category_name = st.selectbox(
                 "Categoría para guardar",
                 options=list(category_options.keys()),
-                key=f"{STATE_PREFIX}_category_selector"
+                key="category_selector"
             )
             selected_category_id = category_options[selected_category_name]
             
@@ -145,19 +142,19 @@ def _show_analysis_interface():
             technology_name = st.text_input(
                 "Nombre de la tecnología",
                 placeholder="ej: Inteligencia Artificial, Blockchain",
-                key=f"{STATE_PREFIX}_tech_name"
+                key="tech_name"
             )
         
         with col2:
             technology_description = st.text_area(
                 "Descripción (opcional)",
                 height=60,
-                key=f"{STATE_PREFIX}_tech_desc"
+                key="tech_desc"
             )
 
-    # === TÉRMINOS DE BÚSQUEDA SIMPLIFICADOS ===
+    # === TÉRMINOS DE BÚSQUEDA ÁGILES ===
     st.write("### 🎯 Términos de búsqueda")
-    topics = _show_simple_topics_interface(STATE_PREFIX, reuse_query)
+    topics = _show_agile_topics_interface(reuse_query)
     
     # === OPCIONES AVANZADAS ===
     with st.expander("⚙️ Opciones avanzadas", expanded=False):
@@ -169,7 +166,7 @@ def _show_analysis_interface():
                 min_value=2010,
                 max_value=2025,
                 value=2015,
-                key=f"{STATE_PREFIX}_min_year"
+                key="min_year"
             )
             
             max_results = st.number_input(
@@ -177,7 +174,7 @@ def _show_analysis_interface():
                 min_value=50,
                 max_value=1000,
                 value=200,
-                key=f"{STATE_PREFIX}_max_results"
+                key="max_results"
             )
         
         with col2:
@@ -185,32 +182,18 @@ def _show_analysis_interface():
                 "Filtrar fuentes",
                 options=["Tech News", "Business News", "Academic Sources", "Blogs"],
                 default=["Tech News", "Business News"],
-                key=f"{STATE_PREFIX}_sources"
+                key="sources"
             )
             
             analysis_notes = st.text_input(
                 "Notas del análisis",
                 placeholder="Ej: Análisis Q1 2025",
-                key=f"{STATE_PREFIX}_notes"
+                key="notes"
             )
 
     # === VALIDACIÓN Y ANÁLISIS ===
     valid_topics = [t for t in topics if t.get('value', '').strip()]
     can_analyze = len(valid_topics) > 0 and st.session_state.get('serp_api_key')
-    
-    # Mostrar estado actual
-    if valid_topics:
-        equation = _build_search_equation(valid_topics)
-        st.write("### 📝 Consulta a ejecutar")
-        st.code(equation)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Términos válidos", len(valid_topics))
-        with col2:
-            st.metric("Año mínimo", min_year)
-        with col3:
-            st.metric("Fuentes", len(sources_filter))
     
     # Mensajes de validación
     if not valid_topics:
@@ -223,7 +206,7 @@ def _show_analysis_interface():
         "📊 Analizar Hype Cycle", 
         type="primary", 
         disabled=not can_analyze,
-        key=f"{STATE_PREFIX}_analyze_btn"
+        key="analyze_btn"
     ):
         search_parameters = {
             "min_year": min_year,
@@ -241,114 +224,167 @@ def _show_analysis_interface():
             technology_description=technology_description,
             selected_category_id=selected_category_id,
             auto_save=auto_save,
-            hype_storage=hype_storage,
-            state_prefix=STATE_PREFIX
+            hype_storage=hype_storage
         )
     
     elif not can_analyze:
-        # Mostrar guía si no puede analizar
-        st.info("""
-        ### 📝 Guía del Hype Cycle
-        
-        El Hype Cycle de Gartner representa 5 fases en la evolución de una tecnología:
-        
-        1. **Innovation Trigger** - Primer interés, pruebas de concepto iniciales
-        2. **Peak of Inflated Expectations** - Máximo entusiasmo, expectativas poco realistas  
-        3. **Trough of Disillusionment** - Desencanto cuando la realidad no alcanza las expectativas
-        4. **Slope of Enlightenment** - Comprensión realista de beneficios y limitaciones
-        5. **Plateau of Productivity** - Adopción estable y generalizada
-        
-        Para comenzar, añade términos de búsqueda y configura tu API key de SerpAPI.
-        """)
+        _show_hype_cycle_guide()
 
-def _show_simple_topics_interface(prefix, reuse_query=None):
-    """Interfaz simplificada para términos de búsqueda - SIN RERUNS PROBLEMÁTICOS"""
+def _show_agile_topics_interface(reuse_query=None):
+    """VERSIÓN ÁGIL: Interfaz simple para términos de búsqueda"""
     
-    # Key estable para el estado
-    topics_key = f"{prefix}_topics_simple"
-    
-    # Inicializar estado
-    if topics_key not in st.session_state:
+    # Inicializar términos en session_state
+    if 'search_terms' not in st.session_state:
         if reuse_query and reuse_query.get('search_terms'):
-            st.session_state[topics_key] = reuse_query['search_terms']
+            st.session_state.search_terms = reuse_query['search_terms']
         else:
-            st.session_state[topics_key] = [{'value': '', 'operator': 'AND', 'exact_match': False}]
+            st.session_state.search_terms = [{'value': '', 'operator': 'AND', 'exact_match': False}]
     
-    # Mostrar términos actuales
-    topics_list = st.session_state[topics_key]
-    
-    # Contenedor para todos los términos
-    for i, topic in enumerate(topics_list):
-        col1, col2, col3, col4 = st.columns([4, 1.5, 1.5, 1])
-        
-        with col1:
-            # Input para el término
-            value_key = f"{prefix}_term_{i}_value"
-            new_value = st.text_input(
-                f"Término {i+1}",
-                value=topic.get('value', ''),
-                key=value_key,
-                placeholder="ej: artificial intelligence"
-            )
-            # Actualizar inmediatamente en el estado
-            st.session_state[topics_key][i]['value'] = new_value
-        
-        with col2:
-            # Selector de operador
-            op_key = f"{prefix}_term_{i}_operator"
-            new_operator = st.selectbox(
-                "Operador",
-                options=['AND', 'OR', 'NOT'],
-                index=['AND', 'OR', 'NOT'].index(topic.get('operator', 'AND')),
-                key=op_key
-            )
-            st.session_state[topics_key][i]['operator'] = new_operator
-        
-        with col3:
-            # Checkbox para exacto
-            exact_key = f"{prefix}_term_{i}_exact"
-            new_exact = st.checkbox(
-                "Exacto",
-                value=topic.get('exact_match', False),
-                key=exact_key
-            )
-            st.session_state[topics_key][i]['exact_match'] = new_exact
-        
-        with col4:
-            # Botón eliminar (solo si hay más de uno)
-            if len(topics_list) > 1:
-                remove_key = f"{prefix}_remove_{i}"
-                if st.button("❌", key=remove_key, help="Eliminar término"):
-                    st.session_state[topics_key].pop(i)
-                    st.rerun()
-    
-    # Botones de control
-    col1, col2, col3 = st.columns(3)
+    # Botones de control principales
+    col1, col2, col3 = st.columns([2, 2, 4])
     
     with col1:
-        if st.button("➕ Añadir término", key=f"{prefix}_add_term"):
-            st.session_state[topics_key].append({
+        if st.button("➕ Añadir término", key="add_term_btn"):
+            st.session_state.search_terms.append({
                 'value': '', 
                 'operator': 'AND', 
                 'exact_match': False
             })
-            st.rerun()
     
     with col2:
-        if st.button("🧹 Limpiar todo", key=f"{prefix}_clear_terms"):
-            st.session_state[topics_key] = [{'value': '', 'operator': 'AND', 'exact_match': False}]
-            st.rerun()
+        if st.button("🧹 Limpiar todo", key="clear_all_btn"):
+            st.session_state.search_terms = [{'value': '', 'operator': 'AND', 'exact_match': False}]
     
     with col3:
-        # Mostrar estado actual
-        valid_count = len([t for t in topics_list if t.get('value', '').strip()])
-        st.caption(f"📊 {len(topics_list)} término(s) | {valid_count} válido(s)")
+        # Contador en tiempo real
+        valid_count = len([t for t in st.session_state.search_terms if t.get('value', '').strip()])
+        st.write(f"📊 {len(st.session_state.search_terms)} término(s) | {valid_count} válido(s)")
     
-    return st.session_state[topics_key]
+    st.write("---")
+    
+    # Contenedor principal para términos
+    terms_container = st.container()
+    
+    # Vista previa en tiempo real
+    preview_container = st.container()
+    
+    with terms_container:
+        # Mostrar cada término con interacción directa
+        for i, term in enumerate(st.session_state.search_terms):
+            col1, col2, col3, col4 = st.columns([4, 1.5, 1.5, 1])
+            
+            with col1:
+                # Input que actualiza automáticamente
+                new_value = st.text_input(
+                    f"Término {i+1}",
+                    value=term.get('value', ''),
+                    key=f"term_value_{i}",
+                    placeholder="ej: artificial intelligence",
+                    on_change=_update_term_value,
+                    args=(i,)
+                )
+            
+            with col2:
+                # Selector de operador
+                current_op = term.get('operator', 'AND')
+                try:
+                    op_index = ['AND', 'OR', 'NOT'].index(current_op)
+                except ValueError:
+                    op_index = 0
+                
+                new_operator = st.selectbox(
+                    "Operador",
+                    options=['AND', 'OR', 'NOT'],
+                    index=op_index,
+                    key=f"term_operator_{i}",
+                    on_change=_update_term_operator,
+                    args=(i,)
+                )
+            
+            with col3:
+                # Checkbox para búsqueda exacta
+                new_exact = st.checkbox(
+                    "Exacto",
+                    value=term.get('exact_match', False),
+                    key=f"term_exact_{i}",
+                    on_change=_update_term_exact,
+                    args=(i,)
+                )
+            
+            with col4:
+                # Botón eliminar (efecto inmediato)
+                if len(st.session_state.search_terms) > 1:
+                    if st.button("❌", key=f"remove_{i}", help="Eliminar término"):
+                        st.session_state.search_terms.pop(i)
+                        st.rerun()
+                else:
+                    st.write("")  # Espacio vacío cuando no se puede eliminar
+    
+    # Vista previa actualizada en tiempo real
+    with preview_container:
+        _show_live_preview(st.session_state.search_terms)
+    
+    return st.session_state.search_terms
+
+def _update_term_value(index):
+    """Callback para actualizar el valor de un término"""
+    key = f"term_value_{index}"
+    if key in st.session_state:
+        if index < len(st.session_state.search_terms):
+            st.session_state.search_terms[index]['value'] = st.session_state[key]
+
+def _update_term_operator(index):
+    """Callback para actualizar el operador de un término"""
+    key = f"term_operator_{index}"
+    if key in st.session_state:
+        if index < len(st.session_state.search_terms):
+            st.session_state.search_terms[index]['operator'] = st.session_state[key]
+
+def _update_term_exact(index):
+    """Callback para actualizar la búsqueda exacta de un término"""
+    key = f"term_exact_{index}"
+    if key in st.session_state:
+        if index < len(st.session_state.search_terms):
+            st.session_state.search_terms[index]['exact_match'] = st.session_state[key]
+
+def _show_live_preview(terms):
+    """Muestra vista previa en tiempo real de la ecuación"""
+    st.write("### 📝 Vista previa de la consulta")
+    
+    # Construir ecuación en tiempo real
+    valid_terms = [t for t in terms if t.get('value', '').strip()]
+    
+    if valid_terms:
+        equation = _build_search_equation(valid_terms)
+        
+        # Mostrar la ecuación
+        st.code(equation, language="text")
+        
+        # Información adicional
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Términos válidos", len(valid_terms))
+        with col2:
+            exact_count = len([t for t in valid_terms if t.get('exact_match', False)])
+            st.metric("Búsquedas exactas", exact_count)
+        with col3:
+            operators_used = set([t.get('operator', 'AND') for t in valid_terms])
+            st.write(f"**Operadores:** {', '.join(sorted(operators_used))}")
+        
+        # Validación de la ecuación
+        if len(equation) > 200:
+            st.warning("⚠️ Consulta muy larga - considera simplificar")
+        elif len(valid_terms) > 10:
+            st.warning("⚠️ Muchos términos - puede afectar la precisión")
+        else:
+            st.success("✅ Consulta válida y optimizada")
+    else:
+        st.info("💡 Añade términos para ver la vista previa de la consulta")
+        st.code("(Ecuación aparecerá aquí)", language="text")
 
 def _execute_clean_analysis(topics, search_parameters, analysis_notes, technology_name, 
                           technology_description, selected_category_id, auto_save, 
-                          hype_storage, state_prefix):
+                          hype_storage):
     """Ejecuta el análisis de forma limpia sin logging en frontend"""
     
     # Contenedor para progreso limpio
@@ -431,7 +467,7 @@ def _execute_clean_analysis(topics, search_parameters, analysis_notes, technolog
                         if query_id:
                             st.success(f"✅ Análisis guardado con ID: {query_id}")
                             
-                            if st.button("📚 Ver en Historial", key=f"{state_prefix}_view_history_{query_id}"):
+                            if st.button("📚 Ver en Historial", key="view_history_btn"):
                                 st.session_state.hype_show_query_id = query_id
                                 st.rerun()
                         else:
@@ -490,7 +526,7 @@ def _show_history_interface():
                 else:
                     st.error("No se encontró la consulta especificada")
                 
-                if st.button("Volver al historial", key=f"back_to_history_{stable_context}_{show_query_id}"):
+                if st.button("Volver al historial", key="back_to_history"):
                     del st.session_state.hype_show_query_id
                     st.rerun()
         else:
@@ -498,6 +534,22 @@ def _show_history_interface():
             
     except Exception as e:
         st.error(f"Error en la interfaz de historial: {str(e)}")
+
+def _show_hype_cycle_guide():
+    """Muestra guía del Hype Cycle cuando no se puede analizar"""
+    st.info("""
+    ### 📝 Guía del Hype Cycle
+    
+    El Hype Cycle de Gartner representa 5 fases en la evolución de una tecnología:
+    
+    1. **Innovation Trigger** - Primer interés, pruebas de concepto iniciales
+    2. **Peak of Inflated Expectations** - Máximo entusiasmo, expectativas poco realistas  
+    3. **Trough of Disillusionment** - Desencanto cuando la realidad no alcanza las expectativas
+    4. **Slope of Enlightenment** - Comprensión realista de beneficios y limitaciones
+    5. **Plateau of Productivity** - Adopción estable y generalizada
+    
+    Para comenzar, añade términos de búsqueda y configura tu API key de SerpAPI.
+    """)
 
 # ===== FUNCIONES AUXILIARES =====
 

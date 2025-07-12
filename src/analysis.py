@@ -621,85 +621,152 @@ class NewsAnalyzer:
             return None
 
     def analyze_hype_cycle(self, news_results):
-        """Análisis del Hype Cycle basado en puntos de inflexión"""
+        """VERSIÓN CORREGIDA: Análisis del Hype Cycle con lógica mejorada"""
         try:
-            # Crear DataFrame con los resultados limpios
+            # Crear DataFrame con validación mejorada
             df_data = []
             for result in news_results:
                 try:
-                    df_data.append({
-                        'year': int(result['year']),
-                        'sentiment': float(result['sentiment']),
-                        'month': self._extract_month(result.get('date', ''))
-                    })
+                    year = int(result['year'])
+                    sentiment = float(result['sentiment'])
+                    
+                    # Validar rangos
+                    if 2000 <= year <= datetime.now().year and -1 <= sentiment <= 1:
+                        df_data.append({
+                            'year': year,
+                            'sentiment': sentiment,
+                            'month': self._extract_month(result.get('date', ''))
+                        })
                 except (ValueError, TypeError, KeyError):
                     continue
 
-            if not df_data:
+            if len(df_data) < 3:  # Necesitamos datos mínimos
                 return None
 
             df = pd.DataFrame(df_data)
             
-            # Agrupar por año y calcular estadísticas
+            # Agrupar por año con estadísticas completas
             yearly_stats = df.groupby('year').agg({
-                'sentiment': ['mean', 'count', 'std'],
+                'sentiment': ['mean', 'count', 'std', 'min', 'max'],
             }).reset_index()
             
-            yearly_stats.columns = ['year', 'sentiment_mean', 'mention_count', 'sentiment_std']
+            yearly_stats.columns = ['year', 'sentiment_mean', 'mention_count', 'sentiment_std', 'sentiment_min', 'sentiment_max']
             yearly_stats = yearly_stats.sort_values('year')
             
-            # Obtener puntos de inflexión
+            # Calcular métricas adicionales
+            yearly_stats['mention_change'] = yearly_stats['mention_count'].pct_change()
+            yearly_stats['sentiment_change'] = yearly_stats['sentiment_mean'].diff()
+            yearly_stats['momentum'] = yearly_stats['mention_change'] * yearly_stats['sentiment_mean']
+            
+            # Obtener puntos de inflexión mejorados
             inflection_points = self.analyze_gartner_points(yearly_stats)
             
-            # Determinar fase actual basada en puntos de inflexión
+            # LÓGICA CORREGIDA: Determinar fase actual con elif
             current_year = datetime.now().year
+            phase = "Pre-Innovation Trigger"
+            confidence = 0.5
             
-            # Identificar la fase actual basada en los puntos de inflexión
+            # Verificar datos del último año
+            latest_data = yearly_stats.iloc[-1]
+            
+            # 1. INNOVATION TRIGGER
             if inflection_points['innovation_trigger']:
                 innovation_year = inflection_points['innovation_trigger']['year']
-                if current_year - innovation_year <= 2:
+                years_since_innovation = current_year - innovation_year
+                
+                if years_since_innovation <= 1:
                     phase = "Innovation Trigger"
                     confidence = 0.85
                 
-            if inflection_points['peak']:
-                peak_year = inflection_points['peak']['year']
-                if current_year - peak_year <= 1:
-                    phase = "Peak of Inflated Expectations"
-                    confidence = 0.9
-                elif inflection_points['trough']:
-                    trough_year = inflection_points['trough']['year']
-                    if current_year - trough_year <= 1:
-                        phase = "Trough of Disillusionment"
-                        confidence = 0.85
-                    elif current_year - trough_year <= 3:
-                        phase = "Slope of Enlightenment"
-                        confidence = 0.8
+                # 2. PEAK OF INFLATED EXPECTATIONS  
+                elif inflection_points['peak']:
+                    peak_year = inflection_points['peak']['year']
+                    years_since_peak = current_year - peak_year
+                    peak_sentiment = inflection_points['peak']['sentiment']
+                    
+                    # Detectar si estamos en el pico (alta actividad + alto sentimiento)
+                    if years_since_peak <= 1 and peak_sentiment > 0.2:
+                        phase = "Peak of Inflated Expectations"
+                        confidence = 0.9
+                    
+                    # 3. TROUGH OF DISILLUSIONMENT
+                    elif inflection_points['trough']:
+                        trough_year = inflection_points['trough']['year']
+                        years_since_trough = current_year - trough_year
+                        
+                        if years_since_trough <= 1:
+                            phase = "Trough of Disillusionment"
+                            confidence = 0.85
+                        
+                        # 4. SLOPE OF ENLIGHTENMENT
+                        elif 1 < years_since_trough <= 4:
+                            # Verificar recuperación gradual
+                            recent_trend = yearly_stats['mention_change'].tail(2).mean()
+                            if recent_trend > 0:
+                                phase = "Slope of Enlightenment"
+                                confidence = 0.8
+                            else:
+                                phase = "Trough of Disillusionment"
+                                confidence = 0.75
+                        
+                        # 5. PLATEAU OF PRODUCTIVITY
+                        elif years_since_trough > 4:
+                            # Verificar estabilidad
+                            recent_std = yearly_stats['mention_count'].tail(3).std()
+                            recent_mean = yearly_stats['mention_count'].tail(3).mean()
+                            
+                            if recent_std / recent_mean < 0.3:  # Coeficiente de variación bajo
+                                phase = "Plateau of Productivity"
+                                confidence = 0.85
+                            else:
+                                phase = "Slope of Enlightenment"
+                                confidence = 0.7
+                    
+                    # Si hay pico pero no valle detectado
                     else:
-                        phase = "Plateau of Productivity"
-                        confidence = 0.75
-                else:
-                    # Si hay pico pero no valle, y ha pasado tiempo
-                    if current_year - peak_year > 1:
-                        phase = "Trough of Disillusionment"
-                        confidence = 0.7
-            else:
-                # Si no hay pico identificado, usar métricas auxiliares
-                latest_stats = yearly_stats.iloc[-1]
-                mention_trend = yearly_stats['mention_count'].pct_change().mean()
+                        if years_since_peak > 2:
+                            phase = "Trough of Disillusionment"
+                            confidence = 0.7
+                        else:
+                            # Analizar tendencia después del pico
+                            post_peak_data = yearly_stats[yearly_stats['year'] > peak_year]
+                            if not post_peak_data.empty:
+                                trend = post_peak_data['mention_change'].mean()
+                                if trend < -0.2:
+                                    phase = "Trough of Disillusionment"
+                                    confidence = 0.75
+                                else:
+                                    phase = "Peak of Inflated Expectations"
+                                    confidence = 0.65
                 
-                if mention_trend > 0.3:
+                # Si solo hay innovation trigger
+                elif years_since_innovation > 1:
+                    # Buscar indicios de pico
+                    recent_growth = yearly_stats['mention_change'].tail(2).mean()
+                    recent_sentiment = yearly_stats['sentiment_mean'].tail(2).mean()
+                    
+                    if recent_growth > 0.5 and recent_sentiment > 0.3:
+                        phase = "Peak of Inflated Expectations"
+                        confidence = 0.7
+                    else:
+                        phase = "Innovation Trigger"
+                        confidence = 0.6
+            
+            # Si no hay puntos de inflexión claros, usar métricas de respaldo
+            else:
+                latest_mentions = latest_data['mention_count']
+                latest_sentiment = latest_data['sentiment_mean']
+                growth_trend = yearly_stats['mention_change'].tail(3).mean()
+                
+                if growth_trend > 0.3 and latest_sentiment > 0.1:
                     phase = "Innovation Trigger"
                     confidence = 0.6
+                elif growth_trend < -0.3:
+                    phase = "Trough of Disillusionment"
+                    confidence = 0.55
                 else:
                     phase = "Pre-Innovation Trigger"
                     confidence = 0.5
-
-            # Imprimir información de diagnóstico
-            print("\nAnálisis de Puntos de Inflexión:")
-            for point_type, point_data in inflection_points.items():
-                if point_data:
-                    print(f"{point_type}: Año {point_data['year']}, Menciones {point_data['mentions']}")
-            print(f"\nFase determinada: {phase} (Confianza: {confidence:.2f})")
 
             return {
                 'phase': phase,
@@ -709,7 +776,9 @@ class NewsAnalyzer:
                 'metrics': {
                     'latest_year': int(yearly_stats.iloc[-1]['year']),
                     'total_mentions': int(yearly_stats['mention_count'].sum()),
-                    'peak_mentions': int(yearly_stats['mention_count'].max())
+                    'peak_mentions': int(yearly_stats['mention_count'].max()),
+                    'avg_sentiment': float(yearly_stats['sentiment_mean'].mean()),
+                    'sentiment_volatility': float(yearly_stats['sentiment_std'].mean())
                 }
             }
                 
