@@ -1,4 +1,4 @@
-# src/hype_cycle_storage.py - VERSIÓN LIMPIA Y FUNCIONAL
+# src/hype_cycle_storage.py - VERSIÓN CORREGIDA PARA FILTROS DYNAMODB
 import streamlit as st
 import pandas as pd
 import time
@@ -13,6 +13,14 @@ import plotly.express as px
 from dataclasses import dataclass, asdict
 from enum import Enum
 import math
+
+# IMPORTAR BOTO3 CONDITIONS CORRECTAMENTE
+try:
+    import boto3
+    from boto3.dynamodb.conditions import Attr, Key
+    BOTO3_CONDITIONS_AVAILABLE = True
+except ImportError:
+    BOTO3_CONDITIONS_AVAILABLE = False
 
 # Configurar logging real (no visible en frontend)
 logger = logging.getLogger(__name__)
@@ -69,7 +77,7 @@ class HypeCycleQuery:
     notes: str = ""
 
 class HypeCycleStorage:
-    """Clase especializada para gestionar almacenamiento de consultas Hype Cycle - VERSIÓN LIMPIA"""
+    """Clase especializada para gestionar almacenamiento de consultas Hype Cycle - VERSIÓN CORREGIDA"""
     
     def __init__(self, db_storage):
         """Inicializa con el storage de DynamoDB"""
@@ -139,9 +147,12 @@ class HypeCycleStorage:
                 'analysis_id': query_id,
                 'timestamp': execution_timestamp,
                 
+                # CAMPO CRÍTICO: query_id también como campo separado
+                'query_id': query_id,
+                
                 # Datos básicos
                 'analysis_type': 'hype_cycle',
-                'category_id': category_id,
+                'category_id': str(category_id),  # Asegurar que sea string
                 'category_name': category_name,
                 'search_query': search_query,
                 'technology_name': technology_name,
@@ -317,30 +328,89 @@ class HypeCycleStorage:
         words = [w for w in clean_query.split() if not w.isdigit() and len(w) > 2]
         return ' '.join(words[:2]).title() if words else "Tecnología"
 
+    # ===== MÉTODOS DE CONSULTA CORREGIDOS =====
+    
     def get_queries_by_category(self, category_id: str) -> List[Dict]:
-        """Obtiene todas las consultas de Hype Cycle de una categoría"""
+        """CORREGIDO: Obtiene todas las consultas de Hype Cycle de una categoría con paginación"""
         try:
+            if not BOTO3_CONDITIONS_AVAILABLE:
+                # Fallback sin condiciones
+                return self._get_queries_by_category_fallback(category_id)
+            
+            # Usar condiciones de boto3 correctamente
+            items = []
+            
+            # Primera consulta
             response = self.storage.analyses_table.scan(
-                FilterExpression="category_id = :cat_id AND analysis_type = :type",
-                ExpressionAttributeValues={
-                    ":cat_id": category_id,
-                    ":type": "hype_cycle"
-                }
+                FilterExpression=Attr('category_id').eq(str(category_id)) & Attr('analysis_type').eq('hype_cycle')
             )
-            items = response.get('Items', [])
-            return [self.storage._convert_decimals_to_float(item) for item in items]
+            
+            items.extend(response.get('Items', []))
+            
+            # Manejar paginación
+            while 'LastEvaluatedKey' in response:
+                response = self.storage.analyses_table.scan(
+                    FilterExpression=Attr('category_id').eq(str(category_id)) & Attr('analysis_type').eq('hype_cycle'),
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                items.extend(response.get('Items', []))
+            
+            # Debug logging
+            logger.info(f"Categoría {category_id}: encontrados {len(items)} items")
+            
+            # Convertir decimales y retornar
+            converted_items = [self.storage._convert_decimals_to_float(item) for item in items]
+            
+            # Filtro adicional en memoria por si acaso
+            filtered_items = []
+            for item in converted_items:
+                item_category = str(item.get('category_id', ''))
+                item_type = item.get('analysis_type', '')
+                
+                if item_category == str(category_id) and item_type == 'hype_cycle':
+                    filtered_items.append(item)
+            
+            logger.info(f"Categoría {category_id}: después de filtro adicional {len(filtered_items)} items")
+            return filtered_items
                 
         except Exception as e:
             logger.error(f"Error obteniendo consultas por categoría: {str(e)}")
+            # Fallback
+            return self._get_queries_by_category_fallback(category_id)
+    
+    def _get_queries_by_category_fallback(self, category_id: str) -> List[Dict]:
+        """Método fallback sin usar condiciones boto3"""
+        try:
+            # Obtener todos los items y filtrar en memoria
+            all_items = self.get_all_hype_cycle_queries()
+            
+            filtered_items = []
+            for item in all_items:
+                item_category = str(item.get('category_id', ''))
+                if item_category == str(category_id):
+                    filtered_items.append(item)
+            
+            logger.info(f"Fallback - Categoría {category_id}: {len(filtered_items)} items")
+            return filtered_items
+            
+        except Exception as e:
+            logger.error(f"Error en fallback: {str(e)}")
             return []
 
     def get_query_by_id(self, query_id: str) -> Optional[Dict]:
-        """Obtiene una consulta específica por ID"""
+        """CORREGIDO: Obtiene una consulta específica por ID"""
         try:
+            if not BOTO3_CONDITIONS_AVAILABLE:
+                return self._get_query_by_id_fallback(query_id)
+            
+            # Buscar por analysis_id o query_id
             response = self.storage.analyses_table.scan(
-                FilterExpression="analysis_id = :id OR query_id = :id",
-                ExpressionAttributeValues={":id": query_id}
+                FilterExpression=(
+                    Attr('analysis_id').eq(query_id) | 
+                    Attr('query_id').eq(query_id)
+                ) & Attr('analysis_type').eq('hype_cycle')
             )
+            
             items = response.get('Items', [])
             if items:
                 return self.storage._convert_decimals_to_float(items[0])
@@ -348,32 +418,150 @@ class HypeCycleStorage:
                 
         except Exception as e:
             logger.error(f"Error obteniendo consulta por ID: {str(e)}")
+            return self._get_query_by_id_fallback(query_id)
+    
+    def _get_query_by_id_fallback(self, query_id: str) -> Optional[Dict]:
+        """Método fallback para buscar por ID"""
+        try:
+            all_items = self.get_all_hype_cycle_queries()
+            
+            for item in all_items:
+                if (item.get('analysis_id') == query_id or 
+                    item.get('query_id') == query_id):
+                    return item
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error en fallback búsqueda por ID: {str(e)}")
             return None
 
     def get_all_hype_cycle_queries(self) -> List[Dict]:
-        """Obtiene todas las consultas de Hype Cycle"""
+        """CORREGIDO: Obtiene todas las consultas de Hype Cycle con paginación"""
         try:
+            if not BOTO3_CONDITIONS_AVAILABLE:
+                return self._get_all_hype_cycle_queries_fallback()
+            
+            items = []
+            
+            # Primera consulta
             response = self.storage.analyses_table.scan(
-                FilterExpression="analysis_type = :type",
-                ExpressionAttributeValues={":type": "hype_cycle"}
+                FilterExpression=Attr('analysis_type').eq('hype_cycle')
             )
-            items = response.get('Items', [])
-            return [self.storage._convert_decimals_to_float(item) for item in items]
+            
+            items.extend(response.get('Items', []))
+            
+            # Manejar paginación
+            while 'LastEvaluatedKey' in response:
+                response = self.storage.analyses_table.scan(
+                    FilterExpression=Attr('analysis_type').eq('hype_cycle'),
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                items.extend(response.get('Items', []))
+            
+            # Debug total
+            logger.info(f"Total Hype Cycle queries encontradas: {len(items)}")
+            
+            # Convertir decimales
+            converted_items = [self.storage._convert_decimals_to_float(item) for item in items]
+            
+            # Ordenar por fecha (más reciente primero)
+            converted_items.sort(key=lambda x: x.get('execution_date', ''), reverse=True)
+            
+            return converted_items
                 
         except Exception as e:
             logger.error(f"Error obteniendo todas las consultas: {str(e)}")
-            return []
+            return self._get_all_hype_cycle_queries_fallback()
     
-    def delete_query(self, query_id: str) -> bool:
-        """Elimina una consulta específica"""
+    def _get_all_hype_cycle_queries_fallback(self) -> List[Dict]:
+        """Método fallback para obtener todas las consultas"""
         try:
-            query = self.get_query_by_id(query_id)
-            if query:
-                return self.storage.delete_item(query_id, query["timestamp"])
-            return False
+            # Usar el método base de storage
+            all_analyses = self.storage.get_all_searches()
+            
+            # Filtrar solo hype_cycle
+            hype_queries = []
+            for analysis in all_analyses:
+                if analysis.get('analysis_type') == 'hype_cycle':
+                    hype_queries.append(analysis)
+            
+            logger.info(f"Fallback - Total Hype Cycle queries: {len(hype_queries)}")
+            return hype_queries
             
         except Exception as e:
-            logger.error(f"Error eliminando consulta: {str(e)}")
+            logger.error(f"Error en fallback obtener todas: {str(e)}")
+            return []
+    
+    # ===== MÉTODOS DE GESTIÓN =====
+    
+    def delete_query(self, query_id: str) -> bool:
+        """CORREGIDO: Elimina una consulta específica usando múltiples métodos"""
+        try:
+            # Método 1: Buscar el item completo primero para obtener las claves exactas
+            if not BOTO3_CONDITIONS_AVAILABLE:
+                return self._delete_query_fallback(query_id)
+            
+            # Buscar el item usando filtros
+            response = self.storage.analyses_table.scan(
+                FilterExpression=(
+                    Attr('analysis_id').eq(query_id) | 
+                    Attr('query_id').eq(query_id)
+                ) & Attr('analysis_type').eq('hype_cycle')
+            )
+            
+            items = response.get('Items', [])
+            if not items:
+                logger.warning(f"No se encontró item con ID {query_id}")
+                return False
+            
+            # Tomar el primer item encontrado
+            item = items[0]
+            
+            # Eliminar usando las claves exactas del item
+            delete_response = self.storage.analyses_table.delete_item(
+                Key={
+                    'analysis_id': item['analysis_id'],
+                    'timestamp': item['timestamp']
+                }
+            )
+            
+            logger.info(f"Item {query_id} eliminado exitosamente")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error eliminando consulta {query_id}: {str(e)}")
+            return self._delete_query_fallback(query_id)
+    
+    def _delete_query_fallback(self, query_id: str) -> bool:
+        """Método fallback para eliminación sin usar condiciones boto3"""
+        try:
+            # Obtener todas las consultas y encontrar la que coincida
+            all_queries = self.get_all_hype_cycle_queries()
+            
+            target_query = None
+            for query in all_queries:
+                if (query.get('analysis_id') == query_id or 
+                    query.get('query_id') == query_id):
+                    target_query = query
+                    break
+            
+            if not target_query:
+                logger.warning(f"Fallback: No se encontró query {query_id}")
+                return False
+            
+            # Eliminar usando storage base
+            analysis_id = target_query.get('analysis_id', query_id)
+            timestamp = target_query.get('timestamp', '')
+            
+            if not timestamp:
+                logger.error(f"Fallback: No se encontró timestamp para {query_id}")
+                return False
+            
+            return self.storage.delete_item(analysis_id, timestamp)
+            
+        except Exception as e:
+            logger.error(f"Error en fallback eliminación: {str(e)}")
             return False
     
     def update_query(self, query_id: str, updates: Dict) -> bool:
@@ -395,30 +583,81 @@ class HypeCycleStorage:
             current_query = self.get_query_by_id(query_id)
             
             if not current_query:
+                logger.warning(f"No se encontró query {query_id}")
                 return False
             
             current_category_id = current_query.get("category_id", "default")
             
             target_category = self.storage.get_category_by_id(target_category_id)
             if not target_category:
+                logger.warning(f"No se encontró categoría destino {target_category_id}")
                 return False
             
-            if current_category_id == target_category_id:
-                return False
+            if str(current_category_id) == str(target_category_id):
+                logger.info(f"Query {query_id} ya está en categoría {target_category_id}")
+                return True  # Ya está en la categoría correcta
             
             new_category_name = target_category.get("name", "Sin nombre")
             
             updates = {
-                "category_id": target_category_id,
+                "category_id": str(target_category_id),
                 "category_name": new_category_name,
                 "last_updated": datetime.now(timezone.utc).isoformat()
             }
             
-            return self.update_query(query_id, updates)
+            success = self.update_query(query_id, updates)
+            if success:
+                logger.info(f"Query {query_id} movido de {current_category_id} a {target_category_id}")
+            
+            return success
                 
         except Exception as e:
             logger.error(f"Error moviendo tecnología: {str(e)}")
             return False
+
+    # ===== MÉTODOS DE DEBUG =====
+    
+    def debug_category_queries(self, category_id: str) -> Dict:
+        """Método de debug para investigar problemas con categorías"""
+        try:
+            # Obtener todos los registros sin filtrar
+            all_items_response = self.storage.analyses_table.scan()
+            all_items = all_items_response.get('Items', [])
+            
+            # Estadísticas
+            total_items = len(all_items)
+            hype_cycle_items = [item for item in all_items if item.get('analysis_type') == 'hype_cycle']
+            category_items = [item for item in hype_cycle_items if str(item.get('category_id', '')) == str(category_id)]
+            
+            # Categorías únicas
+            unique_categories = set()
+            for item in hype_cycle_items:
+                unique_categories.add(str(item.get('category_id', 'None')))
+            
+            debug_info = {
+                'total_items_in_table': total_items,
+                'hype_cycle_items': len(hype_cycle_items),
+                'items_in_category': len(category_items),
+                'unique_categories': list(unique_categories),
+                'category_id_searched': str(category_id),
+                'sample_items': []
+            }
+            
+            # Muestras de items para debug
+            for item in category_items[:3]:
+                debug_info['sample_items'].append({
+                    'analysis_id': item.get('analysis_id'),
+                    'category_id': str(item.get('category_id')),
+                    'analysis_type': item.get('analysis_type'),
+                    'search_query': item.get('search_query', '')[:50] + '...'
+                })
+            
+            return debug_info
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+# ===== RESTO DE CLASES SIN CAMBIOS =====
 
 class HypeCycleHistoryInterface:
     """Interfaz para gestionar el historial de consultas de Hype Cycle con estados estables"""
@@ -485,11 +724,12 @@ class HypeCycleHistoryInterface:
         """Muestra la interfaz completa de historial"""
         st.header("📚 Historial de Consultas de Hype Cycle")
         
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🔍 Explorar por Categoría", 
             "📊 Vista de Resumen", 
             "⚙️ Gestionar Consultas",
-            "🔄 Mover Tecnologías"
+            "🔄 Mover Tecnologías",
+            "🛠️ Debug"
         ])
         
         with tab1:
@@ -503,6 +743,96 @@ class HypeCycleHistoryInterface:
         
         with tab4:
             self._show_move_technologies()
+        
+        with tab5:
+            self._show_debug_tab()
+    
+    def _show_debug_tab(self):
+        """NUEVA: Pestaña de debug para investigar problemas"""
+        st.subheader("🛠️ Debug - Investigar Problemas de Consultas")
+        
+        st.write("Esta pestaña te ayuda a investigar por qué no aparecen todas las consultas.")
+        
+        # Obtener categorías
+        try:
+            categories = self.storage.storage.get_all_categories()
+        except:
+            categories = [{"category_id": "default", "name": "Sin categoría"}]
+        
+        # Selector de categoría para debug
+        category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
+        
+        selected_category_name = st.selectbox(
+            "Categoría a investigar:",
+            options=list(category_options.keys()),
+            key=f"{self._state_key_base}_debug_category"
+        )
+        
+        selected_category_id = category_options[selected_category_name]
+        
+        if st.button("🔍 Investigar Categoría", key=f"{self._state_key_base}_debug_btn"):
+            with st.spinner("Investigando..."):
+                debug_info = self.storage.debug_category_queries(selected_category_id)
+                
+                st.write("### 📊 Información de Debug")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Total items en tabla", debug_info.get('total_items_in_table', 0))
+                
+                with col2:
+                    st.metric("Items Hype Cycle", debug_info.get('hype_cycle_items', 0))
+                
+                with col3:
+                    st.metric("Items en esta categoría", debug_info.get('items_in_category', 0))
+                
+                st.write("### 🏷️ Categorías encontradas en la tabla:")
+                unique_cats = debug_info.get('unique_categories', [])
+                for cat in unique_cats:
+                    if cat == str(selected_category_id):
+                        st.write(f"- **{cat}** ← Esta es la categoría buscada")
+                    else:
+                        st.write(f"- {cat}")
+                
+                st.write(f"### 🔍 Búsqueda realizada para: `{debug_info.get('category_id_searched')}`")
+                
+                if debug_info.get('sample_items'):
+                    st.write("### 📋 Muestra de items encontrados:")
+                    for item in debug_info['sample_items']:
+                        st.write(f"- **ID:** {item['analysis_id']}")
+                        st.write(f"  - **Categoría:** {item['category_id']}")
+                        st.write(f"  - **Tipo:** {item['analysis_type']}")
+                        st.write(f"  - **Query:** {item['search_query']}")
+                        st.write("---")
+                
+                if debug_info.get('error'):
+                    st.error(f"Error en debug: {debug_info['error']}")
+        
+        # Test de métodos de consulta
+        st.write("### 🧪 Test de Métodos de Consulta")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Test get_all_hype_cycle_queries", key=f"{self._state_key_base}_test_all"):
+                all_queries = self.storage.get_all_hype_cycle_queries()
+                st.metric("Total consultas encontradas", len(all_queries))
+                
+                if all_queries:
+                    st.write("**Primeras 3 consultas:**")
+                    for i, query in enumerate(all_queries[:3]):
+                        st.write(f"{i+1}. {query.get('search_query', 'Sin query')[:50]}... (Cat: {query.get('category_id')})")
+        
+        with col2:
+            if st.button("Test get_queries_by_category", key=f"{self._state_key_base}_test_cat"):
+                cat_queries = self.storage.get_queries_by_category(selected_category_id)
+                st.metric("Consultas en categoría", len(cat_queries))
+                
+                if cat_queries:
+                    st.write("**Consultas en esta categoría:**")
+                    for i, query in enumerate(cat_queries):
+                        st.write(f"{i+1}. {query.get('search_query', 'Sin query')[:50]}...")
     
     def _show_category_explorer(self):
         """Muestra explorador por categorías con estados estables"""
@@ -538,8 +868,29 @@ class HypeCycleHistoryInterface:
         selected_category_id = category_options[selected_category_name]
         queries = self.storage.get_queries_by_category(selected_category_id)
         
+        # Mostrar información de debug
+        debug_info = self.storage.debug_category_queries(selected_category_id)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Consultas mostradas", len(queries))
+        with col2:
+            st.metric("Total en tabla", debug_info.get('hype_cycle_items', 0))
+        with col3:
+            st.metric("En esta categoría", debug_info.get('items_in_category', 0))
+        
+        if len(queries) != debug_info.get('items_in_category', 0):
+            st.warning(f"⚠️ Discrepancia detectada: se muestran {len(queries)} pero deberían ser {debug_info.get('items_in_category', 0)}")
+        
         if not queries:
             st.info(f"No hay consultas guardadas en la categoría '{selected_category_name}'")
+            
+            # Mostrar información de debug cuando no hay resultados
+            if debug_info.get('items_in_category', 0) > 0:
+                st.error("⚠️ **Problema detectado**: Hay consultas en la base de datos pero no se están mostrando.")
+                with st.expander("Ver información de debug"):
+                    st.json(debug_info)
+            
             return
         
         st.write(f"**{len(queries)} consultas encontradas en '{selected_category_name}'**")

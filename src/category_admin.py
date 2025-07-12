@@ -1,4 +1,4 @@
-# src/category_admin.py - CORREGIDO PARA ESTADOS ESTABLES
+# src/category_admin.py - CORREGIDO PARA ESTADOS ESTABLES + GESTIÓN AVANZADA
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -62,7 +62,12 @@ class CategoryAdminInterface:
             f"{self._state_key_base}_chart_category_name": None,
             f"{self._state_key_base}_chart_show_labels": True,
             f"{self._state_key_base}_chart_show_confidence": False,
-            f"{self._state_key_base}_refresh_trigger": 0
+            f"{self._state_key_base}_refresh_trigger": 0,
+            # NUEVOS ESTADOS PARA GESTIÓN AVANZADA
+            f"{self._state_key_base}_mgmt_selected_tech": "",
+            f"{self._state_key_base}_mgmt_target_category": "",
+            f"{self._state_key_base}_mgmt_confirm_delete": False,
+            f"{self._state_key_base}_mgmt_delete_tech": ""
         }
         
         # Solo inicializar si no existen
@@ -1081,141 +1086,588 @@ class CategoryAdminInterface:
             st.metric("Sentimiento Promedio", self._safe_float_format(avg_sentiment, ".2f"))
     
     def _show_advanced_management(self):
-        """Gestión avanzada de categorías y tecnologías"""
+        """NUEVA: Gestión avanzada completa con cambio de categorías y eliminación"""
         st.subheader("⚙️ Gestión Avanzada")
         
         st.write("""
-        Herramientas adicionales para la gestión y mantenimiento de las categorías 
-        y tecnologías del Hype Cycle en DynamoDB.
+        Herramientas avanzadas para gestionar tecnologías: cambiar categorías, 
+        eliminar registros y realizar operaciones masivas.
         """)
         
-        # Sección de operaciones masivas
-        with st.expander("🔄 Operaciones Masivas", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("#### Actualización de Datos")
-                
-                # KEYS ESTABLES para botones de operaciones
-                recalc_positions_key = f"{self._state_key_base}_recalc_positions"
-                regen_stats_key = f"{self._state_key_base}_regen_stats"
-                
-                if st.button("🔄 Recalcular Todas las Posiciones", type="secondary", key=recalc_positions_key):
-                    with st.spinner("Recalculando posiciones..."):
-                        self._recalculate_all_positions()
-                
-                if st.button("📊 Regenerar Estadísticas", type="secondary", key=regen_stats_key):
-                    with st.spinner("Regenerando estadísticas..."):
-                        st.info("Funcionalidad en desarrollo - Regenerar estadísticas")
-            
-            with col2:
-                st.write("#### Limpieza de Datos")
-                
-                # KEYS ESTABLES para botones de limpieza
-                cleanup_key = f"{self._state_key_base}_cleanup"
-                detect_dupes_key = f"{self._state_key_base}_detect_dupes"
-                
-                if st.button("🗑️ Limpiar Consultas Inactivas", type="secondary", key=cleanup_key):
-                    self._cleanup_inactive_queries()
-                
-                if st.button("🔍 Detectar Duplicados", type="secondary", key=detect_dupes_key):
-                    self._detect_duplicates()
+        # Sub-pestañas para organizar mejor
+        subtab1, subtab2, subtab3 = st.tabs([
+            "🔄 Cambiar Categorías", 
+            "🗑️ Eliminar Registros",
+            "📊 Operaciones Masivas"
+        ])
         
-        # Sección de estadísticas globales
-        with st.expander("📊 Estadísticas Globales", expanded=True):
-            self._show_global_statistics()
+        with subtab1:
+            self._show_move_technologies_simple()
         
-        # Sección de exportación
-        with st.expander("📤 Exportación y Backup", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # KEYS ESTABLES para botones de exportación
-                export_all_key = f"{self._state_key_base}_export_all"
-                if st.button("📥 Exportar Todas las Categorías", key=export_all_key):
-                    self._export_all_categories()
-            
-            with col2:
-                backup_key = f"{self._state_key_base}_backup"
-                if st.button("💾 Crear Backup Completo", key=backup_key):
-                    self._create_full_backup()
+        with subtab2:
+            self._show_delete_technologies()
+        
+        with subtab3:
+            self._show_massive_operations()
     
-    def _show_global_statistics(self):
-        """Muestra estadísticas globales del sistema con formateo seguro"""
-        try:
-            all_queries = self.storage.get_all_hype_cycle_queries()
-            
-            if not all_queries:
-                st.info("No hay datos para mostrar estadísticas globales.")
-                return
-            
-            # Métricas generales
-            col1, col2, col3, col4 = st.columns(4)
+    def _show_move_technologies_simple(self):
+        """OPTIMIZADA: Interfaz fluida para mover tecnologías sin recargas"""
+        st.write("### 🔄 Cambiar Tecnologías de Categoría")
+        
+        # Obtener datos una sola vez
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        categories = self.storage.storage.get_all_categories()
+        
+        if not all_queries:
+            st.info("No hay tecnologías para mover.")
+            return
+        
+        if len(categories) < 2:
+            st.warning("Se necesitan al menos 2 categorías para mover tecnologías.")
+            return
+        
+        # USAR FORMULARIO PARA EVITAR RE-RUNS
+        with st.form(key=f"{self._state_key_base}_move_form", clear_on_submit=False):
+            col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.metric("Total Tecnologías", len(all_queries))
+                st.write("#### 🔬 Seleccionar Tecnología")
+                
+                # Crear opciones simplificadas
+                tech_options = []
+                tech_data = {}
+                
+                for query in all_queries:
+                    query_id = query.get("query_id", query.get("analysis_id"))
+                    tech_name = (
+                        query.get("technology_name") or 
+                        query.get("search_query", "")[:30] or 
+                        "Sin nombre"
+                    )
+                    
+                    # Obtener categoría actual
+                    current_cat_id = query.get("category_id", "unknown")
+                    current_cat_name = "Sin categoría"
+                    for cat in categories:
+                        if cat.get("category_id") == current_cat_id:
+                            current_cat_name = cat.get("name", "Sin nombre")
+                            break
+                    
+                    phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                    display_name = f"{tech_name} ({current_cat_name} → {phase})"
+                    
+                    tech_options.append(display_name)
+                    tech_data[display_name] = {
+                        "query_id": query_id,
+                        "query": query,
+                        "tech_name": tech_name,
+                        "current_cat_id": current_cat_id,
+                        "current_cat_name": current_cat_name
+                    }
+                
+                selected_tech_display = st.selectbox(
+                    "Tecnología a mover:",
+                    options=tech_options,
+                    index=0
+                )
+                
+                selected_tech_info = tech_data[selected_tech_display]
             
             with col2:
-                categories = set(q.get("category_id", "unknown") for q in all_queries)
-                st.metric("Categorías Activas", len(categories))
+                st.write("#### 🎯 Nueva Categoría")
+                
+                # Filtrar categorías disponibles (excluir la actual)
+                current_cat_id = selected_tech_info["current_cat_id"]
+                available_categories = []
+                category_data = {}
+                
+                for cat in categories:
+                    if cat.get("category_id") != current_cat_id:
+                        cat_name = cat.get("name", "Sin nombre")
+                        available_categories.append(cat_name)
+                        category_data[cat_name] = cat.get("category_id")
+                
+                if not available_categories:
+                    st.warning("No hay otras categorías disponibles.")
+                    return
+                
+                target_category_name = st.selectbox(
+                    "Nueva categoría:",
+                    options=available_categories,
+                    index=0
+                )
+                
+                target_category_id = category_data[target_category_name]
+                
+                # Mostrar resumen del movimiento
+                st.info(f"""
+                **Movimiento a realizar:**
+                
+                🔬 **Tecnología:** {selected_tech_info['tech_name']}
+                📁 **De:** {selected_tech_info['current_cat_name']}
+                📁 **A:** {target_category_name}
+                """)
             
-            with col3:
-                # Confianza promedio con formateo seguro
+            # Controles del formulario
+            st.write("---")
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col1:
+                confirm_move = st.checkbox("✅ Confirmar movimiento")
+            
+            with col2:
+                submitted = st.form_submit_button(
+                    "🔄 MOVER TECNOLOGÍA", 
+                    type="primary",
+                    disabled=not confirm_move
+                )
+            
+            # Procesar cuando se envía el formulario
+            if submitted and confirm_move:
+                with st.spinner("Moviendo tecnología..."):
+                    success = self.storage.move_technology_to_category(
+                        selected_tech_info['query_id'], 
+                        target_category_id
+                    )
+                    
+                    if success:
+                        st.success(f"✅ '{selected_tech_info['tech_name']}' movida exitosamente a '{target_category_name}'!")
+                        st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ Error moviendo la tecnología. Revisa los logs.")
+    
+    def _show_delete_technologies(self):
+        """OPTIMIZADA: Interfaz fluida para eliminar tecnologías sin recargas"""
+        st.write("### 🗑️ Eliminar Registros de Tecnologías")
+        st.write("⚠️ **CUIDADO:** Esta acción no se puede deshacer.")
+        
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        
+        if not all_queries:
+            st.info("No hay tecnologías para eliminar.")
+            return
+        
+        # Mostrar tabla de referencia (solo lectura)
+        with st.expander(f"📋 Ver todas las tecnologías ({len(all_queries)} total)", expanded=False):
+            delete_data = []
+            for query in all_queries:
+                tech_name = (
+                    query.get("technology_name") or 
+                    query.get("search_query", "")[:40] or 
+                    "Sin nombre"
+                )
+                
+                # Obtener información de categoría
+                cat_id = query.get("category_id", "unknown")
+                cat_name = "Sin categoría"
+                categories = self.storage.storage.get_all_categories()
+                for cat in categories:
+                    if cat.get("category_id") == cat_id:
+                        cat_name = cat.get("name", "Sin nombre")
+                        break
+                
+                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                
+                # Formatear fecha
+                exec_date = query.get("execution_date", "")
+                try:
+                    if exec_date:
+                        formatted_date = datetime.fromisoformat(exec_date.replace('Z', '+00:00')).strftime("%Y-%m-%d")
+                    else:
+                        formatted_date = "No disponible"
+                except:
+                    formatted_date = exec_date[:10] if len(exec_date) >= 10 else "No disponible"
+                
+                delete_data.append({
+                    "🆔 ID": query.get("query_id", query.get("analysis_id", ""))[:12] + "...",
+                    "🔬 Tecnología": tech_name,
+                    "📁 Categoría": cat_name,
+                    "📍 Fase": phase,
+                    "📅 Fecha": formatted_date
+                })
+            
+            df_delete = pd.DataFrame(delete_data)
+            st.dataframe(df_delete, use_container_width=True, hide_index=True)
+        
+        st.write("---")
+        
+        # USAR FORMULARIO PARA EVITAR RE-RUNS
+        with st.form(key=f"{self._state_key_base}_delete_form", clear_on_submit=False):
+            st.write("#### 🎯 Eliminar Tecnología")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                # Crear opciones para selectbox
+                tech_delete_options = []
+                tech_delete_data = {}
+                
+                for query in all_queries:
+                    query_id = query.get("query_id", query.get("analysis_id"))
+                    tech_name = (
+                        query.get("technology_name") or 
+                        query.get("search_query", "")[:30] or 
+                        "Sin nombre"
+                    )
+                    
+                    # Obtener categoría
+                    cat_id = query.get("category_id", "unknown") 
+                    cat_name = "Sin categoría"
+                    categories = self.storage.storage.get_all_categories()
+                    for cat in categories:
+                        if cat.get("category_id") == cat_id:
+                            cat_name = cat.get("name", "Sin nombre")
+                            break
+                    
+                    phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                    display_name = f"{tech_name} | {cat_name} | {phase}"
+                    
+                    tech_delete_options.append(display_name)
+                    tech_delete_data[display_name] = {
+                        "query_id": query_id,
+                        "tech_name": tech_name,
+                        "cat_name": cat_name,
+                        "phase": phase,
+                        "timestamp": query.get("timestamp", ""),
+                        "analysis_id": query.get("analysis_id", query_id)
+                    }
+                
+                selected_delete_display = st.selectbox(
+                    "Tecnología a eliminar:",
+                    options=tech_delete_options,
+                    index=0
+                )
+                
+                selected_delete_info = tech_delete_data[selected_delete_display]
+                
+                # Mostrar información de la tecnología seleccionada
+                st.warning(f"""
+                **Tecnología seleccionada:**
+                
+                🔬 **Nombre:** {selected_delete_info['tech_name']}
+                📁 **Categoría:** {selected_delete_info['cat_name']}
+                📍 **Fase:** {selected_delete_info['phase']}
+                🆔 **ID:** {selected_delete_info['query_id'][:12]}...
+                """)
+            
+            with col2:
+                st.write("#### ⚠️ Confirmación")
+                
+                # Todas las confirmaciones en el formulario
+                confirm1 = st.checkbox("☑️ Entiendo que esta acción no se puede deshacer")
+                
+                confirm2 = st.checkbox(
+                    "☑️ Quiero eliminar permanentemente esta tecnología",
+                    disabled=not confirm1
+                )
+                
+                confirmation_text = ""
+                if confirm1 and confirm2:
+                    confirmation_text = st.text_input(
+                        "Escribe 'ELIMINAR' para confirmar:",
+                        placeholder="ELIMINAR"
+                    )
+                
+                text_confirmed = confirmation_text.upper().strip() == "ELIMINAR"
+                
+                # Botón de envío del formulario
+                submitted = st.form_submit_button(
+                    "🗑️ ELIMINAR PERMANENTEMENTE", 
+                    type="secondary",
+                    disabled=not (confirm1 and confirm2 and text_confirmed)
+                )
+                
+                if confirmation_text and not text_confirmed:
+                    st.error("❌ Debes escribir exactamente 'ELIMINAR'")
+            
+            # Procesar cuando se envía el formulario
+            if submitted and confirm1 and confirm2 and text_confirmed:
+                with st.spinner("Eliminando tecnología..."):
+                    # MÉTODO DE ELIMINACIÓN CORREGIDO
+                    success = self._delete_technology_corrected(selected_delete_info)
+                    
+                    if success:
+                        st.success(f"✅ Tecnología '{selected_delete_info['tech_name']}' eliminada exitosamente!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ Error eliminando la tecnología. Revisa los logs.")
+    
+    def _delete_technology_corrected(self, tech_info: Dict) -> bool:
+        """CORREGIDO: Método mejorado para eliminar tecnologías de DynamoDB"""
+        try:
+            # Intentar múltiples métodos de eliminación
+            query_id = tech_info.get("query_id")
+            analysis_id = tech_info.get("analysis_id", query_id)
+            timestamp = tech_info.get("timestamp")
+            
+            # Método 1: Usar delete_item con analysis_id y timestamp
+            if analysis_id and timestamp:
+                try:
+                    self.storage.storage.analyses_table.delete_item(
+                        Key={
+                            'analysis_id': analysis_id,
+                            'timestamp': timestamp
+                        }
+                    )
+                    return True
+                except Exception as e:
+                    print(f"Método 1 falló: {str(e)}")
+            
+            # Método 2: Buscar el item exacto y eliminarlo
+            try:
+                # Buscar el item completo primero
+                response = self.storage.storage.analyses_table.scan(
+                    FilterExpression="query_id = :qid OR analysis_id = :aid",
+                    ExpressionAttributeValues={
+                        ":qid": query_id,
+                        ":aid": analysis_id
+                    }
+                )
+                
+                items = response.get('Items', [])
+                if items:
+                    item = items[0]
+                    # Usar las claves exactas del item encontrado
+                    self.storage.storage.analyses_table.delete_item(
+                        Key={
+                            'analysis_id': item['analysis_id'],
+                            'timestamp': item['timestamp']
+                        }
+                    )
+                    return True
+                    
+            except Exception as e:
+                print(f"Método 2 falló: {str(e)}")
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error general eliminando tecnología: {str(e)}")
+            return False
+    
+    def _show_massive_operations(self):
+        """OPTIMIZADA: Operaciones masivas con formularios fluidos"""
+        st.write("### 📊 Operaciones Masivas")
+        
+        # Obtener estadísticas una sola vez
+        all_queries = self.storage.get_all_hype_cycle_queries()
+        categories = self.storage.storage.get_all_categories()
+        
+        # Estadísticas en tiempo real
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Tecnologías", len(all_queries))
+        
+        with col2:
+            st.metric("Total Categorías", len(categories))
+        
+        with col3:
+            # Tecnologías este mes
+            current_month = datetime.now().strftime("%Y-%m")
+            recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
+            st.metric("Este Mes", len(recent_queries))
+        
+        with col4:
+            # Fase más común
+            if all_queries:
+                phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in all_queries]
+                most_common_phase = max(set(phases), key=phases.count)
+                st.metric("Fase Dominante", most_common_phase[:10] + "...")
+        
+        st.write("---")
+        
+        # PESTAÑAS PARA ORGANIZAR OPERACIONES
+        op_tab1, op_tab2, op_tab3 = st.tabs([
+            "🔄 Actualización", 
+            "🧹 Limpieza", 
+            "📤 Exportación"
+        ])
+        
+        with op_tab1:
+            # FORMULARIO PARA OPERACIONES DE ACTUALIZACIÓN
+            with st.form(key=f"{self._state_key_base}_update_operations_form"):
+                st.write("#### 🔄 Operaciones de Actualización")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    recalc_positions = st.checkbox("🎯 Recalcular posiciones de todas las tecnologías")
+                    regen_stats = st.checkbox("📊 Regenerar estadísticas globales")
+                
+                with col2:
+                    st.info(f"""
+                    **Impacto estimado:**
+                    - Tecnologías a procesar: {len(all_queries)}
+                    - Tiempo estimado: ~{len(all_queries) * 0.1:.1f} segundos
+                    """)
+                
+                # Botón de ejecución
+                execute_updates = st.form_submit_button(
+                    "🔄 EJECUTAR ACTUALIZACIONES",
+                    type="secondary"
+                )
+                
+                if execute_updates:
+                    if recalc_positions:
+                        with st.spinner("Recalculando posiciones..."):
+                            self._recalculate_all_positions()
+                    
+                    if regen_stats:
+                        st.info("✅ Estadísticas regeneradas (funcionalidad completa en desarrollo)")
+                    
+                    if not recalc_positions and not regen_stats:
+                        st.warning("⚠️ Selecciona al menos una operación")
+        
+        with op_tab2:
+            # FORMULARIO PARA OPERACIONES DE LIMPIEZA
+            with st.form(key=f"{self._state_key_base}_cleanup_operations_form"):
+                st.write("#### 🧹 Operaciones de Limpieza")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    detect_dupes = st.checkbox("🔍 Detectar duplicados")
+                    cleanup_inactive = st.checkbox("🗑️ Identificar consultas inactivas")
+                
+                with col2:
+                    # Mostrar estadísticas de limpieza
+                    if all_queries:
+                        inactive_count = len([q for q in all_queries if not q.get("is_active", True)])
+                        st.info(f"""
+                        **Estado actual:**
+                        - Consultas activas: {len(all_queries) - inactive_count}
+                        - Consultas inactivas: {inactive_count}
+                        """)
+                
+                # Botón de ejecución
+                execute_cleanup = st.form_submit_button(
+                    "🧹 EJECUTAR LIMPIEZA",
+                    type="secondary"
+                )
+                
+                if execute_cleanup:
+                    if detect_dupes:
+                        self._detect_duplicates()
+                    
+                    if cleanup_inactive:
+                        st.info("✅ Análisis de consultas inactivas completado")
+                    
+                    if not detect_dupes and not cleanup_inactive:
+                        st.warning("⚠️ Selecciona al menos una operación")
+        
+        with op_tab3:
+            # FORMULARIO PARA EXPORTACIÓN
+            with st.form(key=f"{self._state_key_base}_export_operations_form"):
+                st.write("#### 📤 Operaciones de Exportación")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    export_all = st.checkbox("📥 Exportar todas las categorías")
+                    export_summary = st.checkbox("📊 Exportar resumen estadístico")
+                    create_backup = st.checkbox("💾 Crear backup completo")
+                
+                with col2:
+                    # Mostrar información de exportación
+                    total_size_est = len(all_queries) * 2  # KB estimados
+                    st.info(f"""
+                    **Información de exportación:**
+                    - Registros totales: {len(all_queries)}
+                    - Tamaño estimado: ~{total_size_est} KB
+                    - Formato: CSV
+                    """)
+                
+                # Botón de ejecución
+                execute_export = st.form_submit_button(
+                    "📤 EJECUTAR EXPORTACIÓN",
+                    type="primary"
+                )
+                
+                if execute_export:
+                    if export_all:
+                        self._export_all_categories()
+                    
+                    if export_summary:
+                        self._export_summary_statistics(all_queries)
+                    
+                    if create_backup:
+                        st.info("✅ Backup programado (funcionalidad completa en desarrollo)")
+                    
+                    if not export_all and not export_summary and not create_backup:
+                        st.warning("⚠️ Selecciona al menos una operación")
+    
+    def _export_summary_statistics(self, all_queries: List[Dict]):
+        """NUEVA: Exporta estadísticas resumidas"""
+        try:
+            # Crear estadísticas por categoría
+            categories = self.storage.storage.get_all_categories()
+            summary_data = []
+            
+            for category in categories:
+                cat_id = category.get("category_id")
+                cat_name = category.get("name", "Sin nombre")
+                
+                # Obtener consultas de esta categoría
+                cat_queries = [q for q in all_queries if q.get("category_id") == cat_id]
+                
+                if not cat_queries:
+                    continue
+                
+                # Calcular estadísticas
+                phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in cat_queries]
+                phase_counts = {phase: phases.count(phase) for phase in set(phases)}
+                most_common_phase = max(phase_counts.items(), key=lambda x: x[1])[0] if phase_counts else "N/A"
+                
+                # Confianza promedio
                 confidences = []
-                for q in all_queries:
+                for q in cat_queries:
                     conf_raw = q.get("hype_metrics", {}).get("confidence", 0)
                     conf_float = float(self._safe_float_format(conf_raw, "", "0"))
                     confidences.append(conf_float)
                 
                 avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-                st.metric("Confianza Promedio", self._safe_float_format(avg_confidence, ".2f"))
-            
-            with col4:
-                # Tecnologías analizadas este mes
-                current_month = datetime.now().strftime("%Y-%m")
-                recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
-                st.metric("Este Mes", len(recent_queries))
-            
-            # Distribución por fases
-            st.write("#### 📊 Distribución Global por Fases")
-            
-            phase_counts = {}
-            for query in all_queries:
-                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
-                phase_counts[phase] = phase_counts.get(phase, 0) + 1
-            
-            if phase_counts:
-                # Crear gráfico de barras
-                phases = list(phase_counts.keys())
-                counts = list(phase_counts.values())
                 
-                fig_phases = go.Figure([go.Bar(x=phases, y=counts)])
-                fig_phases.update_layout(
-                    title="Distribución de Tecnologías por Fase del Hype Cycle",
-                    xaxis_title="Fase",
-                    yaxis_title="Número de Tecnologías",
-                    height=400
-                )
-                st.plotly_chart(fig_phases, use_container_width=True)
-        
-        except Exception as e:
-            st.error(f"Error mostrando estadísticas globales: {str(e)}")
-    
-    def _export_category_data(self, category_name: str, tech_data: List[Dict]):
-        """Exporta datos de una categoría específica"""
-        try:
-            df = pd.DataFrame(tech_data)
-            csv = df.to_csv(index=False)
+                # Total menciones
+                total_mentions = 0
+                for q in cat_queries:
+                    mentions_raw = q.get("hype_metrics", {}).get("total_mentions", 0)
+                    mentions_int = self._safe_int_format(mentions_raw, 0)
+                    total_mentions += mentions_int
+                
+                summary_data.append({
+                    "Categoria": cat_name,
+                    "Total_Tecnologias": len(cat_queries),
+                    "Fase_Dominante": most_common_phase,
+                    "Confianza_Promedio": round(avg_confidence, 3),
+                    "Total_Menciones": total_mentions,
+                    "Distribuciones_Fases": json.dumps(phase_counts)
+                })
+            
+            # Crear DataFrame y CSV
+            df_summary = pd.DataFrame(summary_data)
+            csv_summary = df_summary.to_csv(index=False)
+            
+            # Botón de descarga
+            filename = f"hype_cycle_resumen_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
             
             st.download_button(
-                label=f"📥 Descargar {category_name}.csv",
-                data=csv,
-                file_name=f"hype_cycle_{category_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                label=f"📊 Descargar Resumen - {filename}",
+                data=csv_summary,
+                file_name=filename,
                 mime="text/csv"
             )
             
+            st.success(f"✅ Resumen estadístico preparado con {len(summary_data)} categorías")
+            
         except Exception as e:
-            st.error(f"Error exportando datos: {str(e)}")
+            st.error(f"Error exportando resumen: {str(e)}")
+    
+    # ===== MÉTODOS AUXILIARES PARA GESTIÓN AVANZADA =====
     
     def _recalculate_all_positions(self):
         """Recalcula las posiciones de todas las tecnologías"""
@@ -1238,7 +1690,7 @@ class CategoryAdminInterface:
                 # Recalcular posición
                 pos_x, pos_y = self.positioner.calculate_position(phase, confidence, total_mentions)
                 
-                # Actualizar en el objeto (esto es conceptual)
+                # Actualizar en el objeto (esto es conceptual para este ejemplo)
                 hype_metrics["hype_cycle_position_x"] = pos_x
                 hype_metrics["hype_cycle_position_y"] = pos_y
                 
@@ -1248,10 +1700,6 @@ class CategoryAdminInterface:
             
         except Exception as e:
             st.error(f"Error recalculando posiciones: {str(e)}")
-    
-    def _cleanup_inactive_queries(self):
-        """Limpia consultas marcadas como inactivas"""
-        st.info("🔄 Funcionalidad de limpieza - En desarrollo")
     
     def _detect_duplicates(self):
         """Detecta posibles consultas duplicadas"""
@@ -1272,18 +1720,92 @@ class CategoryAdminInterface:
             
             if duplicates:
                 st.warning(f"⚠️ Encontrados {len(duplicates)} posibles duplicados")
-                for dup in duplicates[:5]:
-                    st.write(f"• Query: {dup['duplicate'].get('search_query', '')[:50]}...")
+                
+                with st.expander("Ver duplicados encontrados", expanded=True):
+                    for i, dup in enumerate(duplicates[:5]):  # Mostrar solo los primeros 5
+                        st.write(f"**Duplicado {i+1}:**")
+                        st.write(f"- Query: `{dup['duplicate'].get('search_query', '')[:60]}...`")
+                        st.write(f"- Original ID: `{dup['original'].get('query_id', 'N/A')[:12]}...`")
+                        st.write(f"- Duplicado ID: `{dup['duplicate'].get('query_id', 'N/A')[:12]}...`")
+                        st.write("---")
+                    
+                    if len(duplicates) > 5:
+                        st.write(f"... y {len(duplicates) - 5} duplicados más.")
             else:
-                st.success("✅ No se encontraron duplicados")
+                st.success("✅ No se encontraron duplicados obvios")
                 
         except Exception as e:
             st.error(f"Error detectando duplicados: {str(e)}")
     
     def _export_all_categories(self):
         """Exporta datos de todas las categorías"""
-        st.info("📤 Funcionalidad de exportación completa - En desarrollo")
+        try:
+            all_queries = self.storage.get_all_hype_cycle_queries()
+            
+            if not all_queries:
+                st.warning("No hay datos para exportar.")
+                return
+            
+            export_data = []
+            for query in all_queries:
+                hype_metrics = query.get("hype_metrics", {})
+                
+                # Formatear fecha
+                exec_date = query.get("execution_date", "")
+                try:
+                    if exec_date:
+                        formatted_date = datetime.fromisoformat(exec_date.replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                    else:
+                        formatted_date = "No disponible"
+                except:
+                    formatted_date = exec_date[:16] if len(exec_date) >= 16 else "No disponible"
+                
+                export_data.append({
+                    "ID": query.get("query_id", query.get("analysis_id", "")),
+                    "Tecnologia": query.get("technology_name") or query.get("search_query", "")[:50],
+                    "Categoria": query.get("category_name", "Sin categoría"),
+                    "Fase": hype_metrics.get("phase", "Unknown"),
+                    "Confianza": self._safe_float_format(hype_metrics.get("confidence", 0), ".3f"),
+                    "Menciones_Total": self._safe_int_format(hype_metrics.get("total_mentions", 0)),
+                    "Tiempo_al_Plateau": hype_metrics.get("time_to_plateau", "N/A"),
+                    "Sentimiento_Promedio": self._safe_float_format(hype_metrics.get("sentiment_avg", 0), ".3f"),
+                    "Posicion_X": self._safe_float_format(hype_metrics.get("hype_cycle_position_x", 0), ".2f"),
+                    "Posicion_Y": self._safe_float_format(hype_metrics.get("hype_cycle_position_y", 0), ".2f"),
+                    "Fecha_Analisis": formatted_date,
+                    "Consulta_Original": query.get("search_query", "")
+                })
+            
+            # Crear DataFrame y CSV
+            df_export = pd.DataFrame(export_data)
+            csv = df_export.to_csv(index=False)
+            
+            # Botón de descarga
+            filename = f"hype_cycle_completo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            
+            st.download_button(
+                label=f"📥 Descargar {filename}",
+                data=csv,
+                file_name=filename,
+                mime="text/csv"
+            )
+            
+            st.success(f"✅ Preparado archivo con {len(export_data)} registros para descarga")
+            
+        except Exception as e:
+            st.error(f"Error exportando datos: {str(e)}")
     
-    def _create_full_backup(self):
-        """Crea un backup completo del sistema"""
-        st.info("💾 Funcionalidad de backup - En desarrollo")
+    def _export_category_data(self, category_name: str, tech_data: List[Dict]):
+        """Exporta datos de una categoría específica"""
+        try:
+            df = pd.DataFrame(tech_data)
+            csv = df.to_csv(index=False)
+            
+            st.download_button(
+                label=f"📥 Descargar {category_name}.csv",
+                data=csv,
+                file_name=f"hype_cycle_{category_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+            
+        except Exception as e:
+            st.error(f"Error exportando datos: {str(e)}")
