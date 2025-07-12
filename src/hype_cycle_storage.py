@@ -1,4 +1,4 @@
-# src/hype_cycle_storage.py - VERSIÓN CORREGIDA PARA FILTROS DYNAMODB
+# src/hype_cycle_storage.py - VERSIÓN OPTIMIZADA PARA RENDIMIENTO Y CORRECCIÓN DE BUGS
 import streamlit as st
 import pandas as pd
 import time
@@ -77,7 +77,7 @@ class HypeCycleQuery:
     notes: str = ""
 
 class HypeCycleStorage:
-    """Clase especializada para gestionar almacenamiento de consultas Hype Cycle - VERSIÓN CORREGIDA"""
+    """Clase especializada para gestionar almacenamiento de consultas Hype Cycle - VERSIÓN OPTIMIZADA"""
     
     def __init__(self, db_storage):
         """Inicializa con el storage de DynamoDB"""
@@ -86,6 +86,37 @@ class HypeCycleStorage:
         # Verificar que es DynamoDB
         if not hasattr(db_storage, 'dynamodb'):
             raise ValueError("HypeCycleStorage requiere DynamoDB storage")
+        
+        # CACHE para evitar consultas repetitivas
+        self._cache = {}
+        self._cache_timeout = 300  # 5 minutos
+        self._last_cache_time = {}
+    
+    def _get_cache_key(self, operation: str, params: str = "") -> str:
+        """Genera clave de cache"""
+        return f"{operation}_{params}"
+    
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Verifica si el cache es válido"""
+        if cache_key not in self._cache:
+            return False
+        
+        last_time = self._last_cache_time.get(cache_key, 0)
+        return (time.time() - last_time) < self._cache_timeout
+    
+    def _set_cache(self, cache_key: str, data: Any):
+        """Establece cache"""
+        self._cache[cache_key] = data
+        self._last_cache_time[cache_key] = time.time()
+    
+    def _get_cache(self, cache_key: str) -> Any:
+        """Obtiene datos del cache"""
+        return self._cache.get(cache_key)
+    
+    def _invalidate_cache(self):
+        """Invalida todo el cache"""
+        self._cache.clear()
+        self._last_cache_time.clear()
     
     def _generate_unique_query_id(self):
         """Genera un ID único garantizado para queries de Hype Cycle"""
@@ -104,7 +135,7 @@ class HypeCycleStorage:
                             technology_name: str = None,
                             technology_description: str = "") -> str:
         """
-        VERSIÓN LIMPIA: Guarda una consulta completa de Hype Cycle sin logging en frontend
+        VERSIÓN OPTIMIZADA: Guarda una consulta completa de Hype Cycle
         """
         try:
             # Importar el positioner
@@ -210,6 +241,9 @@ class HypeCycleStorage:
             # Guardar en DynamoDB
             self.storage.analyses_table.put_item(Item=final_item)
             logger.info(f"Query {query_id} guardado exitosamente")
+            
+            # Invalidar cache después de guardar
+            self._invalidate_cache()
             
             return query_id
             
@@ -328,20 +362,28 @@ class HypeCycleStorage:
         words = [w for w in clean_query.split() if not w.isdigit() and len(w) > 2]
         return ' '.join(words[:2]).title() if words else "Tecnología"
 
-    # ===== MÉTODOS DE CONSULTA CORREGIDOS =====
+    # ===== MÉTODOS DE CONSULTA OPTIMIZADOS CON CACHE =====
     
-    def get_queries_by_category(self, category_id: str) -> List[Dict]:
-        """CORREGIDO: Obtiene todas las consultas de Hype Cycle de una categoría con paginación"""
+    @st.cache_data(ttl=300)  # Cache de Streamlit por 5 minutos
+    def get_queries_by_category(_self, category_id: str) -> List[Dict]:
+        """OPTIMIZADO: Obtiene todas las consultas de Hype Cycle de una categoría con cache"""
         try:
+            cache_key = _self._get_cache_key("queries_by_category", str(category_id))
+            
+            # Verificar cache
+            if _self._is_cache_valid(cache_key):
+                return _self._get_cache(cache_key)
+            
             if not BOTO3_CONDITIONS_AVAILABLE:
-                # Fallback sin condiciones
-                return self._get_queries_by_category_fallback(category_id)
+                result = _self._get_queries_by_category_fallback(category_id)
+                _self._set_cache(cache_key, result)
+                return result
             
             # Usar condiciones de boto3 correctamente
             items = []
             
             # Primera consulta
-            response = self.storage.analyses_table.scan(
+            response = _self.storage.analyses_table.scan(
                 FilterExpression=Attr('category_id').eq(str(category_id)) & Attr('analysis_type').eq('hype_cycle')
             )
             
@@ -349,17 +391,14 @@ class HypeCycleStorage:
             
             # Manejar paginación
             while 'LastEvaluatedKey' in response:
-                response = self.storage.analyses_table.scan(
+                response = _self.storage.analyses_table.scan(
                     FilterExpression=Attr('category_id').eq(str(category_id)) & Attr('analysis_type').eq('hype_cycle'),
                     ExclusiveStartKey=response['LastEvaluatedKey']
                 )
                 items.extend(response.get('Items', []))
             
-            # Debug logging
-            logger.info(f"Categoría {category_id}: encontrados {len(items)} items")
-            
             # Convertir decimales y retornar
-            converted_items = [self.storage._convert_decimals_to_float(item) for item in items]
+            converted_items = [_self.storage._convert_decimals_to_float(item) for item in items]
             
             # Filtro adicional en memoria por si acaso
             filtered_items = []
@@ -370,13 +409,16 @@ class HypeCycleStorage:
                 if item_category == str(category_id) and item_type == 'hype_cycle':
                     filtered_items.append(item)
             
-            logger.info(f"Categoría {category_id}: después de filtro adicional {len(filtered_items)} items")
+            # Guardar en cache
+            _self._set_cache(cache_key, filtered_items)
+            
+            logger.info(f"Categoría {category_id}: encontrados {len(filtered_items)} items")
             return filtered_items
                 
         except Exception as e:
             logger.error(f"Error obteniendo consultas por categoría: {str(e)}")
             # Fallback
-            return self._get_queries_by_category_fallback(category_id)
+            return _self._get_queries_by_category_fallback(category_id)
     
     def _get_queries_by_category_fallback(self, category_id: str) -> List[Dict]:
         """Método fallback sin usar condiciones boto3"""
@@ -398,27 +440,92 @@ class HypeCycleStorage:
             return []
 
     def get_query_by_id(self, query_id: str) -> Optional[Dict]:
-        """CORREGIDO: Obtiene una consulta específica por ID"""
+        """CORREGIDO: Obtiene una consulta específica por ID con búsqueda robusta"""
         try:
+            cache_key = self._get_cache_key("query_by_id", query_id)
+            
+            # Verificar cache
+            if self._is_cache_valid(cache_key):
+                return self._get_cache(cache_key)
+            
+            result = None
+            
+            # PASO 1: Búsqueda por scan con condiciones (igual que en delete y move)
             if not BOTO3_CONDITIONS_AVAILABLE:
-                return self._get_query_by_id_fallback(query_id)
+                result = self._get_query_by_id_fallback_robust(query_id)
+            else:
+                try:
+                    # Buscar por analysis_id o query_id
+                    response = self.storage.analyses_table.scan(
+                        FilterExpression=(
+                            Attr('analysis_id').eq(query_id) | 
+                            Attr('query_id').eq(query_id)
+                        ) & Attr('analysis_type').eq('hype_cycle')
+                    )
+                    
+                    items = response.get('Items', [])
+                    if items:
+                        result = self.storage._convert_decimals_to_float(items[0])
+                        logger.info(f"Query encontrado por scan exacto: {result.get('analysis_id')}")
+                    
+                except Exception as e:
+                    logger.error(f"Error en scan para get_query_by_id: {str(e)}")
             
-            # Buscar por analysis_id o query_id
-            response = self.storage.analyses_table.scan(
-                FilterExpression=(
-                    Attr('analysis_id').eq(query_id) | 
-                    Attr('query_id').eq(query_id)
-                ) & Attr('analysis_type').eq('hype_cycle')
-            )
+            # PASO 2: Si no se encontró, búsqueda exhaustiva con coincidencias parciales
+            if not result:
+                logger.info(f"Query {query_id} no encontrado con scan, intentando búsqueda exhaustiva...")
+                all_items = self.get_all_hype_cycle_queries()
+                
+                for item in all_items:
+                    item_query_id = item.get('query_id', '')
+                    item_analysis_id = item.get('analysis_id', '')
+                    
+                    # Búsqueda exacta primero
+                    if item_query_id == query_id or item_analysis_id == query_id:
+                        result = item
+                        logger.info(f"Query encontrado por coincidencia exacta: query_id={item_query_id}, analysis_id={item_analysis_id}")
+                        break
+                    
+                    # Búsqueda parcial como fallback
+                    if (query_id in item_query_id or query_id in item_analysis_id or
+                        item_query_id.startswith(query_id) or item_analysis_id.startswith(query_id)):
+                        result = item
+                        logger.info(f"Query encontrado por coincidencia parcial: query_id={item_query_id}, analysis_id={item_analysis_id}")
+                        break
             
-            items = response.get('Items', [])
-            if items:
-                return self.storage._convert_decimals_to_float(items[0])
-            return None
+            # Guardar en cache
+            self._set_cache(cache_key, result)
+            return result
                 
         except Exception as e:
             logger.error(f"Error obteniendo consulta por ID: {str(e)}")
-            return self._get_query_by_id_fallback(query_id)
+            return self._get_query_by_id_fallback_robust(query_id)
+    
+    def _get_query_by_id_fallback_robust(self, query_id: str) -> Optional[Dict]:
+        """Método fallback robusto para buscar por ID"""
+        try:
+            all_items = self.get_all_hype_cycle_queries()
+            
+            # Búsqueda exacta primero
+            for item in all_items:
+                if (item.get('analysis_id') == query_id or 
+                    item.get('query_id') == query_id):
+                    return item
+            
+            # Búsqueda parcial como fallback
+            for item in all_items:
+                query_id_partial = item.get('query_id', '')
+                analysis_id_partial = item.get('analysis_id', '')
+                
+                if (query_id in query_id_partial or query_id in analysis_id_partial or
+                    query_id_partial.startswith(query_id) or analysis_id_partial.startswith(query_id)):
+                    return item
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error en fallback robusto: {str(e)}")
+            return None
     
     def _get_query_by_id_fallback(self, query_id: str) -> Optional[Dict]:
         """Método fallback para buscar por ID"""
@@ -436,16 +543,25 @@ class HypeCycleStorage:
             logger.error(f"Error en fallback búsqueda por ID: {str(e)}")
             return None
 
-    def get_all_hype_cycle_queries(self) -> List[Dict]:
-        """CORREGIDO: Obtiene todas las consultas de Hype Cycle con paginación"""
+    @st.cache_data(ttl=300)  # Cache de Streamlit por 5 minutos
+    def get_all_hype_cycle_queries(_self) -> List[Dict]:
+        """OPTIMIZADO: Obtiene todas las consultas de Hype Cycle con cache"""
         try:
+            cache_key = _self._get_cache_key("all_queries")
+            
+            # Verificar cache
+            if _self._is_cache_valid(cache_key):
+                return _self._get_cache(cache_key)
+            
             if not BOTO3_CONDITIONS_AVAILABLE:
-                return self._get_all_hype_cycle_queries_fallback()
+                result = _self._get_all_hype_cycle_queries_fallback()
+                _self._set_cache(cache_key, result)
+                return result
             
             items = []
             
             # Primera consulta
-            response = self.storage.analyses_table.scan(
+            response = _self.storage.analyses_table.scan(
                 FilterExpression=Attr('analysis_type').eq('hype_cycle')
             )
             
@@ -453,26 +569,27 @@ class HypeCycleStorage:
             
             # Manejar paginación
             while 'LastEvaluatedKey' in response:
-                response = self.storage.analyses_table.scan(
+                response = _self.storage.analyses_table.scan(
                     FilterExpression=Attr('analysis_type').eq('hype_cycle'),
                     ExclusiveStartKey=response['LastEvaluatedKey']
                 )
                 items.extend(response.get('Items', []))
             
-            # Debug total
-            logger.info(f"Total Hype Cycle queries encontradas: {len(items)}")
-            
             # Convertir decimales
-            converted_items = [self.storage._convert_decimals_to_float(item) for item in items]
+            converted_items = [_self.storage._convert_decimals_to_float(item) for item in items]
             
             # Ordenar por fecha (más reciente primero)
             converted_items.sort(key=lambda x: x.get('execution_date', ''), reverse=True)
             
+            # Guardar en cache
+            _self._set_cache(cache_key, converted_items)
+            
+            logger.info(f"Total Hype Cycle queries encontradas: {len(converted_items)}")
             return converted_items
                 
         except Exception as e:
             logger.error(f"Error obteniendo todas las consultas: {str(e)}")
-            return self._get_all_hype_cycle_queries_fallback()
+            return _self._get_all_hype_cycle_queries_fallback()
     
     def _get_all_hype_cycle_queries_fallback(self) -> List[Dict]:
         """Método fallback para obtener todas las consultas"""
@@ -493,45 +610,165 @@ class HypeCycleStorage:
             logger.error(f"Error en fallback obtener todas: {str(e)}")
             return []
     
-    # ===== MÉTODOS DE GESTIÓN =====
+    # ===== MÉTODOS DE GESTIÓN CORREGIDOS =====
     
     def delete_query(self, query_id: str) -> bool:
-        """CORREGIDO: Elimina una consulta específica usando múltiples métodos"""
+        """CORREGIDO: Elimina una consulta específica con mejor manejo de IDs inconsistentes"""
         try:
-            # Método 1: Buscar el item completo primero para obtener las claves exactas
+            # Invalidar cache primero
+            self._invalidate_cache()
+            
+            logger.info(f"Intentando eliminar query con ID: {query_id}")
+            
+            # PASO 1: Intentar encontrar el item usando múltiples métodos
+            target_item = None
+            
+            # Método A: Buscar por query_id o analysis_id usando scan
             if not BOTO3_CONDITIONS_AVAILABLE:
-                return self._delete_query_fallback(query_id)
+                target_item = self._find_item_for_deletion_fallback(query_id)
+            else:
+                try:
+                    response = self.storage.analyses_table.scan(
+                        FilterExpression=(
+                            Attr('analysis_id').eq(query_id) | 
+                            Attr('query_id').eq(query_id)
+                        ) & Attr('analysis_type').eq('hype_cycle')
+                    )
+                    
+                    items = response.get('Items', [])
+                    if items:
+                        target_item = items[0]
+                        logger.info(f"Item encontrado usando scan: {target_item.get('analysis_id')}")
+                    
+                except Exception as e:
+                    logger.error(f"Error en scan: {str(e)}")
             
-            # Buscar el item usando filtros
-            response = self.storage.analyses_table.scan(
-                FilterExpression=(
-                    Attr('analysis_id').eq(query_id) | 
-                    Attr('query_id').eq(query_id)
-                ) & Attr('analysis_type').eq('hype_cycle')
-            )
+            # Método B: Si no se encontró, buscar en todos los items
+            if not target_item:
+                logger.info("Item no encontrado con scan, intentando búsqueda exhaustiva...")
+                all_items = self.get_all_hype_cycle_queries()
+                
+                for item in all_items:
+                    item_query_id = item.get('query_id', '')
+                    item_analysis_id = item.get('analysis_id', '')
+                    
+                    if item_query_id == query_id or item_analysis_id == query_id:
+                        target_item = item
+                        logger.info(f"Item encontrado en búsqueda exhaustiva: query_id={item_query_id}, analysis_id={item_analysis_id}")
+                        break
+                    
+                    # También buscar coincidencias parciales (por si hay truncamiento)
+                    if (query_id in item_query_id or query_id in item_analysis_id or
+                        item_query_id.startswith(query_id) or item_analysis_id.startswith(query_id)):
+                        target_item = item
+                        logger.info(f"Item encontrado por coincidencia parcial: query_id={item_query_id}, analysis_id={item_analysis_id}")
+                        break
             
-            items = response.get('Items', [])
-            if not items:
-                logger.warning(f"No se encontró item con ID {query_id}")
+            # PASO 2: Si no se encontró el item, reportar error detallado
+            if not target_item:
+                logger.error(f"No se encontró item con ID {query_id} después de búsqueda exhaustiva")
                 return False
             
-            # Tomar el primer item encontrado
-            item = items[0]
+            # PASO 3: Extraer las claves correctas para DynamoDB
+            analysis_id = target_item.get('analysis_id')
+            timestamp = target_item.get('timestamp')
             
-            # Eliminar usando las claves exactas del item
+            if not analysis_id or not timestamp:
+                logger.error(f"Item encontrado pero faltan claves: analysis_id={analysis_id}, timestamp={timestamp}")
+                return False
+            
+            logger.info(f"Eliminando item con claves: analysis_id={analysis_id}, timestamp={timestamp}")
+            
+            # PASO 4: Ejecutar eliminación
             delete_response = self.storage.analyses_table.delete_item(
                 Key={
-                    'analysis_id': item['analysis_id'],
-                    'timestamp': item['timestamp']
-                }
+                    'analysis_id': analysis_id,
+                    'timestamp': timestamp
+                },
+                ReturnValues='ALL_OLD'  # Para confirmar que se eliminó
             )
             
-            logger.info(f"Item {query_id} eliminado exitosamente")
-            return True
+            # PASO 5: Verificar que se eliminó
+            deleted_item = delete_response.get('Attributes')
+            if deleted_item:
+                logger.info(f"Item {query_id} eliminado exitosamente")
+                return True
+            else:
+                logger.warning(f"Eliminación ejecutada pero no se retornó item eliminado")
+                return True  # Asumir éxito si no hay error
             
         except Exception as e:
             logger.error(f"Error eliminando consulta {query_id}: {str(e)}")
-            return self._delete_query_fallback(query_id)
+            return False
+    
+    def _find_item_for_deletion_fallback(self, query_id: str) -> Optional[Dict]:
+        """Método fallback para encontrar items para eliminación"""
+        try:
+            # Obtener todos los items y buscar manualmente
+            all_queries = self.get_all_hype_cycle_queries()
+            
+            for query in all_queries:
+                if (query.get('analysis_id') == query_id or 
+                    query.get('query_id') == query_id):
+                    return query
+                    
+                # Buscar coincidencias parciales
+                query_id_partial = query.get('query_id', '')
+                analysis_id_partial = query.get('analysis_id', '')
+                
+                if (query_id in query_id_partial or query_id in analysis_id_partial or
+                    query_id_partial.startswith(query_id) or analysis_id_partial.startswith(query_id)):
+                    return query
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error en fallback de búsqueda: {str(e)}")
+            return None
+    
+    def debug_query_ids(self, partial_id: str) -> Dict:
+        """NUEVO: Método de debug para investigar problemas de IDs"""
+        try:
+            debug_info = {
+                'searched_id': partial_id,
+                'matching_items': [],
+                'all_ids_sample': [],
+                'total_items': 0
+            }
+            
+            all_queries = self.get_all_hype_cycle_queries()
+            debug_info['total_items'] = len(all_queries)
+            
+            # Mostrar muestra de todos los IDs
+            for i, query in enumerate(all_queries[:10]):
+                debug_info['all_ids_sample'].append({
+                    'index': i,
+                    'query_id': query.get('query_id', 'N/A'),
+                    'analysis_id': query.get('analysis_id', 'N/A'),
+                    'tech_name': query.get('technology_name', query.get('search_query', ''))[:30]
+                })
+            
+            # Buscar coincidencias
+            for query in all_queries:
+                query_id = query.get('query_id', '')
+                analysis_id = query.get('analysis_id', '')
+                
+                if (partial_id in query_id or partial_id in analysis_id or
+                    query_id.startswith(partial_id) or analysis_id.startswith(partial_id) or
+                    query_id == partial_id or analysis_id == partial_id):
+                    
+                    debug_info['matching_items'].append({
+                        'query_id': query_id,
+                        'analysis_id': analysis_id,
+                        'timestamp': query.get('timestamp', 'N/A'),
+                        'tech_name': query.get('technology_name', query.get('search_query', ''))[:50],
+                        'exact_match': (query_id == partial_id or analysis_id == partial_id)
+                    })
+            
+            return debug_info
+            
+        except Exception as e:
+            return {'error': str(e)}
     
     def _delete_query_fallback(self, query_id: str) -> bool:
         """Método fallback para eliminación sin usar condiciones boto3"""
@@ -565,66 +802,264 @@ class HypeCycleStorage:
             return False
     
     def update_query(self, query_id: str, updates: Dict) -> bool:
-        """Actualiza una consulta específica"""
+        """CORREGIDO: Actualiza una consulta específica con mejor manejo"""
         try:
+            # Invalidar cache primero
+            self._invalidate_cache()
+            
+            # Buscar la consulta completa para obtener las claves
             query = self.get_query_by_id(query_id)
-            if query:
-                updates["last_updated"] = datetime.now(timezone.utc).isoformat()
-                return self.storage.update_item(query_id, query["timestamp"], updates)
-            return False
+            if not query:
+                logger.error(f"No se encontró query {query_id} para actualizar")
+                return False
+            
+            analysis_id = query.get('analysis_id', query_id)
+            timestamp = query.get('timestamp')
+            
+            if not timestamp:
+                logger.error(f"No se encontró timestamp para query {query_id}")
+                return False
+            
+            # Preparar las actualizaciones
+            updates["last_updated"] = datetime.now(timezone.utc).isoformat()
+            
+            # Construir la expresión de actualización
+            update_expression_parts = []
+            expression_attribute_values = {}
+            
+            for key, value in updates.items():
+                update_expression_parts.append(f"{key} = :{key}")
+                expression_attribute_values[f":{key}"] = self.storage._convert_floats_to_decimal(value)
+            
+            update_expression = "SET " + ", ".join(update_expression_parts)
+            
+            # Ejecutar la actualización
+            self.storage.analyses_table.update_item(
+                Key={
+                    'analysis_id': analysis_id,
+                    'timestamp': timestamp
+                },
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_attribute_values
+            )
+            
+            logger.info(f"Query {query_id} actualizado exitosamente")
+            return True
             
         except Exception as e:
-            logger.error(f"Error actualizando consulta: {str(e)}")
+            logger.error(f"Error actualizando consulta {query_id}: {str(e)}")
             return False
     
     def move_technology_to_category(self, query_id: str, target_category_id: str) -> bool:
-        """Mueve una tecnología a otra categoría en DynamoDB"""
+        """CORREGIDO: Mueve una tecnología a otra categoría con búsqueda robusta de IDs"""
         try:
-            current_query = self.get_query_by_id(query_id)
+            logger.info(f"Iniciando movimiento de {query_id} a categoría {target_category_id}")
             
+            # PASO 1: Buscar la consulta usando el método robusto (igual que en delete_query)
+            current_query = None
+            
+            # Método A: Búsqueda por scan con condiciones
+            if not BOTO3_CONDITIONS_AVAILABLE:
+                current_query = self._find_item_for_deletion_fallback(query_id)
+            else:
+                try:
+                    response = self.storage.analyses_table.scan(
+                        FilterExpression=(
+                            Attr('analysis_id').eq(query_id) | 
+                            Attr('query_id').eq(query_id)
+                        ) & Attr('analysis_type').eq('hype_cycle')
+                    )
+                    
+                    items = response.get('Items', [])
+                    if items:
+                        current_query = self.storage._convert_decimals_to_float(items[0])
+                        logger.info(f"Item encontrado para mover: {current_query.get('analysis_id')}")
+                    
+                except Exception as e:
+                    logger.error(f"Error en scan para movimiento: {str(e)}")
+            
+            # Método B: Búsqueda exhaustiva si no se encontró
             if not current_query:
-                logger.warning(f"No se encontró query {query_id}")
+                logger.info("Item no encontrado con scan, buscando exhaustivamente...")
+                all_items = self.get_all_hype_cycle_queries()
+                
+                for item in all_items:
+                    item_query_id = item.get('query_id', '')
+                    item_analysis_id = item.get('analysis_id', '')
+                    
+                    if (item_query_id == query_id or item_analysis_id == query_id or
+                        query_id in item_query_id or query_id in item_analysis_id or
+                        item_query_id.startswith(query_id) or item_analysis_id.startswith(query_id)):
+                        current_query = item
+                        logger.info(f"Item encontrado exhaustivamente: query_id={item_query_id}, analysis_id={item_analysis_id}")
+                        break
+            
+            # PASO 2: Verificar que se encontró la consulta
+            if not current_query:
+                logger.warning(f"No se encontró query {query_id} después de búsqueda exhaustiva")
                 return False
             
-            current_category_id = current_query.get("category_id", "default")
+            # PASO 3: Obtener IDs reales del item encontrado
+            real_query_id = current_query.get('query_id', query_id)
+            real_analysis_id = current_query.get('analysis_id', query_id)
+            current_category_id = str(current_query.get("category_id", "default"))
+            target_category_id = str(target_category_id)
             
+            logger.info(f"IDs reales - query_id: {real_query_id}, analysis_id: {real_analysis_id}")
+            
+            # PASO 4: Verificar que la categoría destino existe
             target_category = self.storage.get_category_by_id(target_category_id)
             if not target_category:
                 logger.warning(f"No se encontró categoría destino {target_category_id}")
                 return False
             
-            if str(current_category_id) == str(target_category_id):
-                logger.info(f"Query {query_id} ya está en categoría {target_category_id}")
-                return True  # Ya está en la categoría correcta
+            # PASO 5: Verificar si ya está en la categoría correcta
+            if current_category_id == target_category_id:
+                logger.info(f"Query {real_query_id} ya está en categoría {target_category_id}")
+                return True
             
+            # PASO 6: Preparar los datos de actualización
             new_category_name = target_category.get("name", "Sin nombre")
             
             updates = {
-                "category_id": str(target_category_id),
-                "category_name": new_category_name,
-                "last_updated": datetime.now(timezone.utc).isoformat()
+                "category_id": target_category_id,
+                "category_name": new_category_name
             }
             
-            success = self.update_query(query_id, updates)
-            if success:
-                logger.info(f"Query {query_id} movido de {current_category_id} a {target_category_id}")
+            # PASO 7: Ejecutar la actualización usando los IDs reales
+            success = self._update_query_robust(real_analysis_id, current_query.get('timestamp'), updates)
             
+            if success:
+                logger.info(f"Query {real_query_id} movido exitosamente de {current_category_id} a {target_category_id}")
+                
+                # Invalidar el cache específicamente para las categorías afectadas
+                self._invalidate_cache()
+                
+                # También limpiar el cache de Streamlit
+                if hasattr(st, 'cache_data'):
+                    st.cache_data.clear()
+                
             return success
                 
         except Exception as e:
             logger.error(f"Error moviendo tecnología: {str(e)}")
             return False
+    
+    def _update_query_robust(self, analysis_id: str, timestamp: str, updates: Dict) -> bool:
+        """Actualiza una consulta de forma robusta"""
+        try:
+            if not timestamp:
+                logger.error(f"No se encontró timestamp para {analysis_id}")
+                return False
+            
+            # Preparar las actualizaciones
+            updates["last_updated"] = datetime.now(timezone.utc).isoformat()
+            
+            # Construir la expresión de actualización
+            update_expression_parts = []
+            expression_attribute_values = {}
+            
+            for key, value in updates.items():
+                update_expression_parts.append(f"{key} = :{key}")
+                expression_attribute_values[f":{key}"] = self.storage._convert_floats_to_decimal(value)
+            
+            update_expression = "SET " + ", ".join(update_expression_parts)
+            
+            # Ejecutar la actualización
+            self.storage.analyses_table.update_item(
+                Key={
+                    'analysis_id': analysis_id,
+                    'timestamp': timestamp
+                },
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_attribute_values,
+                ReturnValues='UPDATED_NEW'  # Para confirmar que se actualizó
+            )
+            
+            logger.info(f"Query {analysis_id} actualizado exitosamente")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error actualizando query {analysis_id}: {str(e)}")
+            return False
 
-    # ===== MÉTODOS DE DEBUG =====
+    # ===== NUEVOS MÉTODOS PARA GESTIÓN DE DUPLICADOS =====
+    
+    def find_duplicates(self) -> List[Dict]:
+        """Encuentra consultas duplicadas basadas en search_query"""
+        try:
+            all_queries = self.get_all_hype_cycle_queries()
+            
+            # Agrupar por search_query
+            query_groups = {}
+            for query in all_queries:
+                search_query = query.get('search_query', '').strip().lower()
+                if search_query:
+                    if search_query not in query_groups:
+                        query_groups[search_query] = []
+                    query_groups[search_query].append(query)
+            
+            # Encontrar grupos con más de un elemento
+            duplicates = []
+            for search_query, queries in query_groups.items():
+                if len(queries) > 1:
+                    # Ordenar por fecha (más reciente primero)
+                    queries.sort(key=lambda x: x.get('execution_date', ''), reverse=True)
+                    
+                    duplicates.append({
+                        'search_query': search_query,
+                        'total_count': len(queries),
+                        'queries': queries,
+                        'keep_query': queries[0],  # Mantener el más reciente
+                        'delete_queries': queries[1:]  # Eliminar los más antiguos
+                    })
+            
+            return duplicates
+            
+        except Exception as e:
+            logger.error(f"Error encontrando duplicados: {str(e)}")
+            return []
+    
+    def delete_duplicates(self, duplicates_to_delete: List[str]) -> Dict[str, bool]:
+        """Elimina consultas duplicadas especificadas"""
+        results = {}
+        
+        for query_id in duplicates_to_delete:
+            try:
+                success = self.delete_query(query_id)
+                results[query_id] = success
+                logger.info(f"Duplicado {query_id}: {'eliminado' if success else 'falló'}")
+            except Exception as e:
+                results[query_id] = False
+                logger.error(f"Error eliminando duplicado {query_id}: {str(e)}")
+        
+        return results
+    
+    def batch_delete_queries(self, query_ids: List[str]) -> Dict[str, bool]:
+        """Elimina múltiples consultas en lote"""
+        results = {}
+        
+        for query_id in query_ids:
+            try:
+                success = self.delete_query(query_id)
+                results[query_id] = success
+                time.sleep(0.1)  # Pequeña pausa para evitar throttling
+            except Exception as e:
+                results[query_id] = False
+                logger.error(f"Error en eliminación en lote {query_id}: {str(e)}")
+        
+        return results
+
+    # ===== MÉTODOS DE DEBUG MEJORADOS =====
     
     def debug_category_queries(self, category_id: str) -> Dict:
-        """Método de debug para investigar problemas con categorías"""
+        """MEJORADO: Método de debug para investigar problemas con categorías"""
         try:
             # Obtener todos los registros sin filtrar
             all_items_response = self.storage.analyses_table.scan()
             all_items = all_items_response.get('Items', [])
             
-            # Estadísticas
+            # Estadísticas detalladas
             total_items = len(all_items)
             hype_cycle_items = [item for item in all_items if item.get('analysis_type') == 'hype_cycle']
             category_items = [item for item in hype_cycle_items if str(item.get('category_id', '')) == str(category_id)]
@@ -634,12 +1069,27 @@ class HypeCycleStorage:
             for item in hype_cycle_items:
                 unique_categories.add(str(item.get('category_id', 'None')))
             
+            # Análisis de duplicados
+            query_counts = {}
+            for item in hype_cycle_items:
+                search_query = item.get('search_query', '').strip().lower()
+                if search_query:
+                    query_counts[search_query] = query_counts.get(search_query, 0) + 1
+            
+            duplicated_queries = {k: v for k, v in query_counts.items() if v > 1}
+            
             debug_info = {
                 'total_items_in_table': total_items,
                 'hype_cycle_items': len(hype_cycle_items),
                 'items_in_category': len(category_items),
                 'unique_categories': list(unique_categories),
                 'category_id_searched': str(category_id),
+                'duplicated_queries_count': len(duplicated_queries),
+                'total_duplicates': sum(duplicated_queries.values()) - len(duplicated_queries),
+                'cache_status': {
+                    'cache_keys': list(self._cache.keys()),
+                    'cache_size': len(self._cache)
+                },
                 'sample_items': []
             }
             
@@ -647,9 +1097,11 @@ class HypeCycleStorage:
             for item in category_items[:3]:
                 debug_info['sample_items'].append({
                     'analysis_id': item.get('analysis_id'),
+                    'query_id': item.get('query_id'),
                     'category_id': str(item.get('category_id')),
                     'analysis_type': item.get('analysis_type'),
-                    'search_query': item.get('search_query', '')[:50] + '...'
+                    'search_query': item.get('search_query', '')[:50] + '...',
+                    'execution_date': item.get('execution_date', '')
                 })
             
             return debug_info
@@ -657,10 +1109,10 @@ class HypeCycleStorage:
         except Exception as e:
             return {'error': str(e)}
 
-# ===== RESTO DE CLASES SIN CAMBIOS =====
+# ===== RESTO DE CLASES SIN CAMBIOS PERO OPTIMIZADAS =====
 
 class HypeCycleHistoryInterface:
-    """Interfaz para gestionar el historial de consultas de Hype Cycle con estados estables"""
+    """Interfaz OPTIMIZADA para gestionar el historial de consultas de Hype Cycle"""
     
     def __init__(self, hype_storage, context_prefix: str = "default"):
         self.storage = hype_storage
@@ -672,10 +1124,12 @@ class HypeCycleHistoryInterface:
         """Inicializa estados estables que persisten entre reruns"""
         state_keys = [
             f"{self._state_key_base}_selected_category",
-            f"{self._state_key_base}_selected_query",
+            f"{self._state_key_base}_selected_query", 
             f"{self._state_key_base}_filter_category",
             f"{self._state_key_base}_move_source_tech",
-            f"{self._state_key_base}_move_target_cat"
+            f"{self._state_key_base}_move_target_cat",
+            f"{self._state_key_base}_duplicates_found",
+            f"{self._state_key_base}_selected_duplicates"
         ]
         
         for key in state_keys:
@@ -690,6 +1144,10 @@ class HypeCycleHistoryInterface:
                     st.session_state[key] = ""
                 elif "move_target_cat" in key:
                     st.session_state[key] = ""
+                elif "duplicates_found" in key:
+                    st.session_state[key] = []
+                elif "selected_duplicates" in key:
+                    st.session_state[key] = []
     
     def _safe_format_value(self, value, format_type="float", format_str=".2f", default="0.00"):
         """Formatea un valor de forma segura para evitar errores de tipo"""
@@ -721,14 +1179,15 @@ class HypeCycleHistoryInterface:
             return default
     
     def show_history_interface(self):
-        """Muestra la interfaz completa de historial"""
+        """Muestra la interfaz completa de historial OPTIMIZADA"""
         st.header("📚 Historial de Consultas de Hype Cycle")
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "🔍 Explorar por Categoría", 
             "📊 Vista de Resumen", 
             "⚙️ Gestionar Consultas",
             "🔄 Mover Tecnologías",
+            "🧹 Gestionar Duplicados",
             "🛠️ Debug"
         ])
         
@@ -742,111 +1201,394 @@ class HypeCycleHistoryInterface:
             self._show_query_manager()
         
         with tab4:
-            self._show_move_technologies()
+            self._show_move_technologies_optimized()
         
         with tab5:
+            self._show_duplicates_manager()
+        
+        with tab6:
             self._show_debug_tab()
     
-    def _show_debug_tab(self):
-        """NUEVA: Pestaña de debug para investigar problemas"""
-        st.subheader("🛠️ Debug - Investigar Problemas de Consultas")
+    def _show_move_technologies_optimized(self):
+        """CORREGIDA: Interfaz para mover tecnologías sin botones bloqueados"""
+        st.subheader("🔄 Mover Tecnologías Entre Categorías")
         
-        st.write("Esta pestaña te ayuda a investigar por qué no aparecen todas las consultas.")
+        st.write("Mueve tecnologías entre diferentes categorías en DynamoDB.")
         
-        # Obtener categorías
-        try:
+        # Obtener datos una sola vez
+        with st.spinner("Cargando datos..."):
+            all_queries = self.storage.get_all_hype_cycle_queries()
             categories = self.storage.storage.get_all_categories()
-        except:
-            categories = [{"category_id": "default", "name": "Sin categoría"}]
         
-        # Selector de categoría para debug
-        category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
+        if not all_queries:
+            st.info("No hay tecnologías para mover.")
+            return
         
-        selected_category_name = st.selectbox(
-            "Categoría a investigar:",
-            options=list(category_options.keys()),
-            key=f"{self._state_key_base}_debug_category"
-        )
+        if len(categories) < 2:
+            st.warning("Se necesitan al menos 2 categorías para mover tecnologías.")
+            return
         
-        selected_category_id = category_options[selected_category_name]
-        
-        if st.button("🔍 Investigar Categoría", key=f"{self._state_key_base}_debug_btn"):
-            with st.spinner("Investigando..."):
-                debug_info = self.storage.debug_category_queries(selected_category_id)
+        # USAR FORMULARIO SIN DISABLED PARA EVITAR BLOQUEOS
+        with st.form(key=f"{self._state_key_base}_move_form_optimized", clear_on_submit=False):
+            st.write("### 📋 Seleccionar Movimiento")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.write("#### 🔬 Tecnología a Mover")
                 
-                st.write("### 📊 Información de Debug")
+                # Crear opciones simplificadas
+                tech_options = []
+                tech_data = {}
                 
-                col1, col2, col3 = st.columns(3)
+                for query in all_queries:
+                    query_id = query.get("query_id", query.get("analysis_id"))
+                    tech_name = (
+                        query.get("technology_name") or 
+                        query.get("search_query", "")[:30] or 
+                        "Sin nombre"
+                    )
+                    
+                    # Obtener categoría actual
+                    current_cat_id = query.get("category_id", "unknown")
+                    current_cat_name = "Sin categoría"
+                    for cat in categories:
+                        if cat.get("category_id") == current_cat_id:
+                            current_cat_name = cat.get("name", "Sin nombre")
+                            break
+                    
+                    phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                    display_name = f"{tech_name} | {current_cat_name} | {phase}"
+                    
+                    tech_options.append(display_name)
+                    tech_data[display_name] = {
+                        "query_id": query_id,
+                        "tech_name": tech_name,
+                        "current_cat_id": current_cat_id,
+                        "current_cat_name": current_cat_name
+                    }
                 
-                with col1:
-                    st.metric("Total items en tabla", debug_info.get('total_items_in_table', 0))
+                selected_tech_display = st.selectbox(
+                    "Selecciona la tecnología:",
+                    options=tech_options,
+                    help=f"{len(tech_options)} tecnologías disponibles"
+                )
                 
-                with col2:
-                    st.metric("Items Hype Cycle", debug_info.get('hype_cycle_items', 0))
+                if selected_tech_display:
+                    selected_tech_info = tech_data[selected_tech_display]
+                    
+                    st.info(f"""
+                    **Tecnología seleccionada:**
+                    - 🔬 Nombre: {selected_tech_info['tech_name']}
+                    - 📁 Categoría actual: {selected_tech_info['current_cat_name']}
+                    - 🆔 ID: {selected_tech_info['query_id'][:12]}...
+                    """)
+            
+            with col2:
+                st.write("#### 🎯 Categoría Destino")
                 
-                with col3:
-                    st.metric("Items en esta categoría", debug_info.get('items_in_category', 0))
-                
-                st.write("### 🏷️ Categorías encontradas en la tabla:")
-                unique_cats = debug_info.get('unique_categories', [])
-                for cat in unique_cats:
-                    if cat == str(selected_category_id):
-                        st.write(f"- **{cat}** ← Esta es la categoría buscada")
+                if selected_tech_display:
+                    current_cat_id = selected_tech_info["current_cat_id"]
+                    
+                    # Filtrar categorías disponibles (excluir la actual)
+                    available_categories = []
+                    category_data = {}
+                    
+                    for cat in categories:
+                        if cat.get("category_id") != current_cat_id:
+                            cat_name = cat.get("name", "Sin nombre")
+                            available_categories.append(cat_name)
+                            category_data[cat_name] = cat.get("category_id")
+                    
+                    if available_categories:
+                        target_category_name = st.selectbox(
+                            "Nueva categoría:",
+                            options=available_categories,
+                            help=f"{len(available_categories)} categorías disponibles"
+                        )
+                        
+                        target_category_id = category_data[target_category_name]
+                        
+                        st.success(f"""
+                        **Movimiento programado:**
+                        📁 **De:** {selected_tech_info['current_cat_name']}
+                        📁 **A:** {target_category_name}
+                        """)
                     else:
-                        st.write(f"- {cat}")
-                
-                st.write(f"### 🔍 Búsqueda realizada para: `{debug_info.get('category_id_searched')}`")
-                
-                if debug_info.get('sample_items'):
-                    st.write("### 📋 Muestra de items encontrados:")
-                    for item in debug_info['sample_items']:
-                        st.write(f"- **ID:** {item['analysis_id']}")
-                        st.write(f"  - **Categoría:** {item['category_id']}")
-                        st.write(f"  - **Tipo:** {item['analysis_type']}")
-                        st.write(f"  - **Query:** {item['search_query']}")
-                        st.write("---")
-                
-                if debug_info.get('error'):
-                    st.error(f"Error en debug: {debug_info['error']}")
+                        st.warning("No hay otras categorías disponibles.")
+                        target_category_name = None
+                        target_category_id = None
+                else:
+                    target_category_name = None
+                    target_category_id = None
+            
+            # Controles del formulario
+            st.write("---")
+            st.write("### ⚙️ Confirmar Operación")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                if target_category_id:
+                    confirm_move = st.checkbox(
+                        f"✅ Confirmar movimiento a '{target_category_name}'",
+                        help="Esta acción modificará la categoría en DynamoDB"
+                    )
+                    
+                    if not confirm_move:
+                        st.warning("⚠️ Marca la casilla para habilitar el movimiento")
+                else:
+                    confirm_move = False
+                    st.info("Selecciona una tecnología y categoría destino")
+            
+            with col2:
+                # BOTÓN SIN DISABLED - Validación después del submit
+                submitted = st.form_submit_button(
+                    "🔄 EJECUTAR MOVIMIENTO", 
+                    type="primary"
+                )
+            
+            # Procesar cuando se envía el formulario
+            if submitted:
+                if not selected_tech_display:
+                    st.error("❌ Selecciona una tecnología")
+                elif not target_category_id:
+                    st.error("❌ Selecciona una categoría destino")
+                elif not confirm_move:
+                    st.error("❌ Debes confirmar el movimiento marcando la casilla")
+                else:
+                    progress_container = st.container()
+                    
+                    with progress_container:
+                        with st.spinner(f"Moviendo '{selected_tech_info['tech_name']}' a '{target_category_name}'..."):
+                            # MÉTODO MEJORADO: Primero verificar que existe usando debug
+                            query_to_move = selected_tech_info['query_id']
+                            
+                            # Debug: Verificar que el item existe
+                            debug_info = self.storage.debug_query_ids(query_to_move)
+                            
+                            if debug_info.get('matching_items'):
+                                # El item existe, proceder con movimiento
+                                matching_item = debug_info['matching_items'][0]
+                                st.info(f"🔍 Item encontrado: {matching_item['tech_name']}")
+                                
+                                success = self.storage.move_technology_to_category(
+                                    query_to_move, 
+                                    target_category_id
+                                )
+                                
+                                if success:
+                                    st.success(f"✅ '{selected_tech_info['tech_name']}' movida exitosamente a '{target_category_name}'!")
+                                    st.balloons()
+                                    
+                                    # Limpiar cache
+                                    if hasattr(st, 'cache_data'):
+                                        st.cache_data.clear()
+                                    
+                                    # Pequeña pausa antes de rerun para mostrar el mensaje
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Error moviendo la tecnología. Revisa los logs de DynamoDB.")
+                                    
+                                    with st.expander("🔍 Información de debug"):
+                                        st.write("**Item que se intentó mover:**")
+                                        st.json(matching_item)
+                                        
+                                        st.write("**Información del movimiento:**")
+                                        st.write(f"- Query ID usado: {query_to_move}")
+                                        st.write(f"- Categoría origen: {selected_tech_info['current_cat_id']}")
+                                        st.write(f"- Categoría destino: {target_category_id}")
+                                        
+                                        st.write("**Posibles causas:**")
+                                        st.write("- Permisos insuficientes en DynamoDB")
+                                        st.write("- Error en la actualización de las claves primary/sort")
+                                        st.write("- Categoría destino no válida")
+                                        
+                                        # Verificar que la categoría destino existe
+                                        try:
+                                            target_cat_info = self.storage.storage.get_category_by_id(target_category_id)
+                                            if target_cat_info:
+                                                st.write("✅ Categoría destino existe en BD")
+                                            else:
+                                                st.write("❌ Categoría destino NO existe en BD")
+                                        except:
+                                            st.write("❌ Error verificando categoría destino")
+                            else:
+                                # El item no existe
+                                st.error(f"❌ No se encontró el item con ID: {query_to_move}")
+                                
+                                with st.expander("🔍 Información de Debug - Item No Encontrado"):
+                                    st.write(f"**ID buscado:** {query_to_move}")
+                                    st.write(f"**Total items en base:** {debug_info.get('total_items', 0)}")
+                                    
+                                    if debug_info.get('all_ids_sample'):
+                                        st.write("**Muestra de IDs existentes:**")
+                                        for sample in debug_info['all_ids_sample'][:3]:
+                                            st.write(f"- query_id: {sample['query_id']}")
+                                            st.write(f"  analysis_id: {sample['analysis_id']}")
+                                            st.write(f"  tecnología: {sample['tech_name']}")
+                                            st.write("---")
+                                    
+                                    st.write("**Posibles soluciones:**")
+                                    st.write("1. Limpiar cache y recargar")
+                                    st.write("2. El item pudo haber sido eliminado")
+                                    st.write("3. Usar Debug de IDs en la pestaña Debug")
+                                    
+                                    # Botón para limpiar cache
+                                    if st.button("🔄 Limpiar Cache", key=f"{self._state_key_base}_clean_cache_move"):
+                                        if hasattr(st, 'cache_data'):
+                                            st.cache_data.clear()
+                                        self.storage._invalidate_cache()
+                                        st.rerun()
+    
+    def _show_duplicates_manager(self):
+        """NUEVA: Gestión avanzada de duplicados"""
+        st.subheader("🧹 Gestionar Consultas Duplicadas")
         
-        # Test de métodos de consulta
-        st.write("### 🧪 Test de Métodos de Consulta")
+        st.write("""
+        Esta herramienta te ayuda a identificar y eliminar consultas duplicadas 
+        basadas en el texto de búsqueda similar.
+        """)
         
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([1, 1])
         
         with col1:
-            if st.button("Test get_all_hype_cycle_queries", key=f"{self._state_key_base}_test_all"):
-                all_queries = self.storage.get_all_hype_cycle_queries()
-                st.metric("Total consultas encontradas", len(all_queries))
-                
-                if all_queries:
-                    st.write("**Primeras 3 consultas:**")
-                    for i, query in enumerate(all_queries[:3]):
-                        st.write(f"{i+1}. {query.get('search_query', 'Sin query')[:50]}... (Cat: {query.get('category_id')})")
+            if st.button("🔍 Buscar Duplicados", type="primary", key=f"{self._state_key_base}_find_duplicates"):
+                with st.spinner("Analizando consultas duplicadas..."):
+                    duplicates = self.storage.find_duplicates()
+                    st.session_state[f"{self._state_key_base}_duplicates_found"] = duplicates
         
         with col2:
-            if st.button("Test get_queries_by_category", key=f"{self._state_key_base}_test_cat"):
-                cat_queries = self.storage.get_queries_by_category(selected_category_id)
-                st.metric("Consultas en categoría", len(cat_queries))
+            if st.button("🧹 Limpiar Cache", key=f"{self._state_key_base}_clear_cache"):
+                if hasattr(st, 'cache_data'):
+                    st.cache_data.clear()
+                self.storage._invalidate_cache()
+                st.success("✅ Cache limpiado")
+        
+        # Mostrar duplicados encontrados
+        duplicates = st.session_state.get(f"{self._state_key_base}_duplicates_found", [])
+        
+        if duplicates:
+            st.write(f"### 📊 Duplicados Encontrados: {len(duplicates)} grupos")
+            
+            total_duplicates = sum(len(dup['delete_queries']) for dup in duplicates)
+            st.metric("Total de consultas duplicadas para eliminar", total_duplicates)
+            
+            # Mostrar cada grupo de duplicados
+            selected_for_deletion = []
+            
+            for i, duplicate_group in enumerate(duplicates):
+                with st.expander(f"Grupo {i+1}: {duplicate_group['search_query'][:60]}... ({duplicate_group['total_count']} duplicados)", expanded=False):
+                    
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.write("**Consulta duplicada:**")
+                        st.code(duplicate_group['search_query'])
+                        
+                        st.write("**Consulta a MANTENER (más reciente):**")
+                        keep_query = duplicate_group['keep_query']
+                        st.write(f"- ID: {keep_query.get('query_id', 'N/A')}")
+                        st.write(f"- Fecha: {keep_query.get('execution_date', 'N/A')[:19]}")
+                        st.write(f"- Fase: {keep_query.get('hype_metrics', {}).get('phase', 'N/A')}")
+                    
+                    with col2:
+                        st.write("**Consultas a ELIMINAR:**")
+                        
+                        for del_query in duplicate_group['delete_queries']:
+                            query_id = del_query.get('query_id', 'N/A')
+                            
+                            if st.checkbox(
+                                f"Eliminar {query_id[:12]}...",
+                                key=f"{self._state_key_base}_delete_{query_id}",
+                                value=True  # Por defecto seleccionado
+                            ):
+                                selected_for_deletion.append(query_id)
+                            
+                            st.caption(f"Fecha: {del_query.get('execution_date', 'N/A')[:19]}")
+            
+            # Botón para eliminar seleccionados
+            if selected_for_deletion:
+                st.write("---")
+                st.write(f"### 🗑️ Eliminar {len(selected_for_deletion)} consultas duplicadas")
                 
-                if cat_queries:
-                    st.write("**Consultas en esta categoría:**")
-                    for i, query in enumerate(cat_queries):
-                        st.write(f"{i+1}. {query.get('search_query', 'Sin query')[:50]}...")
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                with col1:
+                    confirm_deletion = st.checkbox(
+                        "Confirmar eliminación masiva",
+                        help="Esta acción no se puede deshacer"
+                    )
+                
+                with col2:
+                    if confirm_deletion:
+                        safety_text = st.text_input(
+                            "Escribe 'ELIMINAR' para confirmar:",
+                            placeholder="ELIMINAR"
+                        )
+                        safety_confirmed = safety_text.upper().strip() == "ELIMINAR"
+                    else:
+                        safety_confirmed = False
+                
+                with col3:
+                    if confirm_deletion and safety_confirmed:
+                        if st.button(
+                            f"🗑️ ELIMINAR {len(selected_for_deletion)} DUPLICADOS",
+                            type="secondary",
+                            key=f"{self._state_key_base}_execute_mass_delete"
+                        ):
+                            with st.spinner(f"Eliminando {len(selected_for_deletion)} consultas duplicadas..."):
+                                results = self.storage.batch_delete_queries(selected_for_deletion)
+                                
+                                successful = sum(1 for success in results.values() if success)
+                                failed = len(results) - successful
+                                
+                                if successful > 0:
+                                    st.success(f"✅ {successful} consultas eliminadas exitosamente")
+                                
+                                if failed > 0:
+                                    st.error(f"❌ {failed} consultas no pudieron eliminarse")
+                                    
+                                    with st.expander("Ver errores"):
+                                        for query_id, success in results.items():
+                                            if not success:
+                                                st.write(f"- Error eliminando: {query_id}")
+                                
+                                # Limpiar estado y cache
+                                st.session_state[f"{self._state_key_base}_duplicates_found"] = []
+                                self.storage._invalidate_cache()
+                                if hasattr(st, 'cache_data'):
+                                    st.cache_data.clear()
+                                
+                                time.sleep(2)
+                                st.rerun()
+        else:
+            st.info("Haz clic en 'Buscar Duplicados' para encontrar consultas duplicadas.")
     
     def _show_category_explorer(self):
-        """Muestra explorador por categorías con estados estables"""
+        """OPTIMIZADA: Muestra explorador por categorías con cache"""
         st.subheader("Explorar Consultas por Categoría")
         
-        try:
-            categories = self.storage.storage.get_all_categories()
-        except:
-            categories = [{"category_id": "default", "name": "Sin categoría"}]
+        # Cache para categorías
+        @st.cache_data(ttl=300)
+        def get_categories():
+            try:
+                return self.storage.storage.get_all_categories()
+            except:
+                return [{"category_id": "default", "name": "Sin categoría"}]
+        
+        categories = get_categories()
+        
+        if not categories:
+            st.warning("No hay categorías disponibles.")
+            return
         
         category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
         
         category_selector_key = f"{self._state_key_base}_category_explorer_selector"
         
+        # Mantener selección previa
         saved_category = st.session_state.get(f"{self._state_key_base}_selected_category", "")
         try:
             if saved_category and saved_category in category_options.keys():
@@ -866,40 +1608,40 @@ class HypeCycleHistoryInterface:
         st.session_state[f"{self._state_key_base}_selected_category"] = selected_category_name
         
         selected_category_id = category_options[selected_category_name]
-        queries = self.storage.get_queries_by_category(selected_category_id)
         
-        # Mostrar información de debug
-        debug_info = self.storage.debug_category_queries(selected_category_id)
+        # Obtener consultas con cache
+        with st.spinner("Cargando consultas..."):
+            queries = self.storage.get_queries_by_category(selected_category_id)
         
+        # Mostrar estadísticas
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Consultas mostradas", len(queries))
+            st.metric("Consultas en categoría", len(queries))
         with col2:
-            st.metric("Total en tabla", debug_info.get('hype_cycle_items', 0))
+            if queries:
+                phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in queries]
+                most_common = max(set(phases), key=phases.count) if phases else "N/A"
+                st.metric("Fase más común", most_common)
         with col3:
-            st.metric("En esta categoría", debug_info.get('items_in_category', 0))
-        
-        if len(queries) != debug_info.get('items_in_category', 0):
-            st.warning(f"⚠️ Discrepancia detectada: se muestran {len(queries)} pero deberían ser {debug_info.get('items_in_category', 0)}")
+            if queries:
+                recent_count = len([q for q in queries if q.get("execution_date", "").startswith(datetime.now().strftime("%Y-%m"))])
+                st.metric("Este mes", recent_count)
         
         if not queries:
             st.info(f"No hay consultas guardadas en la categoría '{selected_category_name}'")
-            
-            # Mostrar información de debug cuando no hay resultados
-            if debug_info.get('items_in_category', 0) > 0:
-                st.error("⚠️ **Problema detectado**: Hay consultas en la base de datos pero no se están mostrando.")
-                with st.expander("Ver información de debug"):
-                    st.json(debug_info)
-            
             return
         
         st.write(f"**{len(queries)} consultas encontradas en '{selected_category_name}'**")
         
-        for i, query in enumerate(queries):
-            self._display_query_card(query, i)
+        # Mostrar consultas de forma optimizada
+        for i, query in enumerate(queries[:10]):  # Limitar para mejorar rendimiento
+            self._display_query_card_optimized(query, i)
+        
+        if len(queries) > 10:
+            st.info(f"Mostrando las primeras 10 de {len(queries)} consultas. Usa filtros para refinar la búsqueda.")
     
-    def _display_query_card(self, query: Dict, index: int):
-        """Muestra una tarjeta de consulta con keys estables"""
+    def _display_query_card_optimized(self, query: Dict, index: int):
+        """OPTIMIZADA: Muestra una tarjeta de consulta con menos información para mejorar rendimiento"""
         query_id = query.get('query_id', query.get('analysis_id', 'unknown'))
         
         with st.expander(
@@ -910,28 +1652,11 @@ class HypeCycleHistoryInterface:
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                st.write("**Consulta completa:**")
                 st.code(query.get('search_query', 'No disponible'))
                 
-                search_terms = query.get('search_terms', [])
-                if search_terms:
-                    st.write("**Términos de búsqueda:**")
-                    for term in search_terms:
-                        st.write(f"- {term.get('value', '')} ({term.get('operator', 'AND')})")
-                
-            with col2:
-                st.write("**Métricas del Hype Cycle:**")
-                hype_metrics = query.get('hype_metrics', {})
-                
-                st.metric("Fase", hype_metrics.get('phase', 'Unknown'))
-                
-                confidence = hype_metrics.get('confidence', 0)
-                confidence_formatted = self._safe_format_value(confidence, "float", ".2f")
-                st.metric("Confianza", confidence_formatted)
-                
-                mentions = hype_metrics.get('total_mentions', 0)
-                mentions_formatted = self._safe_format_value(mentions, "int")
-                st.metric("Total Menciones", mentions_formatted)
+                # Mostrar solo información esencial
+                tech_name = query.get('technology_name') or query.get('search_query', '')[:30]
+                st.write(f"**Tecnología:** {tech_name}")
                 
                 try:
                     date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
@@ -939,21 +1664,54 @@ class HypeCycleHistoryInterface:
                 except:
                     st.write("**Fecha:** No disponible")
             
-            reuse_button_key = f"{self._state_key_base}_reuse_btn_{query_id}"
+            with col2:
+                hype_metrics = query.get('hype_metrics', {})
+                
+                st.metric("Fase", hype_metrics.get('phase', 'Unknown'))
+                
+                confidence = self._safe_format_value(hype_metrics.get('confidence', 0), "float", ".2f")
+                st.metric("Confianza", confidence)
+                
+                mentions = self._safe_format_value(hype_metrics.get('total_mentions', 0), "int")
+                st.metric("Menciones", mentions)
             
-            if st.button(f"🔄 Reutilizar Consulta", key=reuse_button_key):
-                self._reuse_query(query)
+            # Botones con keys únicos
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                reuse_button_key = f"{self._state_key_base}_reuse_btn_{query_id}_{index}"
+                if st.button(f"🔄 Reutilizar", key=reuse_button_key, help="Reutilizar esta consulta"):
+                    self._reuse_query(query)
+            
+            with col2:
+                view_button_key = f"{self._state_key_base}_view_btn_{query_id}_{index}"
+                if st.button(f"👁️ Ver Detalles", key=view_button_key, help="Ver información completa"):
+                    with st.expander("Detalles completos", expanded=True):
+                        st.json(query)
+            
+            with col3:
+                delete_button_key = f"{self._state_key_base}_del_btn_{query_id}_{index}"
+                if st.button(f"🗑️ Eliminar", key=delete_button_key, type="secondary", help="Eliminar esta consulta"):
+                    if st.checkbox(f"Confirmar eliminación de {query_id[:12]}...", key=f"{self._state_key_base}_confirm_del_{query_id}_{index}"):
+                        if self.storage.delete_query(query_id):
+                            st.success("✅ Consulta eliminada")
+                            st.rerun()
+                        else:
+                            st.error("❌ Error eliminando")
     
+    # Mantener otros métodos sin cambios pero optimizados...
     def _show_summary_dashboard(self):
-        """Muestra dashboard de resumen"""
+        """Dashboard de resumen optimizado"""
         st.subheader("Dashboard de Resumen")
         
-        all_queries = self.storage.get_all_hype_cycle_queries()
+        with st.spinner("Cargando estadísticas..."):
+            all_queries = self.storage.get_all_hype_cycle_queries()
         
         if not all_queries:
             st.info("No hay consultas de Hype Cycle guardadas")
             return
         
+        # Métricas principales
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -980,6 +1738,7 @@ class HypeCycleHistoryInterface:
             recent_queries = [q for q in all_queries if q.get("execution_date", "").startswith(current_month)]
             st.metric("Consultas Este Mes", len(recent_queries))
         
+        # Gráfico de distribución de fases
         st.subheader("Distribución de Fases del Hype Cycle")
         
         phase_counts = {}
@@ -994,19 +1753,21 @@ class HypeCycleHistoryInterface:
                 title="Distribución de Tecnologías por Fase del Hype Cycle"
             )
             st.plotly_chart(fig_phases, use_container_width=True)
-
+    
     def _show_query_manager(self):
-        """Interfaz para gestionar consultas con estados estables"""
+        """OPTIMIZADA: Interfaz para gestionar consultas"""
         st.subheader("Gestionar Consultas")
         
-        all_queries = self.storage.get_all_hype_cycle_queries()
+        with st.spinner("Cargando consultas..."):
+            all_queries = self.storage.get_all_hype_cycle_queries()
         
         if not all_queries:
             st.info("No hay consultas para gestionar")
             return
         
+        # Crear tabla resumida para mejor rendimiento
         query_data = []
-        for query in all_queries:
+        for query in all_queries[:50]:  # Limitar para mejor rendimiento
             try:
                 date = datetime.fromisoformat(query.get("execution_date", "").replace('Z', '+00:00'))
                 formatted_date = date.strftime("%Y-%m-%d %H:%M")
@@ -1017,7 +1778,7 @@ class HypeCycleHistoryInterface:
             confidence_formatted = self._safe_format_value(confidence_raw, "float", ".2f")
             
             query_data.append({
-                "ID": query.get("query_id", query.get("analysis_id", "Unknown")),
+                "ID": query.get("query_id", query.get("analysis_id", "Unknown"))[:12] + "...",
                 "Consulta": query.get("search_query", "")[:50] + "...",
                 "Fase": query.get("hype_metrics", {}).get("phase", "Unknown"),
                 "Fecha": formatted_date,
@@ -1028,176 +1789,168 @@ class HypeCycleHistoryInterface:
         df_queries = pd.DataFrame(query_data)
         st.dataframe(df_queries, use_container_width=True)
         
-        query_options = {}
-        for i, query in enumerate(all_queries):
-            query_id = query.get("query_id", query.get("analysis_id", f"query_{i}"))
-            query_name = f"{query.get('search_query', '')[:30]}... ({query.get('hype_metrics', {}).get('phase', 'Unknown')})"
-            query_options[query_name] = query_id
+        if len(all_queries) > 50:
+            st.info(f"Mostrando las primeras 50 de {len(all_queries)} consultas para mejor rendimiento")
+    
+    def _show_debug_tab(self):
+        """MEJORADA: Pestaña de debug con investigación de IDs"""
+        st.subheader("🛠️ Debug - Investigar Problemas")
         
-        if query_options:
-            query_manager_selector_key = f"{self._state_key_base}_query_manager_selector"
-            
-            saved_query = st.session_state.get(f"{self._state_key_base}_selected_query", "")
-            try:
-                if saved_query and saved_query in query_options.values():
-                    saved_name = None
-                    for name, qid in query_options.items():
-                        if qid == saved_query:
-                            saved_name = name
-                            break
-                    
-                    if saved_name and saved_name in query_options.keys():
-                        default_index = list(query_options.keys()).index(saved_name)
-                    else:
-                        default_index = 0
-                else:
-                    default_index = 0
-            except:
-                default_index = 0
-            
-            selected_query_name = st.selectbox(
-                "Selecciona una consulta para gestionar:",
-                options=list(query_options.keys()),
-                index=default_index,
-                key=query_manager_selector_key
-            )
-            
-            selected_query_id = query_options[selected_query_name]
-            st.session_state[f"{self._state_key_base}_selected_query"] = selected_query_id
-            
-            selected_query = next((q for q in all_queries if q.get("query_id") == selected_query_id or q.get("analysis_id") == selected_query_id), None)
-            
-            if selected_query:
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    view_details_key = f"{self._state_key_base}_view_details_{selected_query_id}"
-                    if st.button("📊 Ver Detalles", key=view_details_key):
-                        st.json(selected_query)
-                
-                with col2:
-                    reuse_query_key = f"{self._state_key_base}_reuse_query_{selected_query_id}"
-                    if st.button("🔄 Reutilizar Consulta", key=reuse_query_key):
-                        self._reuse_query(selected_query)
-                
-                with col3:
-                    delete_key = f"{self._state_key_base}_delete_{selected_query_id}"
-                    confirm_delete_key = f"{self._state_key_base}_confirm_delete_{selected_query_id}"
-                    
-                    if st.button("🗑️ Eliminar", type="secondary", key=delete_key):
-                        if st.checkbox("Confirmar eliminación", key=confirm_delete_key):
-                            if self.storage.delete_query(selected_query_id):
-                                st.success(f"Consulta {selected_query_id} eliminada")
-                                if f"{self._state_key_base}_selected_query" in st.session_state:
-                                    del st.session_state[f"{self._state_key_base}_selected_query"]
-                                st.rerun()
-                            else:
-                                st.error(f"Error eliminando consulta {selected_query_id}")
-
-    def _show_move_technologies(self):
-        """Interfaz para mover tecnologías con estados estables"""
-        st.subheader("🔄 Mover Tecnologías Entre Categorías")
+        st.write("Esta herramienta ayuda a diagnosticar problemas de rendimiento y datos.")
         
-        st.write("Mueve tecnologías entre diferentes categorías en DynamoDB.")
+        # Información de cache
+        col1, col2 = st.columns(2)
         
-        all_queries = self.storage.get_all_hype_cycle_queries()
+        with col1:
+            st.write("### 💾 Estado del Cache")
+            cache_keys = list(self.storage._cache.keys())
+            st.metric("Entradas en cache", len(cache_keys))
+            
+            if cache_keys:
+                with st.expander("Ver keys de cache"):
+                    for key in cache_keys:
+                        cache_time = self.storage._last_cache_time.get(key, 0)
+                        age = time.time() - cache_time
+                        st.write(f"- {key}: {age:.1f}s")
         
-        if not all_queries:
-            st.info("No hay tecnologías para mover.")
-            return
+        with col2:
+            st.write("### 🔄 Operaciones de Limpieza")
+            
+            if st.button("🧹 Limpiar Cache Interno", key=f"{self._state_key_base}_clear_internal_cache"):
+                self.storage._invalidate_cache()
+                st.success("✅ Cache interno limpiado")
+            
+            if st.button("🧹 Limpiar Cache Streamlit", key=f"{self._state_key_base}_clear_streamlit_cache"):
+                if hasattr(st, 'cache_data'):
+                    st.cache_data.clear()
+                st.success("✅ Cache de Streamlit limpiado")
+        
+        # Debug de categorías
+        st.write("### 🏷️ Debug de Categorías")
         
         try:
             categories = self.storage.storage.get_all_categories()
-        except:
-            categories = [{"category_id": "default", "name": "Sin categoría"}]
+            category_options = {cat.get("name", "Sin nombre"): cat.get("category_id") for cat in categories}
+            
+            selected_category_name = st.selectbox(
+                "Categoría a investigar:",
+                options=list(category_options.keys()),
+                key=f"{self._state_key_base}_debug_category"
+            )
+            
+            selected_category_id = category_options[selected_category_name]
+            
+            if st.button("🔍 Investigar Categoría", key=f"{self._state_key_base}_debug_btn"):
+                with st.spinner("Investigando..."):
+                    debug_info = self.storage.debug_category_queries(selected_category_id)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Total items en tabla", debug_info.get('total_items_in_table', 0))
+                    
+                    with col2:
+                        st.metric("Items Hype Cycle", debug_info.get('hype_cycle_items', 0))
+                    
+                    with col3:
+                        st.metric("Items en categoría", debug_info.get('items_in_category', 0))
+                    
+                    # Información de duplicados
+                    st.write("### 🔄 Información de Duplicados")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Consultas duplicadas", debug_info.get('duplicated_queries_count', 0))
+                    
+                    with col2:
+                        st.metric("Total duplicados", debug_info.get('total_duplicates', 0))
+                    
+                    # Estado del cache
+                    cache_info = debug_info.get('cache_status', {})
+                    st.write("### 💾 Estado del Cache")
+                    st.write(f"- Cache keys: {len(cache_info.get('cache_keys', []))}")
+                    st.write(f"- Cache size: {cache_info.get('cache_size', 0)}")
+                    
+                    with st.expander("Ver información completa de debug"):
+                        st.json(debug_info)
         
-        col1, col2 = st.columns([1, 1])
+        except Exception as e:
+            st.error(f"Error en debug: {str(e)}")
+        
+        # NUEVA FUNCIÓN: Debug de IDs específicos
+        st.write("### 🆔 Debug de IDs Específicos")
+        
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            st.write("#### 🔬 Seleccionar Tecnología")
-            
-            # Crear opciones de tecnologías
-            tech_options = {}
-            for query in all_queries:
-                query_id = query.get("query_id", query.get("analysis_id"))
-                tech_name = (
-                    query.get("technology_name") or 
-                    query.get("name") or 
-                    query.get("search_query", "")[:30]
-                )
-                
-                current_cat_id = query.get("category_id", "unknown")
-                current_cat_name = "Sin categoría"
-                for cat in categories:
-                    if cat.get("category_id") == current_cat_id:
-                        current_cat_name = cat.get("name", "Sin nombre")
-                        break
-                
-                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
-                display_name = f"{tech_name} | {current_cat_name} | {phase}"
-                tech_options[display_name] = {
-                    "query_id": query_id,
-                    "query": query,
-                    "tech_name": tech_name,
-                    "current_cat_name": current_cat_name
-                }
-            
-            tech_selector_key = f"{self._state_key_base}_move_tech_selector"
-            
-            selected_tech_display = st.selectbox(
-                f"Tecnología a mover ({len(tech_options)} disponibles):",
-                options=list(tech_options.keys()),
-                key=tech_selector_key
+            debug_id = st.text_input(
+                "ID a investigar (completo o parcial):",
+                placeholder="ej: hype_1752031872541_5cf5514f-80b",
+                key=f"{self._state_key_base}_debug_id_input"
             )
-            
-            selected_tech_info = tech_options[selected_tech_display]
-            selected_query = selected_tech_info["query"]
         
         with col2:
-            st.write("#### 🎯 Categoría Destino")
-            
-            current_cat_id = selected_query.get("category_id")
-            available_categories = {
-                cat.get("name", "Sin nombre"): cat.get("category_id") 
-                for cat in categories 
-                if cat.get("category_id") != current_cat_id
-            }
-            
-            if not available_categories:
-                st.warning("No hay otras categorías disponibles.")
-                return
-            
-            target_category_key = f"{self._state_key_base}_move_target_category"
-            
-            target_category_name = st.selectbox(
-                "Mover a categoría:",
-                options=list(available_categories.keys()),
-                key=target_category_key
-            )
-            
-            target_category_id = available_categories[target_category_name]
-            
-            st.info(f"**Movimiento:** '{selected_tech_info['tech_name']}' → '{target_category_name}'")
-            
-            confirm_key = f"{self._state_key_base}_confirm_move_{selected_tech_info['query_id']}"
-            confirm_move = st.checkbox("Confirmar movimiento", key=confirm_key)
-            
-            move_button_key = f"{self._state_key_base}_execute_move_{selected_tech_info['query_id']}"
-            
-            if confirm_move and st.button("🔄 MOVER TECNOLOGÍA", type="primary", key=move_button_key):
-                with st.spinner("Moviendo tecnología..."):
-                    success = self.storage.move_technology_to_category(
-                        selected_tech_info['query_id'], 
-                        target_category_id
-                    )
-                    
-                    if success:
-                        st.success(f"✅ '{selected_tech_info['tech_name']}' movida exitosamente")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("❌ Error moviendo la tecnología")
-
+            if st.button("🔍 Investigar ID", key=f"{self._state_key_base}_debug_id_btn"):
+                if debug_id:
+                    with st.spinner(f"Investigando ID: {debug_id}"):
+                        debug_info = self.storage.debug_query_ids(debug_id)
+                        
+                        st.write("### 📊 Resultados de la Investigación")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Items coincidentes", len(debug_info.get('matching_items', [])))
+                        
+                        with col2:
+                            st.metric("Total items en BD", debug_info.get('total_items', 0))
+                        
+                        with col3:
+                            exact_matches = len([item for item in debug_info.get('matching_items', []) if item.get('exact_match')])
+                            st.metric("Coincidencias exactas", exact_matches)
+                        
+                        # Mostrar items coincidentes
+                        if debug_info.get('matching_items'):
+                            st.write("### ✅ Items Encontrados")
+                            
+                            for i, item in enumerate(debug_info['matching_items']):
+                                match_type = "🎯 Exacta" if item.get('exact_match') else "🔍 Parcial"
+                                
+                                with st.expander(f"{match_type} - {item['tech_name']}", expanded=item.get('exact_match', False)):
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        st.write("**Identificadores:**")
+                                        st.code(f"query_id: {item['query_id']}")
+                                        st.code(f"analysis_id: {item['analysis_id']}")
+                                        st.code(f"timestamp: {item['timestamp']}")
+                                    
+                                    with col2:
+                                        st.write("**Información:**")
+                                        st.write(f"**Tecnología:** {item['tech_name']}")
+                                        st.write(f"**Tipo de coincidencia:** {match_type}")
+                                        
+                                        # Botón para intentar eliminar este item específico
+                                        if st.button(f"🗑️ Eliminar Este Item", key=f"{self._state_key_base}_delete_debug_{i}"):
+                                            success = self.storage.delete_query(item['analysis_id'])
+                                            if success:
+                                                st.success("✅ Item eliminado exitosamente")
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error("❌ Error eliminando item")
+                        else:
+                            st.write("### ❌ No se encontraron coincidencias")
+                            
+                            st.write("**Muestra de IDs existentes en la base de datos:**")
+                            for sample in debug_info.get('all_ids_sample', []):
+                                st.write(f"**{sample['index'] + 1}.** {sample['tech_name']}")
+                                st.code(f"query_id: {sample['query_id']}")
+                                st.code(f"analysis_id: {sample['analysis_id']}")
+                                st.write("---")
+                else:
+                    st.warning("Ingresa un ID para investigar")
+    
     def _reuse_query(self, query: Dict):
         """Permite reutilizar una consulta existente"""
         st.info("**Consulta seleccionada para reutilizar:**")
