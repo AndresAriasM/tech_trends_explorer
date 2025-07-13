@@ -1108,6 +1108,155 @@ class HypeCycleStorage:
             
         except Exception as e:
             return {'error': str(e)}
+        
+    def delete_category_complete(self, category_id: str, move_to_default: bool = True) -> Dict:
+        """
+        Elimina una categoría completa y todas sus tecnologías asociadas.
+        
+        Args:
+            category_id: ID de la categoría a eliminar
+            move_to_default: Si True, mueve tecnologías a 'default', si False las elimina
+        
+        Returns:
+            Dict con resultados de la operación
+        """
+        try:
+            # Verificar que no sea la categoría por defecto
+            if category_id == "default":
+                return {
+                    'success': False,
+                    'message': "No se puede eliminar la categoría por defecto",
+                    'technologies_affected': 0
+                }
+            
+            # Obtener todas las tecnologías de la categoría
+            technologies = self.get_queries_by_category(category_id)
+            
+            results = {
+                'success': True,
+                'message': '',
+                'technologies_affected': len(technologies),
+                'technologies_moved': 0,
+                'technologies_deleted': 0,
+                'errors': []
+            }
+            
+            # Procesar cada tecnología
+            for tech in technologies:
+                tech_id = tech.get('query_id', tech.get('analysis_id'))
+                
+                if move_to_default:
+                    # Mover a categoría por defecto
+                    success = self.move_technology_to_category(tech_id, "default")
+                    if success:
+                        results['technologies_moved'] += 1
+                    else:
+                        results['errors'].append(f"Error moviendo tecnología {tech_id}")
+                else:
+                    # Eliminar tecnología
+                    success = self.delete_query(tech_id)
+                    if success:
+                        results['technologies_deleted'] += 1
+                    else:
+                        results['errors'].append(f"Error eliminando tecnología {tech_id}")
+            
+            # Eliminar la categoría
+            delete_success, delete_message = self.storage.delete_category(category_id)
+            
+            if delete_success:
+                if move_to_default:
+                    results['message'] = f"Categoría eliminada. {results['technologies_moved']} tecnologías movidas a 'Sin categoría'"
+                else:
+                    results['message'] = f"Categoría eliminada. {results['technologies_deleted']} tecnologías eliminadas"
+            else:
+                results['success'] = False
+                results['message'] = f"Error eliminando categoría: {delete_message}"
+            
+            # Invalidar cache
+            self._invalidate_cache()
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error eliminando categoría completa: {str(e)}")
+            return {
+                'success': False,
+                'message': f"Error inesperado: {str(e)}",
+                'technologies_affected': 0
+            }
+
+    def create_category_with_validation(self, name: str, description: str = "") -> Dict:
+        """
+        Crea una nueva categoría con validación completa.
+        
+        Args:
+            name: Nombre de la categoría
+            description: Descripción opcional
+        
+        Returns:
+            Dict con resultado de la operación
+        """
+        try:
+            # Validaciones
+            if not name or not name.strip():
+                return {
+                    'success': False,
+                    'message': "El nombre de la categoría es obligatorio",
+                    'category_id': None
+                }
+            
+            name = name.strip()
+            
+            if len(name) < 2:
+                return {
+                    'success': False,
+                    'message': "El nombre debe tener al menos 2 caracteres",
+                    'category_id': None
+                }
+            
+            if len(name) > 50:
+                return {
+                    'success': False,
+                    'message': "El nombre no puede exceder 50 caracteres",
+                    'category_id': None
+                }
+            
+            # Verificar que no existe una categoría con el mismo nombre
+            existing_categories = self.storage.get_all_categories()
+            for cat in existing_categories:
+                if cat.get('name', '').lower() == name.lower():
+                    return {
+                        'success': False,
+                        'message': f"Ya existe una categoría con el nombre '{name}'",
+                        'category_id': None
+                    }
+            
+            # Crear la categoría
+            category_id = self.storage.add_category(name, description)
+            
+            if category_id:
+                # Invalidar cache
+                self._invalidate_cache()
+                
+                return {
+                    'success': True,
+                    'message': f"Categoría '{name}' creada exitosamente",
+                    'category_id': category_id
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': "Error creando la categoría en la base de datos",
+                    'category_id': None
+                }
+            
+        except Exception as e:
+            logger.error(f"Error creando categoría: {str(e)}")
+            return {
+                'success': False,
+                'message': f"Error inesperado: {str(e)}",
+                'category_id': None
+            }
 
 # ===== RESTO DE CLASES SIN CAMBIOS PERO OPTIMIZADAS =====
 

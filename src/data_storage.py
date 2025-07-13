@@ -334,6 +334,91 @@ class DynamoDBStorage:
         except Exception as e:
             st.error(f"Error actualizando item: {str(e)}")
             return False
+    
+    def delete_category(self, category_id):
+        """Elimina una categoría específica."""
+        try:
+            # Verificar que no sea la categoría por defecto
+            if category_id == "default":
+                return False, "No se puede eliminar la categoría por defecto"
+            
+            # Verificar que la categoría existe
+            category = self.get_category_by_id(category_id)
+            if not category:
+                return False, "La categoría no existe"
+            
+            # Eliminar la categoría
+            self.categories_table.delete_item(
+                Key={'category_id': category_id}
+            )
+            
+            return True, "Categoría eliminada exitosamente"
+            
+        except Exception as e:
+            return False, f"Error eliminando categoría: {str(e)}"
+
+    def check_category_usage(self, category_id):
+        """Verifica cuántas tecnologías usan esta categoría."""
+        try:
+            # Escanear todas las análisis para contar uso
+            response = self.analyses_table.scan()
+            analyses = response.get('Items', [])
+            
+            # Manejar paginación
+            while 'LastEvaluatedKey' in response:
+                response = self.analyses_table.scan(
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                analyses.extend(response.get('Items', []))
+            
+            # Contar análisis que usan esta categoría
+            usage_count = 0
+            for analysis in analyses:
+                if analysis.get('category_id') == category_id:
+                    usage_count += 1
+            
+            return usage_count
+            
+        except Exception as e:
+            st.error(f"Error verificando uso de categoría: {str(e)}")
+            return 0
+
+    def update_category(self, category_id, name=None, description=None):
+        """Actualiza una categoría existente."""
+        try:
+            # Verificar que la categoría existe
+            category = self.get_category_by_id(category_id)
+            if not category:
+                return False, "La categoría no existe"
+            
+            # Preparar actualizaciones
+            update_expression_parts = []
+            expression_attribute_values = {}
+            
+            if name is not None:
+                update_expression_parts.append("name = :name")
+                expression_attribute_values[":name"] = name
+            
+            if description is not None:
+                update_expression_parts.append("description = :description")
+                expression_attribute_values[":description"] = description
+            
+            if not update_expression_parts:
+                return False, "No hay cambios para actualizar"
+            
+            update_expression = "SET " + ", ".join(update_expression_parts)
+            
+            # Ejecutar actualización
+            self.categories_table.update_item(
+                Key={'category_id': category_id},
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_attribute_values
+            )
+            
+            return True, "Categoría actualizada exitosamente"
+            
+        except Exception as e:
+            return False, f"Error actualizando categoría: {str(e)}"
 
 
 class SCurveDatabase:

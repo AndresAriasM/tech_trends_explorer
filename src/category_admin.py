@@ -163,10 +163,11 @@ class CategoryAdminInterface:
         en el Hype Cycle de Gartner. **Versión optimizada para mejor rendimiento.**
         """)
         
-        # Pestañas principales
-        tab1, tab2, tab3, tab4 = st.tabs([
+        # Pestañas principales - AMPLIADAS
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📊 Vista por Categorías",
             "🎯 Gráfica Hype Cycle", 
+            "🏷️ Gestión de Categorías",  # NUEVA PESTAÑA
             "⚙️ Gestión Avanzada",
             "🧹 Limpieza de Datos"
         ])
@@ -178,9 +179,12 @@ class CategoryAdminInterface:
             self._show_hype_cycle_chart_optimized()
         
         with tab3:
-            self._show_advanced_management_optimized()
+            self._show_category_management()  # NUEVA FUNCIÓN
         
         with tab4:
+            self._show_advanced_management_optimized()
+        
+        with tab5:
             self._show_data_cleanup()
     
     def _show_category_overview_optimized(self):
@@ -596,45 +600,57 @@ class CategoryAdminInterface:
             st.error(f"❌ Error generando la gráfica: {str(e)}")
     
     def _create_hype_cycle_chart_optimized(self, queries: List[Dict], category_name: str, 
-                        show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
+                    show_labels: bool = True, show_confidence: bool = False) -> go.Figure:
         """
-        OPTIMIZADA: Crea la gráfica del Hype Cycle con mejor rendimiento
+        VERSIÓN PROFESIONAL: Crea la gráfica del Hype Cycle estilo Gartner con nombres completos
+        Optimizada para presentaciones internacionales sin cruces de líneas
         """
-        # Crear figura con dimensiones amplias
+        # Crear figura con dimensiones profesionales
         fig = go.Figure()
         
-        # Curva optimizada (menos puntos para mejor rendimiento)
-        x_curve = np.linspace(0, 100, 500)  # Reducido de 1000 a 500
+        # Curva AMPLIADA para usar TODO EL ESPACIO VISUAL disponible
+        x_curve = np.linspace(10, 90, 500)  # Curva más centrada pero amplia
         
-        # Rediseñar curva con Peak más amplio y definido
-        trigger = 15 * np.exp(-((x_curve - 12)/8)**2)
-        peak = 70 * np.exp(-((x_curve - 26)/12)**2)
-        trough = -25 * np.exp(-((x_curve - 55)/12)**2)
-        slope_rise = 15 * (1 / (1 + np.exp(-(x_curve - 75)/5)))
-        plateau = 25 * (1 / (1 + np.exp(-(x_curve - 90)/4)))
+        # Curva MÁS GRANDE y PRONUNCIADA para aprovechar todo el espacio
+        # Innovation Trigger - más alto y visible
+        trigger = 40 * np.exp(-((x_curve - 20)/8)**2)
         
-        baseline = 25
+        # Peak - MUY ALTO para usar todo el espacio vertical
+        peak = 120 * np.exp(-((x_curve - 35)/12)**2)
+        
+        # Trough - MÁS PROFUNDO para contraste dramático  
+        trough = -60 * np.exp(-((x_curve - 55)/15)**2)
+        
+        # Slope - gradual y amplio
+        slope_rise = 35 * (1 / (1 + np.exp(-(x_curve - 70)/8)))
+        
+        # Plateau - alto y extendido
+        plateau = 45 * (1 / (1 + np.exp(-(x_curve - 80)/6)))
+        
+        baseline = 40  # Línea base más alta para mejor visibilidad
         y_curve = baseline + trigger + peak + trough + slope_rise + plateau
         
-        # Suavizar la curva (optimizado)
+        # Suavizar la curva
         if SCIPY_AVAILABLE:
-            y_curve = gaussian_filter1d(y_curve, sigma=2.0)
+            y_curve = gaussian_filter1d(y_curve, sigma=1.5)
         else:
-            window = 7  # Reducido para mejor rendimiento
+            window = 5
             y_smooth = np.convolve(y_curve, np.ones(window)/window, mode='same')
             y_curve = y_smooth
         
-        y_curve = np.clip(y_curve, 8, 90)
+        # Rango AMPLIO para usar todo el espacio vertical disponible
+        y_curve = np.clip(y_curve, 10, 140)
         
-        # Función optimizada para obtener posición exacta sobre la curva
+        # Función optimizada para posición exacta en la curva AMPLIADA
         def get_exact_position_on_curve(x_pos):
-            if x_pos < 0 or x_pos > 100:
+            if x_pos < 10 or x_pos > 90:
                 return None
-            idx = int(x_pos * (len(x_curve) - 1) / 100)
+            # Mapear x_pos al índice correcto en la curva ampliada
+            idx = int((x_pos - 10) * (len(x_curve) - 1) / 80)
             idx = min(max(idx, 0), len(y_curve) - 1)
             return float(x_curve[idx]), float(y_curve[idx])
         
-        # Añadir curva principal
+        # Añadir curva principal que usa TODO EL ESPACIO VISUAL
         fig.add_trace(go.Scatter(
             x=x_curve, 
             y=y_curve,
@@ -642,7 +658,7 @@ class CategoryAdminInterface:
             name='Hype Cycle',
             line=dict(
                 color='#2E86AB',
-                width=6,
+                width=8,  # Línea MÁS gruesa para mejor visibilidad
                 shape='spline',
                 smoothing=1.3
             ),
@@ -650,103 +666,139 @@ class CategoryAdminInterface:
             hoverinfo='skip'
         ))
         
-        # Definir zonas optimizadas
+        # Zonas REAJUSTADAS para la curva más amplia y centrada
         phase_positions = {
             "Innovation Trigger": {
-                "x_range": list(range(8, 18, 2)),
-                "max_capacity": 5
+                "x_range": list(range(15, 27, 2)),  # Ajustado a la nueva curva
+                "label_zones": {
+                    "top": list(range(160, 190, 8)),
+                    "bottom": list(range(-40, -70, -8))
+                }
             },
             "Peak of Inflated Expectations": {
-                "x_range": list(range(20, 36, 2)),  # Reducido paso
-                "max_capacity": 12  # Reducido
+                "x_range": list(range(28, 45, 1)),  # Rango amplio para el pico alto
+                "label_zones": {
+                    "top": list(range(170, 220, 6)),
+                    "upper": list(range(155, 195, 6)),
+                    "side_right": list(range(150, 180, 6)),
+                    "side_left": list(range(150, 180, 6))
+                }
             },
             "Trough of Disillusionment": {
-                "x_range": list(range(45, 66, 3)),  # Reducido
-                "max_capacity": 8
+                "x_range": list(range(47, 65, 3)),  # Ajustado al valle profundo
+                "label_zones": {
+                    "bottom": list(range(-50, -100, -10)),
+                    "side": list(range(15, 45, 8))
+                }
             },
             "Slope of Enlightenment": {
-                "x_range": list(range(68, 83, 3)),
-                "max_capacity": 6
+                "x_range": list(range(66, 78, 2)),  # En la pendiente
+                "label_zones": {
+                    "top": list(range(160, 190, 8)),
+                    "side": list(range(120, 150, 6))
+                }
             },
             "Plateau of Productivity": {
-                "x_range": list(range(85, 97, 3)),
-                "max_capacity": 5
-            },
-            "Unknown": {
-                "x_range": [50],
-                "max_capacity": 1
+                "x_range": list(range(79, 88, 2)),  # En la meseta alta
+                "label_zones": {
+                    "top": list(range(165, 195, 8)),
+                    "side": list(range(130, 160, 5))
+                }
             }
         }
         
-        # Procesar y posicionar tecnologías (optimizado)
+        # Procesar y organizar tecnologías estilo Gartner profesional
         technologies = []
-        phase_counters = {phase: 0 for phase in phase_positions.keys()}
+        tech_by_phase = {}
         
-        # Procesar solo las tecnologías limitadas
+        # PASO 1: Crear lista básica y agrupar por fases
         for i, query in enumerate(queries):
             try:
                 if not isinstance(query, dict):
                     continue
                     
                 hype_metrics = query.get("hype_metrics", {})
-                
                 if not isinstance(hype_metrics, dict):
                     hype_metrics = {}
                 
                 phase = hype_metrics.get("phase", "Unknown")
                 
-                # FORMATEO SEGURO Y OPTIMIZADO
+                # Formateo seguro
                 confidence = float(self._safe_float_format(hype_metrics.get("confidence", 0.5), "", "0.5"))
                 total_mentions = self._safe_int_format(hype_metrics.get("total_mentions", 0), 0)
                 
-                # Obtener posición X según disponibilidad en la fase
-                phase_info = phase_positions.get(phase, phase_positions["Unknown"])
-                available_positions = phase_info["x_range"]
-                counter = phase_counters[phase]
-                
-                if counter < len(available_positions):
-                    x_pos = available_positions[counter]
-                else:
-                    base_idx = counter % len(available_positions)
-                    x_pos = available_positions[base_idx] + (counter // len(available_positions)) * 0.5
-                
-                phase_counters[phase] += 1
-                
-                # Obtener posición exacta sobre la curva
-                exact_x, exact_y = get_exact_position_on_curve(x_pos)
-                
-                # Extraer información de la tecnología
+                # Extraer nombre COMPLETO de la tecnología
                 tech_name = (
                     query.get("technology_name") or 
                     query.get("name") or 
-                    query.get("search_query", f"Tecnología_{i}")[:15]  # Reducido para rendimiento
+                    query.get("search_query", f"Tecnología_{i}")
                 )
+                
+                # NO truncar el nombre - mostrar completo
+                if len(tech_name) > 50:
+                    # Solo si es excesivamente largo, hacer smart truncate
+                    words = tech_name.split()
+                    if len(words) > 6:
+                        tech_name = " ".join(words[:6]) + "..."
                 
                 time_to_plateau = hype_metrics.get("time_to_plateau", "N/A")
                 sentiment_avg = float(self._safe_float_format(hype_metrics.get("sentiment_avg", 0), "", "0.0"))
                 
-                technologies.append({
+                tech_info = {
                     "name": tech_name,
                     "phase": phase,
                     "confidence": confidence,
-                    "position_x": exact_x,
-                    "position_y": exact_y,
                     "query_id": query.get("query_id", f"query_{i}"),
                     "time_to_plateau": time_to_plateau,
                     "total_mentions": total_mentions,
-                    "sentiment_avg": sentiment_avg
-                })
+                    "sentiment_avg": sentiment_avg,
+                    "original_index": i
+                }
+                
+                technologies.append(tech_info)
+                
+                # Agrupar por fase
+                if phase not in tech_by_phase:
+                    tech_by_phase[phase] = []
+                tech_by_phase[phase].append(tech_info)
                 
             except Exception as e:
-                # En caso de error con una tecnología específica, continuar con la siguiente
                 continue
         
-        # Añadir tecnologías con posicionamiento optimizado
-        for i, tech in enumerate(technologies):
-            # Tamaño del punto optimizado
-            base_size = 10  # Reducido
-            confidence_factor = tech["confidence"] * 4  # Reducido
-            mentions_factor = min(tech["total_mentions"] / 300, 3)  # Reducido
+        # PASO 2: Asignar posiciones inteligentes en la curva y calcular etiquetas
+        positioned_technologies = []
+        
+        for phase, techs in tech_by_phase.items():
+            if phase not in phase_positions or not techs:
+                continue
+                
+            phase_config = phase_positions[phase]
+            x_positions = phase_config["x_range"]
+            
+            # Distribuir tecnologías a lo largo de la fase
+            for i, tech in enumerate(techs):
+                if i < len(x_positions):
+                    x_pos = x_positions[i]
+                else:
+                    # Para tecnologías extra, interpolar posiciones
+                    base_idx = i % len(x_positions)
+                    offset = (i // len(x_positions)) * 0.5
+                    x_pos = x_positions[base_idx] + offset
+                
+                # Obtener posición exacta sobre la curva
+                exact_x, exact_y = get_exact_position_on_curve(x_pos)
+                
+                tech["position_x"] = exact_x
+                tech["position_y"] = exact_y
+                
+                positioned_technologies.append(tech)
+        
+        # PASO 3: Añadir puntos de tecnologías
+        for tech in positioned_technologies:
+            # Tamaño del punto basado en importancia
+            base_size = 12
+            confidence_factor = tech["confidence"] * 5
+            mentions_factor = min(tech["total_mentions"] / 200, 4)
             size = base_size + confidence_factor + mentions_factor
             
             color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
@@ -761,8 +813,8 @@ class CategoryAdminInterface:
                     size=size,
                     color=color,
                     symbol='circle',
-                    line=dict(color='white', width=1),  # Reducido
-                    opacity=0.9
+                    line=dict(color='white', width=2),
+                    opacity=0.95
                 ),
                 hovertemplate=f"""
                     <b>{tech['name']}</b><br>
@@ -774,54 +826,18 @@ class CategoryAdminInterface:
                 """,
                 showlegend=False
             ))
-            
-            # Etiquetas optimizadas (solo si se solicitan y hay pocas tecnologías)
-            if show_labels and len(technologies) <= 20:
-                label_x, label_y = self._calculate_simple_label_position(
-                    tech["position_x"], tech["position_y"], i
-                )
-                
-                # Línea conectora simple
-                fig.add_shape(
-                    type="line",
-                    x0=tech["position_x"], 
-                    y0=tech["position_y"],
-                    x1=label_x, 
-                    y1=label_y,
-                    line=dict(
-                        color=color,
-                        width=1
-                    ),
-                    layer="below"
-                )
-                
-                # Etiqueta simplificada
-                fig.add_annotation(
-                    x=label_x,
-                    y=label_y,
-                    text=f'<b>{tech["name"][:10]}...</b>',  # Limitado para rendimiento
-                    showarrow=False,
-                    font=dict(
-                        size=9, 
-                        color='#2C3E50',
-                        family="Arial"
-                    ),
-                    bgcolor='rgba(255, 255, 255, 0.9)',
-                    bordercolor=color,
-                    borderwidth=1,
-                    borderpad=3,
-                    xanchor='center',
-                    yanchor='middle',
-                    opacity=0.9
-                )
         
-        # Etiquetas de fases (simplificadas)
+        # PASO 4: ALGORITMO PROFESIONAL DE ETIQUETADO SIN CRUCES
+        if show_labels and positioned_technologies:
+            self._add_professional_labels_no_crossing(fig, positioned_technologies, tech_by_phase, phase_positions)
+        
+        # RESTAURAR Etiquetas de fases en la parte inferior 
         phase_labels = [
-            {"name": "Innovation<br>Trigger", "x": 12, "y": -20},
-            {"name": "Peak<br>Expectations", "x": 28, "y": -20},
-            {"name": "Trough<br>Disillusionment", "x": 55, "y": -20},
-            {"name": "Slope<br>Enlightenment", "x": 75, "y": -20},
-            {"name": "Plateau<br>Productivity", "x": 90, "y": -20}
+            {"name": "Innovation<br>Trigger", "x": 21, "y": -25},  # Ajustado a nueva curva
+            {"name": "Peak of Inflated<br>Expectations", "x": 36, "y": -25},   # Centrado en el pico
+            {"name": "Trough of<br>Disillusionment", "x": 56, "y": -25},  # Centrado en el valle
+            {"name": "Slope of<br>Enlightenment", "x": 72, "y": -25},     # En la pendiente
+            {"name": "Plateau of<br>Productivity", "x": 83, "y": -25}     # En la meseta
         ]
         
         for label in phase_labels:
@@ -830,17 +846,17 @@ class CategoryAdminInterface:
                 y=label["y"],
                 text=f"<b>{label['name']}</b>",
                 showarrow=False,
-                font=dict(size=9, color='#7f8c8d', family="Arial"),
-                bgcolor='rgba(255,255,255,0.9)',
+                font=dict(size=12, color='#34495e', family="Arial Black"),
+                bgcolor='rgba(255,255,255,0.95)',
                 bordercolor='#bdc3c7',
                 borderwidth=1,
-                borderpad=4,
+                borderpad=6,
                 xanchor='center',
                 yanchor='top',
-                opacity=0.9
+                opacity=0.95
             )
         
-        # Leyenda de tiempo al plateau (simplificada)
+        # RESTAURAR Leyenda de tiempo al plateau (que se había perdido)
         legend_items = [
             {"label": "Ya alcanzado", "color": "#27AE60"},
             {"label": "< 2 años", "color": "#3498DB"},
@@ -853,71 +869,557 @@ class CategoryAdminInterface:
             fig.add_trace(go.Scatter(
                 x=[None], y=[None],
                 mode='markers',
-                marker=dict(size=10, color=item["color"]),
+                marker=dict(size=14, color=item["color"]),
                 name=item["label"],
                 showlegend=True
             ))
         
-        # Layout optimizado
+        # Layout CORREGIDO para curva más grande y visible
         fig.update_layout(
             title=dict(
-                text=f"<b>Hype Cycle - {category_name}</b><br><sub>({len(technologies)} tecnologías)</sub>",
+                text=f"<b>Hype Cycle - {category_name}</b><br><sub>({len(positioned_technologies)} tecnologías analizadas)</sub>",
                 x=0.5,
-                font=dict(size=18, color='#2C3E50')
+                font=dict(size=22, color='#2C3E50', family="Arial Black")
             ),
             xaxis=dict(
                 title=dict(
-                    text="<b>TIME</b>",
-                    font=dict(size=12, color='#7f8c8d')
+                    text="<b>TIEMPO</b>",
+                    font=dict(size=16, color='#34495e', family="Arial Black")
                 ),
                 showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[0, 100],
+                range=[5, 95],  # Rango ajustado para curva más centrada y grande
                 showline=True,
-                linecolor='#bdc3c7',
-                linewidth=2
+                linecolor='#7f8c8d',
+                linewidth=3
             ),
             yaxis=dict(
                 title=dict(
-                    text="<b>EXPECTATIONS</b>",
-                    font=dict(size=12, color='#7f8c8d')
+                    text="<b>EXPECTATIVAS</b>",
+                    font=dict(size=16, color='#34495e', family="Arial Black")
                 ),
                 showgrid=False,
                 showticklabels=False,
                 zeroline=False,
-                range=[-30, 110],
+                range=[-45, 235],  # Rango optimizado para curva más grande
                 showline=True,
-                linecolor='#bdc3c7',
-                linewidth=2
+                linecolor='#7f8c8d',
+                linewidth=3
             ),
             plot_bgcolor='white',
             paper_bgcolor='white',
-            height=700,  # Reducido
-            width=1200,
+            height=950,  # Altura optimizada
+            width=1700,  # Ancho optimizado
             showlegend=True,
             font=dict(family="Arial"),
-            margin=dict(t=100, l=70, r=180, b=90),
+            margin=dict(t=140, l=80, r=220, b=120),  # Márgenes optimizados
             hovermode='closest',
             legend=dict(
                 title=dict(
                     text="<b>Tiempo al Plateau</b>",
-                    font=dict(size=11, color="#2C3E50")
+                    font=dict(size=13, color="#2C3E50", family="Arial Black")
                 ),
                 orientation="v",
                 yanchor="top",
-                y=0.95,
+                y=0.98,
                 xanchor="left",
-                x=1.02,
-                bgcolor='rgba(255,255,255,0.95)',
+                x=1.01,  # Posición ajustada
+                bgcolor='rgba(255,255,255,0.98)',
                 bordercolor='#bdc3c7',
-                borderwidth=1,
-                font=dict(size=9, color="#2C3E50"),
+                borderwidth=2,
+                font=dict(size=11, color="#2C3E50"),
                 itemsizing="constant"
             )
         )
         
         return fig
+
+    def _add_professional_labels_no_crossing(self, fig, technologies, tech_by_phase, phase_positions):
+        """
+        ALGORITMO INTELIGENTE: Evita superposiciones y cruces de líneas
+        Usa detección de colisiones y líneas optimizadas
+        """
+        
+        # Procesar cada fase con estrategia anti-colisión
+        for phase, techs in tech_by_phase.items():
+            if not techs or phase not in phase_positions:
+                continue
+                
+            if phase == "Peak of Inflated Expectations":
+                # Estrategia especial para el pico - con detección de colisiones
+                self._add_peak_smart_no_overlap(fig, techs)
+                
+            elif phase == "Innovation Trigger":
+                # Etiquetas organizadas sin superposición
+                self._add_organized_trigger_labels(fig, techs)
+                
+            elif phase == "Trough of Disillusionment":
+                # Etiquetas del valle organizadas
+                self._add_organized_trough_labels(fig, techs)
+                
+            elif phase == "Slope of Enlightenment":
+                # Etiquetas de la pendiente organizadas
+                self._add_organized_slope_labels(fig, techs)
+                
+            elif phase == "Plateau of Productivity":
+                # Etiquetas del plateau organizadas
+                self._add_organized_plateau_labels(fig, techs)
+
+    def _add_peak_smart_no_overlap(self, fig, techs):
+        """
+        ALGORITMO ANTI-COLISIÓN para el pico congestionado
+        Usa zones predefinidas y detección de superposiciones
+        """
+        # Ordenar por posición X
+        sorted_techs = sorted(techs, key=lambda t: t["position_x"])
+        
+        # Definir ZONES específicas para evitar superposiciones
+        zones = {
+            "top_left": {"x_range": (15, 30), "y_range": (180, 220), "capacity": 4},
+            "top_center": {"x_range": (30, 45), "y_range": (200, 235), "capacity": 5},
+            "top_right": {"x_range": (45, 60), "y_range": (180, 220), "capacity": 4},
+            "middle_left": {"x_range": (10, 25), "y_range": (160, 180), "capacity": 3},
+            "middle_right": {"x_range": (50, 65), "y_range": (160, 180), "capacity": 3},
+            "side_left": {"x_range": (5, 20), "y_range": (140, 160), "capacity": 3},
+            "side_right": {"x_range": (55, 70), "y_range": (140, 160), "capacity": 3}
+        }
+        
+        # Asignar tecnologías a zones sin superposición
+        zone_assignments = {}
+        zone_usage = {zone: 0 for zone in zones.keys()}
+        
+        for i, tech in enumerate(sorted_techs):
+            # Encontrar la zone más apropiada y disponible
+            best_zone = None
+            min_distance = float('inf')
+            
+            for zone_name, zone_info in zones.items():
+                if zone_usage[zone_name] < zone_info["capacity"]:
+                    # Calcular distancia al centro de la zone
+                    zone_center_x = (zone_info["x_range"][0] + zone_info["x_range"][1]) / 2
+                    zone_center_y = (zone_info["y_range"][0] + zone_info["y_range"][1]) / 2
+                    
+                    distance = ((tech["position_x"] - zone_center_x)**2 + 
+                            (tech["position_y"] - zone_center_y)**2)**0.5
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_zone = zone_name
+            
+            if best_zone:
+                zone_assignments[tech["name"]] = best_zone
+                zone_usage[best_zone] += 1
+            else:
+                # Fallback: usar zone con menos uso
+                best_zone = min(zone_usage.keys(), key=lambda k: zone_usage[k])
+                zone_assignments[tech["name"]] = best_zone
+                zone_usage[best_zone] += 1
+        
+        # Posicionar etiquetas en sus zones asignadas
+        zone_counters = {zone: 0 for zone in zones.keys()}
+        
+        for tech in sorted_techs:
+            assigned_zone = zone_assignments.get(tech["name"])
+            if not assigned_zone:
+                continue
+                
+            zone_info = zones[assigned_zone]
+            zone_counter = zone_counters[assigned_zone]
+            
+            # Calcular posición específica dentro de la zone
+            zone_width = zone_info["x_range"][1] - zone_info["x_range"][0]
+            zone_height = zone_info["y_range"][1] - zone_info["y_range"][0]
+            
+            # Distribución en grid dentro de la zone
+            cols = 2 if zone_info["capacity"] > 3 else 1
+            row = zone_counter // cols
+            col = zone_counter % cols
+            
+            label_x = zone_info["x_range"][0] + (col + 0.5) * (zone_width / cols)
+            label_y = zone_info["y_range"][0] + (row + 0.5) * (zone_height / max(1, zone_info["capacity"] // cols))
+            
+            zone_counters[assigned_zone] += 1
+            
+            color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
+            
+            # Línea DIRECTA y CORTA - sin curvas innecesarias
+            fig.add_shape(
+                type="line",
+                x0=tech["position_x"], 
+                y0=tech["position_y"],
+                x1=label_x, 
+                y1=label_y,
+                line=dict(
+                    color=color,
+                    width=1.5,
+                    dash="solid"
+                ),
+                layer="below"
+            )
+            
+            # Etiqueta optimizada
+            fig.add_annotation(
+                x=label_x,
+                y=label_y,
+                text=f'<b>{tech["name"]}</b>',
+                showarrow=False,
+                font=dict(size=10, color='#2C3E50', family="Arial"),
+                bgcolor='rgba(255, 255, 255, 0.95)',
+                bordercolor=color,
+                borderwidth=1.5,
+                borderpad=4,
+                xanchor='center',
+                yanchor='middle',
+                opacity=0.98
+            )
+
+    def _add_organized_trough_labels(self, fig, techs):
+        """
+        Etiquetas ESTRATÉGICAS para Trough - prioriza distancia MÁS CORTA
+        """
+        # Definir posiciones disponibles ordenadas por DISTANCIA desde el valle
+        available_positions = []
+        
+        for tech in techs:
+            # Generar posiciones candidatas ordenadas por distancia
+            candidates = []
+            
+            # Posiciones CERCANAS abajo (prioridad 1)
+            for offset_x in [-8, 0, 8]:
+                for offset_y in [-25, -35, -45]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "bottom"))
+            
+            # Posiciones CERCANAS laterales (prioridad 2)
+            for offset_x in [15, 25]:
+                for offset_y in [-10, 0, 10]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "side"))
+            
+            # Solo si no hay opciones cercanas, usar posiciones lejanas
+            for offset_x in [-15, -25]:
+                for offset_y in [-10, 0, 10]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "far_side"))
+            
+            # Ordenar por distancia (más cercano primero)
+            candidates.sort(key=lambda x: x[0])
+            available_positions.append((tech, candidates))
+        
+        # Asignar posiciones evitando superposiciones pero priorizando cercanía
+        used_positions = set()
+        final_assignments = {}
+        
+        for tech, candidates in available_positions:
+            best_position = None
+            
+            for distance, pos_x, pos_y, position_type in candidates:
+                # Verificar si está muy cerca de una posición ya usada
+                too_close = False
+                for used_x, used_y in used_positions:
+                    if ((pos_x - used_x)**2 + (pos_y - used_y)**2)**0.5 < 12:  # Distancia mínima entre etiquetas
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    best_position = (pos_x, pos_y)
+                    used_positions.add((pos_x, pos_y))
+                    break
+            
+            if best_position:
+                final_assignments[tech["name"]] = best_position
+        
+        # Renderizar etiquetas con posiciones optimizadas
+        for tech in techs:
+            if tech["name"] in final_assignments:
+                label_x, label_y = final_assignments[tech["name"]]
+                
+                color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
+                
+                # Línea CORTA y directa - solo la distancia necesaria
+                fig.add_shape(
+                    type="line", x0=tech["position_x"], y0=tech["position_y"],
+                    x1=label_x, y1=label_y,
+                    line=dict(color=color, width=1.5), layer="below"
+                )
+                
+                fig.add_annotation(
+                    x=label_x, y=label_y, text=f'<b>{tech["name"]}</b>',
+                    showarrow=False, font=dict(size=10, color='#2C3E50', family="Arial"),
+                    bgcolor='rgba(255, 255, 255, 0.95)', bordercolor=color,
+                    borderwidth=1.5, borderpad=4, xanchor='center', yanchor='middle', opacity=0.98
+                )
+
+    def _add_organized_slope_labels(self, fig, techs):
+        """
+        Etiquetas ESTRATÉGICAS para Slope - prioriza distancia MÁS CORTA
+        """
+        available_positions = []
+        
+        for tech in techs:
+            candidates = []
+            
+            # Posiciones CERCANAS arriba (prioridad 1)
+            for offset_x in [-8, 0, 8]:
+                for offset_y in [25, 35, 45]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "top"))
+            
+            # Posiciones CERCANAS laterales (prioridad 2)
+            for offset_x in [-15, -25]:
+                for offset_y in [-8, 0, 8]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "left"))
+            
+            # Solo si necesario, posiciones más lejanas
+            for offset_x in [15, 25]:
+                for offset_y in [-8, 0, 8]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y, "right"))
+            
+            candidates.sort(key=lambda x: x[0])
+            available_positions.append((tech, candidates))
+        
+        # Asignar posiciones optimizadas
+        used_positions = set()
+        final_assignments = {}
+        
+        for tech, candidates in available_positions:
+            best_position = None
+            
+            for distance, pos_x, pos_y, position_type in candidates:
+                too_close = False
+                for used_x, used_y in used_positions:
+                    if ((pos_x - used_x)**2 + (pos_y - used_y)**2)**0.5 < 12:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    best_position = (pos_x, pos_y)
+                    used_positions.add((pos_x, pos_y))
+                    break
+            
+            if best_position:
+                final_assignments[tech["name"]] = best_position
+        
+        # Renderizar
+        for tech in techs:
+            if tech["name"] in final_assignments:
+                label_x, label_y = final_assignments[tech["name"]]
+                
+                color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
+                
+                fig.add_shape(
+                    type="line", x0=tech["position_x"], y0=tech["position_y"],
+                    x1=label_x, y1=label_y,
+                    line=dict(color=color, width=1.5), layer="below"
+                )
+                
+                fig.add_annotation(
+                    x=label_x, y=label_y, text=f'<b>{tech["name"]}</b>',
+                    showarrow=False, font=dict(size=10, color='#2C3E50', family="Arial"),
+                    bgcolor='rgba(255, 255, 255, 0.95)', bordercolor=color,
+                    borderwidth=1.5, borderpad=4, xanchor='center', yanchor='middle', opacity=0.98
+                )
+
+    def _add_organized_trigger_labels(self, fig, techs):
+        """
+        Etiquetas ESTRATÉGICAS para Innovation Trigger - prioriza distancia MÁS CORTA
+        """
+        available_positions = []
+        
+        for tech in techs:
+            candidates = []
+            
+            # Posiciones CERCANAS (prioridad por distancia)
+            for offset_x in [-8, 0, 8]:
+                for offset_y in [25, -25, 35, -35]:  # Alternar arriba/abajo cercano
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y))
+            
+            # Solo si necesario, posiciones más lejanas
+            for offset_x in [-15, 15]:
+                for offset_y in [45, -45]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y))
+            
+            candidates.sort(key=lambda x: x[0])
+            available_positions.append((tech, candidates))
+        
+        # Asignar posiciones optimizadas
+        used_positions = set()
+        final_assignments = {}
+        
+        for tech, candidates in available_positions:
+            best_position = None
+            
+            for distance, pos_x, pos_y in candidates:
+                too_close = False
+                for used_x, used_y in used_positions:
+                    if ((pos_x - used_x)**2 + (pos_y - used_y)**2)**0.5 < 12:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    best_position = (pos_x, pos_y)
+                    used_positions.add((pos_x, pos_y))
+                    break
+            
+            if best_position:
+                final_assignments[tech["name"]] = best_position
+        
+        # Renderizar
+        for tech in techs:
+            if tech["name"] in final_assignments:
+                label_x, label_y = final_assignments[tech["name"]]
+                
+                color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
+                
+                fig.add_shape(
+                    type="line", x0=tech["position_x"], y0=tech["position_y"],
+                    x1=label_x, y1=label_y,
+                    line=dict(color=color, width=1.5), layer="below"
+                )
+                
+                fig.add_annotation(
+                    x=label_x, y=label_y, text=f'<b>{tech["name"]}</b>',
+                    showarrow=False, font=dict(size=10, color='#2C3E50', family="Arial"),
+                    bgcolor='rgba(255, 255, 255, 0.95)', bordercolor=color,
+                    borderwidth=1.5, borderpad=4, xanchor='center', yanchor='middle', opacity=0.98
+                )
+
+    def _add_organized_plateau_labels(self, fig, techs):
+        """
+        Etiquetas ESTRATÉGICAS para Plateau - prioriza distancia MÁS CORTA
+        """
+        available_positions = []
+        
+        for tech in techs:
+            candidates = []
+            
+            # Solo posiciones arriba (característica del plateau) pero optimizadas por distancia
+            for offset_x in [-8, 0, 8]:
+                for offset_y in [25, 35, 45, 55]:
+                    pos_x = tech["position_x"] + offset_x
+                    pos_y = tech["position_y"] + offset_y
+                    if 8 <= pos_x <= 92 and -35 <= pos_y <= 210:
+                        distance = (offset_x**2 + offset_y**2)**0.5
+                        candidates.append((distance, pos_x, pos_y))
+            
+            candidates.sort(key=lambda x: x[0])
+            available_positions.append((tech, candidates))
+        
+        # Asignar posiciones optimizadas
+        used_positions = set()
+        final_assignments = {}
+        
+        for tech, candidates in available_positions:
+            best_position = None
+            
+            for distance, pos_x, pos_y in candidates:
+                too_close = False
+                for used_x, used_y in used_positions:
+                    if ((pos_x - used_x)**2 + (pos_y - used_y)**2)**0.5 < 12:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    best_position = (pos_x, pos_y)
+                    used_positions.add((pos_x, pos_y))
+                    break
+            
+            if best_position:
+                final_assignments[tech["name"]] = best_position
+        
+        # Renderizar
+        for tech in techs:
+            if tech["name"] in final_assignments:
+                label_x, label_y = final_assignments[tech["name"]]
+                
+                color = self._get_color_for_time_to_plateau(tech["time_to_plateau"])
+                
+                fig.add_shape(
+                    type="line", x0=tech["position_x"], y0=tech["position_y"],
+                    x1=label_x, y1=label_y,
+                    line=dict(color=color, width=1.5), layer="below"
+                )
+                
+                fig.add_annotation(
+                    x=label_x, y=label_y, text=f'<b>{tech["name"]}</b>',
+                    showarrow=False, font=dict(size=10, color='#2C3E50', family="Arial"),
+                    bgcolor='rgba(255, 255, 255, 0.95)', bordercolor=color,
+                    borderwidth=1.5, borderpad=4, xanchor='center', yanchor='middle', opacity=0.98
+                )
+
+
+
+        # Etiquetas de fases REPOSICIONADAS para la curva extendida
+        phase_labels = [
+            {"name": "Innovation<br>Trigger", "x": 21, "y": -25},  # Ajustado a nueva curva
+            {"name": "Peak of Inflated<br>Expectations", "x": 36, "y": -25},   # Centrado en el pico
+            {"name": "Trough of<br>Disillusionment", "x": 56, "y": -25},  # Centrado en el valle
+            {"name": "Slope of<br>Enlightenment", "x": 72, "y": -25},     # En la pendiente
+            {"name": "Plateau of<br>Productivity", "x": 83, "y": -25}     # En la meseta
+        ]
+        
+        for label in phase_labels:
+            fig.add_annotation(
+                x=label["x"], 
+                y=label["y"],
+                text=f"<b>{label['name']}</b>",
+                showarrow=False,
+                font=dict(size=11, color='#34495e', family="Arial Black"),
+                bgcolor='rgba(255,255,255,0.95)',
+                bordercolor='#bdc3c7',
+                borderwidth=1,
+                borderpad=6,
+                xanchor='center',
+                yanchor='top',
+                opacity=0.95
+            )
+        
+        # Leyenda de tiempo al plateau
+        legend_items = [
+            {"label": "Ya alcanzado", "color": "#27AE60"},
+            {"label": "< 2 años", "color": "#3498DB"},
+            {"label": "2-5 años", "color": "#F39C12"},
+            {"label": "5-10 años", "color": "#E67E22"},
+            {"label": "> 10 años", "color": "#E74C3C"}
+        ]
+        
+        for item in legend_items:
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(size=12, color=item["color"]),
+                name=item["label"],
+                showlegend=True
+            ))
 
     def _calculate_simple_label_position(self, point_x: float, point_y: float, index: int) -> tuple:
         """Calcula posición simple de etiqueta para mejor rendimiento"""
@@ -2150,3 +2652,459 @@ class CategoryAdminInterface:
             'last_update': max(self._cache_timestamp.values()) if self._cache_timestamp else 0,
             'avg_queries_per_category': len(all_queries) / len(categories) if categories else 0
         }
+    
+    def _show_category_management(self):
+        """NUEVA: Gestión completa de categorías - crear, editar, eliminar"""
+        st.subheader("🏷️ Gestión Completa de Categorías")
+        
+        st.write("""
+        Administra todas las categorías: crear nuevas, editar existentes y eliminar categorías completas.
+        **¡CUIDADO!** Eliminar una categoría afectará todas las tecnologías asociadas.
+        """)
+        
+        # Obtener categorías existentes
+        try:
+            categories = self.storage.storage.get_all_categories()
+        except Exception as e:
+            st.error(f"Error cargando categorías: {str(e)}")
+            return
+        
+        # Pestañas para organizar funcionalidades
+        sub_tab1, sub_tab2, sub_tab3 = st.tabs([
+            "➕ Crear Nueva", 
+            "✏️ Editar Existente", 
+            "🗑️ Eliminar Categoría"
+        ])
+        
+        with sub_tab1:
+            self._show_create_category_form()
+        
+        with sub_tab2:
+            self._show_edit_category_form(categories)
+        
+        with sub_tab3:
+            self._show_delete_category_form(categories)
+
+    def _show_create_category_form(self):
+        """Formulario para crear nuevas categorías"""
+        st.write("### ➕ Crear Nueva Categoría")
+        
+        with st.form(key=f"{self._state_key_base}_create_category_form", clear_on_submit=True):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                category_name = st.text_input(
+                    "Nombre de la categoría *",
+                    placeholder="ej: Inteligencia Artificial, Blockchain, IoT...",
+                    help="Nombre único para identificar la categoría"
+                )
+                
+                category_description = st.text_area(
+                    "Descripción (opcional)",
+                    placeholder="Descripción detallada de qué tecnologías incluye esta categoría...",
+                    height=100,
+                    help="Descripción que ayude a identificar qué tecnologías pertenecen a esta categoría"
+                )
+            
+            with col2:
+                st.write("**Validaciones:**")
+                
+                # Validaciones en tiempo real
+                if category_name:
+                    if len(category_name.strip()) < 2:
+                        st.error("Mínimo 2 caracteres")
+                    elif len(category_name.strip()) > 50:
+                        st.error("Máximo 50 caracteres")
+                    else:
+                        # Verificar duplicados
+                        try:
+                            existing_categories = self.storage.storage.get_all_categories()
+                            existing_names = [cat.get('name', '').lower() for cat in existing_categories]
+                            
+                            if category_name.strip().lower() in existing_names:
+                                st.error("❌ Nombre ya existe")
+                            else:
+                                st.success("✅ Nombre válido")
+                        except:
+                            st.warning("⚠️ Error verificando duplicados")
+                else:
+                    st.info("Ingresa un nombre")
+            
+            st.write("---")
+            
+            # Botón de creación
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col2:
+                submitted = st.form_submit_button(
+                    "✨ CREAR CATEGORÍA",
+                    type="primary",
+                    use_container_width=True
+                )
+            
+            # Procesar creación
+            if submitted:
+                if not category_name or not category_name.strip():
+                    st.error("❌ El nombre de la categoría es obligatorio")
+                else:
+                    with st.spinner("Creando categoría..."):
+                        from hype_cycle_storage import HypeCycleStorage
+                        
+                        # Usar el método de validación
+                        if hasattr(self.storage, 'create_category_with_validation'):
+                            result = self.storage.create_category_with_validation(
+                                category_name.strip(), 
+                                category_description.strip()
+                            )
+                        else:
+                            # Fallback a método básico
+                            try:
+                                category_id = self.storage.storage.add_category(
+                                    category_name.strip(), 
+                                    category_description.strip()
+                                )
+                                if category_id:
+                                    result = {
+                                        'success': True,
+                                        'message': f"Categoría '{category_name}' creada exitosamente",
+                                        'category_id': category_id
+                                    }
+                                else:
+                                    result = {
+                                        'success': False,
+                                        'message': "Error creando la categoría",
+                                        'category_id': None
+                                    }
+                            except Exception as e:
+                                result = {
+                                    'success': False,
+                                    'message': f"Error: {str(e)}",
+                                    'category_id': None
+                                }
+                        
+                        if result['success']:
+                            st.success(f"✅ {result['message']}")
+                            st.balloons()
+                            
+                            # Limpiar cache
+                            self._invalidate_cache()
+                            if hasattr(st, 'cache_data'):
+                                st.cache_data.clear()
+                            
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['message']}")
+
+    def _show_edit_category_form(self, categories):
+        """Formulario para editar categorías existentes"""
+        st.write("### ✏️ Editar Categoría Existente")
+        
+        if not categories:
+            st.info("No hay categorías para editar.")
+            return
+        
+        # Filtrar categorías editables (excluir default)
+        editable_categories = [cat for cat in categories if cat.get('category_id') != 'default']
+        
+        if not editable_categories:
+            st.info("Solo existe la categoría por defecto, que no se puede editar.")
+            return
+        
+        with st.form(key=f"{self._state_key_base}_edit_category_form", clear_on_submit=False):
+            # Selector de categoría
+            category_options = {}
+            for cat in editable_categories:
+                cat_name = cat.get('name', 'Sin nombre')
+                cat_id = cat.get('category_id')
+                
+                # Mostrar uso de la categoría
+                try:
+                    usage_count = self.storage.storage.check_category_usage(cat_id)
+                    display_name = f"{cat_name} ({usage_count} tecnologías)"
+                except:
+                    display_name = cat_name
+                
+                category_options[display_name] = cat
+            
+            selected_display_name = st.selectbox(
+                "Selecciona categoría a editar:",
+                options=list(category_options.keys()),
+                help="Muestra el número de tecnologías en cada categoría"
+            )
+            
+            selected_category = category_options[selected_display_name]
+            
+            # Mostrar información actual
+            st.info(f"""
+            **Categoría actual:**
+            - **Nombre:** {selected_category.get('name', 'Sin nombre')}
+            - **Descripción:** {selected_category.get('description', 'Sin descripción')}
+            - **ID:** {selected_category.get('category_id', 'N/A')}
+            """)
+            
+            # Campos de edición
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                new_name = st.text_input(
+                    "Nuevo nombre:",
+                    value=selected_category.get('name', ''),
+                    help="Deja vacío para no cambiar"
+                )
+            
+            with col2:
+                new_description = st.text_area(
+                    "Nueva descripción:",
+                    value=selected_category.get('description', ''),
+                    height=100,
+                    help="Deja vacío para no cambiar"
+                )
+            
+            # Botón de actualización
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col2:
+                submitted = st.form_submit_button(
+                    "💾 ACTUALIZAR CATEGORÍA",
+                    type="primary",
+                    use_container_width=True
+                )
+            
+            # Procesar actualización
+            if submitted:
+                category_id = selected_category.get('category_id')
+                
+                # Verificar si hay cambios
+                current_name = selected_category.get('name', '')
+                current_desc = selected_category.get('description', '')
+                
+                if new_name.strip() == current_name and new_description.strip() == current_desc:
+                    st.warning("⚠️ No se detectaron cambios para actualizar")
+                else:
+                    with st.spinner("Actualizando categoría..."):
+                        try:
+                            success, message = self.storage.storage.update_category(
+                                category_id, 
+                                new_name.strip() if new_name.strip() != current_name else None,
+                                new_description.strip() if new_description.strip() != current_desc else None
+                            )
+                            
+                            if success:
+                                st.success(f"✅ {message}")
+                                
+                                # Limpiar cache
+                                self._invalidate_cache()
+                                if hasattr(st, 'cache_data'):
+                                    st.cache_data.clear()
+                                
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {message}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error actualizando categoría: {str(e)}")
+
+    def _show_delete_category_form(self, categories):
+        """Formulario para eliminar categorías completas"""
+        st.write("### 🗑️ Eliminar Categoría Completa")
+        
+        st.error("""
+        ⚠️ **ADVERTENCIA IMPORTANTE**
+        
+        Eliminar una categoría es una acción **IRREVERSIBLE** que afectará:
+        - La categoría será eliminada permanentemente
+        - Todas las tecnologías asociadas serán afectadas
+        
+        **Opciones disponibles:**
+        - **Mover tecnologías:** Las tecnologías se moverán a "Sin categoría"
+        - **Eliminar todo:** Las tecnologías también serán eliminadas
+        """)
+        
+        # Filtrar categorías eliminables (excluir default)
+        deletable_categories = [cat for cat in categories if cat.get('category_id') != 'default']
+        
+        if not deletable_categories:
+            st.info("Solo existe la categoría por defecto, que no se puede eliminar.")
+            return
+        
+        with st.form(key=f"{self._state_key_base}_delete_category_form", clear_on_submit=False):
+            # Selector de categoría
+            category_options = {}
+            for cat in deletable_categories:
+                cat_name = cat.get('name', 'Sin nombre')
+                cat_id = cat.get('category_id')
+                
+                # Mostrar uso de la categoría
+                try:
+                    usage_count = self.storage.storage.check_category_usage(cat_id)
+                    display_name = f"{cat_name} ({usage_count} tecnologías)"
+                    category_options[display_name] = {
+                        'category': cat,
+                        'usage_count': usage_count
+                    }
+                except:
+                    display_name = cat_name
+                    category_options[display_name] = {
+                        'category': cat,
+                        'usage_count': 0
+                    }
+            
+            selected_display_name = st.selectbox(
+                "Categoría a eliminar:",
+                options=list(category_options.keys()),
+                help="El número entre paréntesis indica cuántas tecnologías se verán afectadas"
+            )
+            
+            selected_info = category_options[selected_display_name]
+            selected_category = selected_info['category']
+            usage_count = selected_info['usage_count']
+            
+            # Mostrar impacto de la eliminación
+            if usage_count > 0:
+                st.warning(f"""
+                **Impacto de la eliminación:**
+                
+                📁 **Categoría:** {selected_category.get('name', 'Sin nombre')}
+                🔬 **Tecnologías afectadas:** {usage_count}
+                """)
+            else:
+                st.info(f"""
+                **Categoría a eliminar:**
+                
+                📁 **Nombre:** {selected_category.get('name', 'Sin nombre')}
+                ✅ **Sin tecnologías asociadas** - Eliminación segura
+                """)
+            
+            # Opciones de eliminación
+            if usage_count > 0:
+                st.write("### 🎯 Opciones para las tecnologías")
+                
+                action_option = st.radio(
+                    "¿Qué hacer con las tecnologías de esta categoría?",
+                    options=[
+                        "Mover a 'Sin categoría'",
+                        "Eliminar todas las tecnologías"
+                    ],
+                    index=0,
+                    help="Elige qué sucederá con las tecnologías cuando se elimine la categoría"
+                )
+                
+                move_to_default = action_option == "Mover a 'Sin categoría'"
+                
+                if not move_to_default:
+                    st.error(f"⚠️ Se eliminarán {usage_count} tecnologías PERMANENTEMENTE")
+            else:
+                move_to_default = True
+            
+            # Confirmaciones de seguridad
+            st.write("### 🔒 Confirmaciones de Seguridad")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                confirm1 = st.checkbox(
+                    f"☑️ Entiendo que se eliminará la categoría '{selected_category.get('name', '')}'"
+                )
+                
+                if usage_count > 0:
+                    if move_to_default:
+                        confirm2 = st.checkbox(
+                            f"☑️ Entiendo que {usage_count} tecnologías se moverán a 'Sin categoría'"
+                        )
+                    else:
+                        confirm2 = st.checkbox(
+                            f"☑️ Entiendo que {usage_count} tecnologías serán ELIMINADAS"
+                        )
+                else:
+                    confirm2 = True
+            
+            with col2:
+                if confirm1 and confirm2:
+                    safety_text = st.text_input(
+                        "Escribe 'ELIMINAR CATEGORÍA' para confirmar:",
+                        placeholder="ELIMINAR CATEGORÍA"
+                    )
+                    
+                    text_confirmed = safety_text.upper().strip() == "ELIMINAR CATEGORÍA"
+                    
+                    if not text_confirmed and safety_text:
+                        st.error("❌ Debes escribir exactamente 'ELIMINAR CATEGORÍA'")
+                else:
+                    text_confirmed = False
+                    st.info("Complete las confirmaciones arriba")
+            
+            # Botón de eliminación
+            st.write("---")
+            
+            all_confirmed = confirm1 and confirm2 and text_confirmed
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col2:
+                submitted = st.form_submit_button(
+                    "🗑️ ELIMINAR CATEGORÍA",
+                    type="secondary",
+                    use_container_width=True
+                )
+            
+            # Procesar eliminación
+            if submitted:
+                if not all_confirmed:
+                    st.error("❌ Debes completar todas las confirmaciones de seguridad")
+                else:
+                    category_id = selected_category.get('category_id')
+                    category_name = selected_category.get('name', 'Sin nombre')
+                    
+                    with st.spinner(f"Eliminando categoría '{category_name}'..."):
+                        try:
+                            if hasattr(self.storage, 'delete_category_complete'):
+                                result = self.storage.delete_category_complete(
+                                    category_id, 
+                                    move_to_default
+                                )
+                            else:
+                                # Fallback manual
+                                # Primero obtener tecnologías
+                                technologies = self.storage.get_queries_by_category(category_id)
+                                
+                                # Procesar tecnologías
+                                for tech in technologies:
+                                    tech_id = tech.get('query_id', tech.get('analysis_id'))
+                                    if move_to_default:
+                                        self.storage.move_technology_to_category(tech_id, "default")
+                                    else:
+                                        self.storage.delete_query(tech_id)
+                                
+                                # Eliminar categoría
+                                success, message = self.storage.storage.delete_category(category_id)
+                                
+                                result = {
+                                    'success': success,
+                                    'message': message,
+                                    'technologies_affected': len(technologies)
+                                }
+                            
+                            if result['success']:
+                                st.success(f"✅ {result['message']}")
+                                
+                                if result['technologies_affected'] > 0:
+                                    if move_to_default:
+                                        st.info(f"📁 {result['technologies_affected']} tecnologías movidas a 'Sin categoría'")
+                                    else:
+                                        st.info(f"🗑️ {result['technologies_affected']} tecnologías eliminadas")
+                                
+                                # Limpiar cache
+                                self._invalidate_cache()
+                                if hasattr(st, 'cache_data'):
+                                    st.cache_data.clear()
+                                
+                                st.balloons()
+                                time.sleep(3)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {result['message']}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error eliminando categoría: {str(e)}")

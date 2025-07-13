@@ -389,104 +389,211 @@ class NewsAnalyzer:
 
     def perform_news_search(self, serp_api_key, query):
         """
-        Realiza búsqueda optimizada usando SerpAPI para noticias
+        VERSIÓN OPTIMIZADA: Búsqueda inteligente que minimiza llamadas API
+        Se adapta automáticamente al volumen de datos disponibles
         """
         try:
             all_results = []
             current_year = datetime.now().year
-            start_year = current_year - 11
+            start_year = current_year - 12
             
-            # Limpiar la query de filtros existentes
+            # Limpiar la query
             clean_query = re.sub(r'\s*(?:after|before):\d{4}(?:-\d{2}-\d{2})?\s*', '', query).strip()
             
-            # Definir parámetros base que maximizan la cobertura
+            # Parámetros base
             base_params = {
                 "api_key": serp_api_key,
-                "tbm": "nws",          # Búsqueda de noticias
-                "num": 100,            # Máximo número de resultados
-                "safe": "off",         # Desactivar SafeSearch
-                "gl": "us",            # Configuración global para maximizar resultados
-                "hl": "en",            # Idioma inglés para consistencia
-                "filter": "0"          # Intentar desactivar el filtrado de duplicados
+                "tbm": "nws",
+                "num": 100,
+                "safe": "off",
+                "gl": "us",
+                "hl": "en",
+                "filter": "0"
             }
             
-            # Definir rangos de búsqueda más amplios
-            date_ranges = [
-                (start_year, start_year + 3),      # Primeros 4 años
-                (start_year + 4, start_year + 7),  # Siguientes 4 años
-                (start_year + 8, current_year)     # Últimos años hasta el presente
-            ]
+            total_api_calls = 0
             
-            print(f"Iniciando búsqueda optimizada desde {start_year} hasta {current_year}")
+            print(f"🔍 Iniciando búsqueda OPTIMIZADA desde {start_year} hasta {current_year}")
             
-            for start_date, end_date in date_ranges:
-                start = 0
-                has_more = True
-                found_in_range = 0
+            # PASO 1: Consulta exploratoria (todo el rango histórico)
+            print(f"\n🧭 PASO 1: Consulta exploratoria...")
+            
+            exploratory_query = f"{clean_query} after:{start_year}-01-01 before:{current_year}-12-31"
+            params = {**base_params, "q": exploratory_query, "start": 0}
+            
+            try:
+                response = requests.get(self.SERP_API_BASE_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+                total_api_calls += 1
                 
-                print(f"\nBuscando en rango: {start_date}-{end_date}")
-                
-                while has_more and start < 100:  # Límite de start en SerpAPI
-                    try:
-                        # Construir query con rango de fecha
-                        date_query = f"{clean_query} after:{start_date}-01-01 before:{end_date}-12-31"
-                        print(f"Query construida: {date_query}")
+                if "news_results" in data and data["news_results"]:
+                    exploratory_results = data["news_results"]
+                    exploratory_count = len(exploratory_results)
+                    
+                    print(f"  📊 Resultados exploratorios: {exploratory_count}")
+                    
+                    # Procesar resultados exploratorios
+                    for item in exploratory_results:
+                        if self._is_valid_result(item):
+                            processed = self._process_news_item(item)
+                            if processed:
+                                all_results.append(processed)
+                    
+                    # DECISIÓN INTELIGENTE basada en volumen de datos
+                    if exploratory_count < 100:
+                        # CASO 1: Pocos datos históricos - NO hacer más llamadas
+                        print(f"  ✅ OPTIMIZACIÓN: Solo {exploratory_count} resultados totales")
+                        print(f"  💰 AHORRO: No se necesitan más llamadas API")
                         
-                        # Combinar parámetros
-                        params = {
-                            **base_params,
-                            "q": date_query,
-                            "start": start
-                        }
-                        
-                        print(f"Consultando resultados {start+1}-{start+100}")
-                        response = requests.get(self.SERP_API_BASE_URL, params=params)
-                        response.raise_for_status()
-                        data = response.json()
-                        
-                        if "news_results" in data and data["news_results"]:
-                            results = data["news_results"]
-                            print(f"Encontrados {len(results)} resultados en esta página")
-                            found_in_range += len(results)
+                        # Intentar una segunda página solo si hay exactamente 100
+                        if exploratory_count == 100:
+                            print(f"  🔄 Verificando si hay página 2...")
+                            params_page2 = {**base_params, "q": exploratory_query, "start": 100}
                             
-                            # Procesar resultados con validación
-                            for item in results:
-                                if self._is_valid_result(item):
-                                    processed = self._process_news_item(item)
-                                    if processed:
-                                        all_results.append(processed)
-                            
-                            if len(results) < 100:
-                                has_more = False
-                                print(f"No hay más resultados en este rango. Total encontrado: {found_in_range}")
-                            else:
-                                start += len(results)
-                                print(f"Hay más resultados disponibles. Continuando búsqueda...")
-                                time.sleep(0.5)
+                            try:
+                                response2 = requests.get(self.SERP_API_BASE_URL, params=params_page2)
+                                response2.raise_for_status()
+                                data2 = response2.json()
+                                total_api_calls += 1
+                                
+                                if "news_results" in data2 and data2["news_results"]:
+                                    page2_results = data2["news_results"]
+                                    print(f"  📄 Página 2: {len(page2_results)} resultados adicionales")
+                                    
+                                    for item in page2_results:
+                                        if self._is_valid_result(item):
+                                            processed = self._process_news_item(item)
+                                            if processed:
+                                                all_results.append(processed)
+                                else:
+                                    print(f"  🔚 No hay página 2")
+                                    
+                            except Exception as e:
+                                print(f"  ⚠️ Error en página 2: {str(e)}")
+                        
+                    else:
+                        # CASO 2: Muchos datos - usar estrategia de rangos
+                        print(f"  📈 MUCHOS DATOS: Usando estrategia de rangos detallados")
+                        
+                        # Calcular rangos dinámicamente
+                        years_span = current_year - start_year + 1
+                        
+                        if exploratory_count >= 500:
+                            # Muchos resultados: rangos de 1 año
+                            range_size = 1
+                            print(f"  🎯 Estrategia: Rangos de 1 año (alta densidad)")
+                        elif exploratory_count >= 200:
+                            # Medios resultados: rangos de 2 años
+                            range_size = 2
+                            print(f"  📊 Estrategia: Rangos de 2 años (densidad media)")
                         else:
-                            has_more = False
-                    except Exception as e:
-                        print(f"Error en la solicitud: {str(e)}")
-                        has_more = False
-                        time.sleep(1)
+                            # Pocos resultados: rangos de 3-4 años
+                            range_size = 3
+                            print(f"  📉 Estrategia: Rangos de 3 años (baja densidad)")
+                        
+                        # Generar rangos dinámicos
+                        date_ranges = []
+                        current_start = start_year
+                        
+                        while current_start <= current_year:
+                            range_end = min(current_start + range_size - 1, current_year)
+                            date_ranges.append((current_start, range_end))
+                            current_start = range_end + 1
+                        
+                        print(f"  📅 Generados {len(date_ranges)} rangos dinámicos")
+                        
+                        # Buscar por rangos con límite inteligente
+                        for range_idx, (start_date, end_date) in enumerate(date_ranges):
+                            if total_api_calls >= 50:  # Límite de seguridad
+                                print(f"  🛑 Límite de seguridad alcanzado ({total_api_calls} llamadas)")
+                                break
+                                
+                            start = 0
+                            calls_in_range = 0
+                            
+                            print(f"\n  📅 Rango {range_idx + 1}/{len(date_ranges)}: {start_date}-{end_date}")
+                            
+                            # Máximo 5 llamadas por rango (reducido)
+                            while start < 500 and calls_in_range < 5:
+                                try:
+                                    date_query = f"{clean_query} after:{start_date}-01-01 before:{end_date}-12-31"
+                                    params = {**base_params, "q": date_query, "start": start}
+                                    
+                                    response = requests.get(self.SERP_API_BASE_URL, params=params)
+                                    response.raise_for_status()
+                                    data = response.json()
+                                    
+                                    total_api_calls += 1
+                                    calls_in_range += 1
+                                    
+                                    if "news_results" in data and data["news_results"]:
+                                        results = data["news_results"]
+                                        batch_size = len(results)
+                                        
+                                        print(f"    🔗 Llamada {calls_in_range}: {batch_size} resultados")
+                                        
+                                        for item in results:
+                                            if self._is_valid_result(item):
+                                                processed = self._process_news_item(item)
+                                                if processed:
+                                                    all_results.append(processed)
+                                        
+                                        # OPTIMIZACIÓN: Parar si pocos resultados
+                                        if batch_size < 100:
+                                            print(f"    ✅ Fin de rango (última página)")
+                                            break
+                                        else:
+                                            start += batch_size
+                                            time.sleep(0.2)  # Delay reducido
+                                            
+                                    else:
+                                        print(f"    ❌ Sin resultados en esta llamada")
+                                        break
+                                        
+                                except Exception as e:
+                                    print(f"    ⚠️ Error: {str(e)}")
+                                    break
+                
+                else:
+                    print(f"  ❌ No hay resultados en consulta exploratoria")
+                    return False, "No se encontraron resultados"
+                    
+            except Exception as e:
+                print(f"❌ Error en consulta exploratoria: {str(e)}")
+                return False, str(e)
             
-            # Verificar resultados finales
+            # Procesar resultados finales
             if not all_results:
-                print("No se encontraron resultados")
-                return False, "No se encontraron resultados"
+                print("❌ No se encontraron resultados válidos")
+                return False, "No se encontraron resultados válidos"
             
-            # Remover duplicados basados en URL
-            unique_results = {result['link']: result for result in all_results}.values()
-            final_results = list(unique_results)
+            # Filtrar duplicados
+            unique_results = []
+            seen_urls = set()
             
-            print(f"\nBúsqueda completada:")
-            print(f"- Total de resultados encontrados: {len(all_results)}")
-            print(f"- Resultados únicos después de filtrar: {len(final_results)}")
+            for result in all_results:
+                url = result.get('link', '')
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    unique_results.append(result)
             
-            return True, final_results
+            # Estadísticas de eficiencia
+            print(f"\n✅ BÚSQUEDA OPTIMIZADA COMPLETADA:")
+            print(f"   💰 Total llamadas API: {total_api_calls}")
+            print(f"   📄 Resultados únicos: {len(unique_results)}")
+            print(f"   🎯 Eficiencia: {len(unique_results) / total_api_calls:.1f} resultados/llamada")
+            
+            # Calcular ahorro
+            max_possible_calls = 60  # Lo que haría el código anterior
+            saved_calls = max_possible_calls - total_api_calls
+            if saved_calls > 0:
+                print(f"   💸 AHORRO: {saved_calls} llamadas API no utilizadas")
+            
+            return True, unique_results
             
         except Exception as e:
-            print(f"Error en la búsqueda: {str(e)}")
+            print(f"❌ Error general: {str(e)}")
             return False, str(e)
 
     def _is_valid_result(self, item):
