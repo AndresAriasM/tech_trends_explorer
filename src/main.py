@@ -78,6 +78,14 @@ st.markdown("""
             margin-bottom: 15px;
             border: 1px solid #c3e6c3;
         }
+        .team-section {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            border: 1px solid #e9ecef;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -138,25 +146,7 @@ def initialize_session_state():
 def show_welcome_screen():
     """Muestra la pantalla de bienvenida"""
     st.markdown('<p class="main-header">🔍 Tech Trends Explorer</p>', unsafe_allow_html=True)
-    
-    # Tarjeta de bienvenida
-    st.markdown("""
-    <div class="welcome-card">
-        <h2>Bienvenido al Explorador de Tendencias Tecnológicas</h2>
-        <p>Esta herramienta te permite analizar y visualizar tendencias tecnológicas emergentes utilizando 
-        múltiples fuentes de datos. Selecciona una funcionalidad en las pestañas de arriba para comenzar.</p>
         
-        <h3>🆕 Nuevas Características v2.1:</h3>
-        <ul>
-            <li>✅ <strong>Almacenamiento automático de consultas Hype Cycle</strong></li>
-            <li>✅ <strong>Sistema de categorías para organizar análisis</strong></li>
-            <li>✅ <strong>Historial de consultas sin gastar tokens</strong></li>
-            <li>✅ <strong>Reutilización de análisis previos</strong></li>
-            <li>✅ <strong>Comparación entre fases del Hype Cycle</strong></li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
-    
     # Descripción de funcionalidades
     st.markdown("### 🛠️ Funcionalidades Principales")
     
@@ -191,6 +181,51 @@ def show_welcome_screen():
         
         *Requiere: Scopus API Key*
         """)
+    
+    # Sección del equipo con imagen
+    st.markdown("### 👥 Nuestro Equipo")
+    
+    # Verificar si existe la imagen del equipo
+    team_image_path = "assets/equipo.png"
+    if os.path.exists(team_image_path):
+        # Mostrar la imagen a la izquierda y la información del equipo a la derecha
+        col_img, col_info = st.columns([1, 1.5])
+        
+        with col_img:
+            st.image(
+                team_image_path, 
+                caption="Equipo de desarrollo",
+                use_column_width=True
+            )
+        
+        with col_info:
+            st.markdown("#### Integrantes del Equipo")
+            
+            # Tabla de miembros del equipo y sus roles
+            team_data = [
+                {"Nombre": "Jhon Wilder Zartha Sossa", "Cargo": "Líder de Proyecto"},
+                {"Nombre": "Freddy Sarta", "Cargo": "Desarrollador Senior"},
+                {"Nombre": "Luis Fernando Gutierrez", "Cargo": "Analista de Tendencias"},
+                {"Nombre": "Andrés Arias Medina", "Cargo": "Científico de Datos"}
+            ]
+            
+            team_df = pd.DataFrame(team_data)
+            st.dataframe(team_df, hide_index=True, use_container_width=True)
+            
+            st.markdown("""
+            <div style="margin-top: 10px;">
+                <p><strong>Institución:</strong> Universidad Pontificia Bolivariana</p>
+                <p><strong>Facultad</strong> de Ingeniería</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="team-section">
+            <h4>👥 Equipo de desarrollo</h4>
+            <p>Desarrollado por un equipo dedicado a la innovación tecnológica y el análisis de tendencias.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.warning(f"⚠️ No se encontró la imagen del equipo en: {team_image_path}")
     
     # Instrucciones de inicio
     st.markdown("### 🚀 Cómo Comenzar")
@@ -431,7 +466,7 @@ def sidebar_config():
         
         st.divider()
         
-        # Acerca de la aplicación
+        # Acerca de la aplicación - CORREGIDA Y SIMPLIFICADA
         with st.expander("ℹ️ Acerca de", expanded=False):
             st.write("""
             **Tech Trends Explorer v2.1**
@@ -444,16 +479,25 @@ def sidebar_config():
             - ✅ Comparación entre fases del Hype Cycle
             - ✅ Dashboard de métricas y estadísticas
             
-            **Características existentes:**
+            **📋 Características existentes:**
             - ✅ Almacenamiento en AWS DynamoDB
             - ✅ Mejor gestión de datos
             - ✅ Acceso desde cualquier dispositivo
             - ✅ Análisis de tendencias múltiples
             
-            Esta aplicación te permite analizar tendencias tecnológicas 
-            utilizando múltiples fuentes de datos y métodos de análisis.
+            **Propósito:** Esta aplicación te permite analizar tendencias tecnológicas 
+            utilizando múltiples fuentes de datos y métodos de análisis científicos.
             
-            © 2025 Todos los derechos reservados
+            **Metodologías:**
+            - 🔍 **Google Custom Search** - Análisis de tendencias web
+            - 📈 **Hype Cycle de Gartner** - Posicionamiento tecnológico
+            - 📉 **Curvas en S** - Análisis de adopción académica
+            
+            **Tecnologías:** Python, Streamlit, AWS DynamoDB, Google API, SerpAPI, Scopus API
+            
+            ---
+            
+            *© 2025 Tech Trends Explorer Team - Todos los derechos reservados*
             """)
 
 def main():

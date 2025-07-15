@@ -1,6 +1,7 @@
 # src/hype_cycle_storage.py - VERSIÓN OPTIMIZADA PARA RENDIMIENTO Y CORRECCIÓN DE BUGS
 import streamlit as st
 import pandas as pd
+import re
 import time
 import json
 import uuid
@@ -350,17 +351,109 @@ class HypeCycleStorage:
             )
     
     def _extract_technology_name(self, search_query: str, search_terms: List[Dict]) -> str:
-        """Extrae un nombre de tecnología limpio de la consulta"""
-        for term in search_terms:
-            value = term.get('value', '').strip().strip('"')
-            if len(value) > 2 and value.lower() not in ['and', 'or', 'not']:
-                return value.title()
-        
-        # Fallback: limpiar la query
-        clean_query = search_query.replace('"', '').replace(' AND ', ' ').replace(' OR ', ' ')
-        clean_query = clean_query.replace(' NOT ', ' ').replace('after:', '').replace('before:', '')
-        words = [w for w in clean_query.split() if not w.isdigit() and len(w) > 2]
-        return ' '.join(words[:2]).title() if words else "Tecnología"
+        """
+        CORREGIDO: Extrae un nombre de tecnología preservando operadores para análisis
+        """
+        try:
+            # OPCIÓN 1: Construir nombre desde search_terms preservando operadores
+            if search_terms:
+                name_parts = []
+                
+                for i, term in enumerate(search_terms):
+                    value = term.get('value', '').strip().strip('"')
+                    operator = term.get('operator', 'AND')
+                    
+                    # Solo incluir términos válidos (no operadores sueltos)
+                    if (len(value) > 1 and 
+                        value.lower() not in ['and', 'or', 'not'] and
+                        not value.isdigit() and
+                        'after:' not in value.lower() and
+                        'before:' not in value.lower()):
+                        
+                        # Añadir el término
+                        name_parts.append(value.title())
+                        
+                        # Añadir operador si no es el último término válido
+                        remaining_terms = [t for t in search_terms[i+1:] 
+                                        if (t.get('value', '').strip().strip('"') and
+                                            len(t.get('value', '').strip().strip('"')) > 1 and
+                                            t.get('value', '').lower() not in ['and', 'or', 'not'] and
+                                            'after:' not in t.get('value', '').lower() and
+                                            'before:' not in t.get('value', '').lower())]
+                        
+                        if remaining_terms:
+                            name_parts.append(operator)
+                
+                if name_parts:
+                    # Limitar longitud para evitar nombres demasiado largos
+                    if len(name_parts) > 7:  # Máximo 4 términos + 3 operadores
+                        # Tomar los primeros 3 términos + operadores + "..."
+                        truncated = name_parts[:5]  # 3 términos + 2 operadores
+                        truncated.append("...")
+                        return " ".join(truncated)
+                    else:
+                        return " ".join(name_parts)
+            
+            # OPCIÓN 2: Fallback mejorado desde search_query preservando operadores
+            if search_query:
+                # Limpiar la query pero conservar operadores
+                clean_query = search_query.replace('"', '')
+                
+                # Remover solo filtros de fecha, mantener operadores
+                clean_query = re.sub(r'\s*after:\d{4}(?:-\d{2}-\d{2})?\s*', ' ', clean_query)
+                clean_query = re.sub(r'\s*before:\d{4}(?:-\d{2}-\d{2})?\s*', ' ', clean_query)
+                clean_query = re.sub(r'\s+-patent\s*', ' ', clean_query)  # Remover -patent
+                
+                # Limpiar espacios múltiples
+                clean_query = re.sub(r'\s+', ' ', clean_query).strip()
+                
+                # Si la consulta limpia es razonable, usarla directamente
+                if clean_query and len(clean_query) <= 80:  # Límite razonable
+                    return clean_query.title()
+                
+                # Si es muy larga, truncar inteligentemente
+                words = clean_query.split()
+                if len(words) > 8:  # Más de 8 palabras es muy largo
+                    # Conservar primeras palabras hasta encontrar el segundo operador
+                    truncated_words = []
+                    operator_count = 0
+                    
+                    for word in words:
+                        truncated_words.append(word)
+                        if word.upper() in ['AND', 'OR', 'NOT']:
+                            operator_count += 1
+                            if operator_count >= 2:  # Después del segundo operador
+                                truncated_words.append('...')
+                                break
+                    
+                    return " ".join(truncated_words).title()
+                else:
+                    return clean_query.title()
+            
+            # OPCIÓN 3: Fallback final
+            return "Consulta Compleja"
+            
+        except Exception as e:
+            logger.warning(f"Error extrayendo nombre de tecnología: {str(e)}")
+            # Fallback seguro - usar parte de la query original sin modificar demasiado
+            if search_query and len(search_query) > 0:
+                # Limpiar solo lo esencial
+                clean_query = search_query.replace('"', '')
+                clean_query = re.sub(r'\s*after:\d{4}(?:-\d{2}-\d{2})?\s*', ' ', clean_query)
+                clean_query = re.sub(r'\s*before:\d{4}(?:-\d{2}-\d{2})?\s*', ' ', clean_query)
+                clean_query = re.sub(r'\s+', ' ', clean_query).strip()
+                
+                if clean_query and len(clean_query) <= 60:
+                    return clean_query.title()
+                elif clean_query:
+                    # Truncar pero mantener estructura
+                    words = clean_query.split()
+                    if len(words) > 6:
+                        return " ".join(words[:6]).title() + "..."
+                    else:
+                        return clean_query.title()
+            
+            return "Tecnología"
 
     # ===== MÉTODOS DE CONSULTA OPTIMIZADOS CON CACHE =====
     

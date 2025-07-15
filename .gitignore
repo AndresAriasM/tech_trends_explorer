@@ -140,3 +140,5 @@ sample_*.json
 # Archivos de backup
 *.bak
 *.backup
+
+assets/
