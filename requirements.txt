@@ -30,3 +30,6 @@ xlsxwriter==3.1.9
 python-decouple==3.8
 
 beautifulsoup4==4.13.4
+
+#OpenAI
+openai==1.96.0

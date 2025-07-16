@@ -1451,6 +1451,7 @@ class NewsAnalyzer:
     def display_advanced_analysis(self, results, query_info, st_object):
         """
         Muestra análisis avanzado con múltiples visualizaciones
+        ACTUALIZADO: Pasa search_topics al análisis de keywords
         """
         if not results:
             st_object.warning("No hay resultados para mostrar")
@@ -1506,14 +1507,18 @@ class NewsAnalyzer:
             )
             st_object.plotly_chart(fig_sentiment, use_container_width=True)
 
-        # 5. Nube de palabras y keywords
+        # 5. ACTUALIZADO: Análisis de palabras clave con filtrado mejorado
         st_object.write("### 🔤 Análisis de Palabras Clave")
-        self._plot_keyword_analysis(df, st_object)
+        
+        # Extraer search_topics del query_info si está disponible
+        search_topics = query_info.get('search_topics', [])
+        
+        self._plot_keyword_analysis(df, st_object, search_topics)
 
     def _plot_news_map(self, df, st_object):
         """
         Crea un mapa mundial de noticias - VERSIÓN CORREGIDA
-        Mantiene las coordenadas de países existentes y corrige el error de columnas
+        CORRIGE: Error 'name' -> usar 'full_name'
         """
         try:
             # Verificar si hay datos de ubicación
@@ -1723,28 +1728,28 @@ class NewsAnalyzer:
             
             # Preparar datos para el mapa
             map_data = []
-            stats_data = []  # Para la tabla de estadísticas
+            stats_data = []
             
             for country, count in country_counts.items():
                 # Limpiar nombre del país
                 country_clean = str(country).strip()
                 
                 if country_clean in country_coords:
-                    coords = country_coords[country_clean]
+                    country_info = country_coords[country_clean]
+                    coords = country_info['coords']  # CORREGIDO: acceso correcto
                     map_data.append({
                         'country': country_clean,
-                        'display_name': coords['name'],
-                        'lat': coords['lat'],
-                        'lon': coords['lon'],
-                        'count': int(count),  # Asegurar que sea entero
-                        'size': min(max(count * 3, 8), 50)  # Tamaño para el mapa
+                        'display_name': country_info['full_name'],  # CORREGIDO: usar 'full_name'
+                        'lat': coords[0],  # CORREGIDO: acceso por índice
+                        'lon': coords[1],  # CORREGIDO: acceso por índice
+                        'count': int(count),
+                        'size': min(max(count * 3, 8), 50)
                     })
                     
-                    # CORREGIR: Usar nombres de columnas consistentes
                     stats_data.append({
-                        'País': coords['name'],
+                        'País': country_info['full_name'],  # CORREGIDO: usar 'full_name'
                         'Codigo': country_clean,
-                        'Total': int(count),  # CAMBIAR 'Menciones' por 'Total'
+                        'Total': int(count),
                         'Porcentaje': round((count / len(df)) * 100, 1)
                     })
             
@@ -1757,7 +1762,6 @@ class NewsAnalyzer:
             
             # Crear mapa usando plotly
             import plotly.express as px
-            import plotly.graph_objects as go
             
             # Crear figura del mapa
             fig = px.scatter_geo(
@@ -1797,35 +1801,30 @@ class NewsAnalyzer:
                     showcoastlines=True,
                     projection_type='natural earth'
                 ),
-                height=500
+                height=700,
+                width=None,
+                margin=dict(l=20, r=20, t=80, b=20)
             )
             
             # Mostrar el mapa
-            st_object.plotly_chart(fig, use_container_width=True)
+            st_object.plotly_chart(
+                fig, 
+                use_container_width=True,
+                config={
+                    'displayModeBar': True,
+                    'displaylogo': False,
+                    'responsive': True
+                }
+            )
             
-            # CORREGIR: Crear tabla de estadísticas con nombres de columnas correctos
+            # Crear tabla de estadísticas
             if stats_data:
                 stats_df = pd.DataFrame(stats_data)
-                
-                # CORREGIR: Usar 'Total' en lugar de 'Menciones'
-                try:
-                    stats_df = stats_df.sort_values('Total', ascending=False)
-                except KeyError:
-                    # Si 'Total' no existe, intentar con otros nombres posibles
-                    possible_columns = ['Menciones', 'count', 'Count', 'total']
-                    sort_column = 'Total'  # default
-                    
-                    for col in possible_columns:
-                        if col in stats_df.columns:
-                            sort_column = col
-                            break
-                    
-                    stats_df = stats_df.sort_values(sort_column, ascending=False)
+                stats_df = stats_df.sort_values('Total', ascending=False)
                 
                 # Mostrar tabla de estadísticas
                 st_object.subheader("📊 Estadísticas por País")
                 
-                # Configurar columnas para mejor visualización
                 column_config = {
                     'País': st_object.column_config.TextColumn("País", width="medium"),
                     'Codigo': st_object.column_config.TextColumn("Código", width="small"),
@@ -1853,7 +1852,7 @@ class NewsAnalyzer:
                         st_object.metric("País Líder", top_country['País'])
                 
                 with col3:
-                    total_news = stats_df['Total'].sum() if 'Total' in stats_df.columns else 0
+                    total_news = stats_df['Total'].sum()
                     st_object.metric("Total Noticias Mapeadas", total_news)
         
         except Exception as e:
@@ -1872,9 +1871,84 @@ class NewsAnalyzer:
                 else:
                     st_object.write("**DataFrame está vacío**")
 
-    def _plot_keyword_analysis(self, df, st_object):
-        """Analiza y visualiza palabras clave con filtrado personalizado"""
-        # Definir stopwords y palabras bloqueadas
+    def _extract_search_variations(self, search_topics):
+        """
+        Extrae las palabras de búsqueda y genera variaciones (singular/plural)
+        """
+        search_words = set()
+        
+        for topic in search_topics:
+            if isinstance(topic, dict):
+                # Si el topic viene en formato diccionario
+                text = topic.get('value', '')
+            else:
+                # Si el topic viene en formato string
+                text = str(topic)
+            
+            # Limpiar el texto y extraer palabras
+            clean_text = re.sub(r'[^\w\s]', ' ', text.lower())
+            words = [w.strip() for w in clean_text.split() if len(w.strip()) > 2]
+            
+            for word in words:
+                # Agregar la palabra original
+                search_words.add(word)
+                
+                # Generar variaciones plural/singular
+                search_words.update(self._generate_word_variations(word))
+        
+        return search_words
+
+
+    def _generate_word_variations(self, word):
+        """
+        Genera variaciones de una palabra (singular/plural, etc.)
+        """
+        variations = set()
+        word = word.lower().strip()
+        
+        # Reglas básicas para plural/singular en inglés
+        if word.endswith('s') and len(word) > 3:
+            # Intentar singular removiendo 's'
+            singular = word[:-1]
+            variations.add(singular)
+            
+            # Casos especiales
+            if word.endswith('ies'):
+                variations.add(word[:-3] + 'y')  # technologies -> technology
+            elif word.endswith('es') and len(word) > 4:
+                variations.add(word[:-2])  # boxes -> box
+        else:
+            # Generar plural
+            if word.endswith('y'):
+                variations.add(word[:-1] + 'ies')  # technology -> technologies
+            elif word.endswith(('s', 'sh', 'ch', 'x', 'z')):
+                variations.add(word + 'es')
+            else:
+                variations.add(word + 's')
+        
+        # Variaciones comunes en tecnología
+        tech_variations = {
+            'ai': ['artificial intelligence', 'machine learning'],
+            'ml': ['machine learning', 'artificial intelligence'],
+            'iot': ['internet of things'],
+            'ar': ['augmented reality'],
+            'vr': ['virtual reality'],
+            'blockchain': ['crypto', 'cryptocurrency', 'bitcoin'],
+            'cloud': ['computing', 'aws', 'azure'],
+            'big data': ['analytics', 'data science'],
+            '5g': ['fifth generation', 'mobile'],
+        }
+        
+        if word in tech_variations:
+            variations.update(tech_variations[word])
+        
+        return variations
+
+    def _plot_keyword_analysis(self, df, st_object, search_topics=None):
+        """
+        Analiza y visualiza palabras clave con filtrado mejorado que excluye términos de búsqueda
+        """
+        # Stopwords básicas
         default_stopwords = set([
             'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i',
             'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
@@ -1887,63 +1961,124 @@ class NewsAnalyzer:
             'now', 'look', 'only', 'come', 'its', 'over', 'think', 'also',
             'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first',
             'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these',
-            'give', 'day', 'most', 'us', 'using', 'great', 'must', 'go', 'may'
-            
+            'give', 'day', 'most', 'us', 'using', 'great', 'must', 'go', 'may',
+            'said', 'says', 'according', 'including', 'based', 'used', 'such', 
+            'through', 'while', 'where', 'before', 'between', 'during', 'after',
+            'are', 'more'
         ])
 
-        # Palabras específicas del dominio para bloquear
+        # Palabras técnicas y de dominio para bloquear
         domain_blocklist = set([
             'http', 'https', 'com', 'www', 'html', 'htm', 'pdf', 'org',
-            'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'
+            'january', 'february', 'march', 'april', 'may', 'june',
+            'july', 'august', 'september', 'october', 'november', 'december',
+            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+            'news', 'article', 'report', 'story', 'today', 'yesterday', 'tomorrow',
+            'reuters', 'bloomberg', 'cnn', 'bbc', 'associated', 'press'
         ])
+        
+        # NUEVA FUNCIONALIDAD: Extraer y filtrar palabras de búsqueda
+        search_words = set()
+        if search_topics:
+            search_words = self._extract_search_variations(search_topics)
+            print(f"🔍 Palabras de búsqueda detectadas para filtrar: {search_words}")
 
         # Combinar todas las palabras bloqueadas
-        all_blocked_words = default_stopwords | domain_blocklist
+        all_blocked_words = default_stopwords | domain_blocklist | search_words
 
-        # Unir y filtrar keywords
+        # Extraer todas las keywords de los resultados
         all_keywords = []
-        for kw_list in df['keywords']:
-            if isinstance(kw_list, list):
-                all_keywords.extend([
-                    k[0].lower() for k in kw_list 
-                    if isinstance(k, tuple) and 
-                    len(k[0]) > 2 and  # Filtrar palabras muy cortas
-                    k[0].lower() not in all_blocked_words and
-                    not k[0].isdigit()  # Filtrar números
-                ])
+        for _, row in df.iterrows():
+            # Combinar título y snippet para análisis
+            text = f"{row.get('title', '')} {row.get('snippet', '')}"
+            
+            # Extraer keywords del texto completo
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+            
+            # Filtrar palabras
+            filtered_words = [
+                word for word in words 
+                if (
+                    word not in all_blocked_words and
+                    len(word) >= 3 and  # Mínimo 3 caracteres
+                    not word.isdigit() and  # No números
+                    not re.match(r'.*\d+.*', word) and  # No palabras con números
+                    word.isalpha()  # Solo letras
+                )
+            ]
+            
+            all_keywords.extend(filtered_words)
 
         if not all_keywords:
-            st_object.warning("No se encontraron palabras clave después del filtrado")
+            st_object.warning("No se encontraron palabras clave después del filtrado avanzado")
             return
 
-        # Contar frecuencias
-        keyword_freq = Counter(all_keywords).most_common(20)
+        # Contar frecuencias y obtener las más comunes
+        keyword_freq = Counter(all_keywords).most_common(25)
         
-        # Crear DataFrame para mejor manipulación
+        # Crear DataFrame para visualización
         keywords_df = pd.DataFrame(keyword_freq, columns=['Palabra', 'Frecuencia'])
         
-        # Crear gráfico mejorado
-        fig = px.bar(
-            keywords_df,
-            x='Palabra',
-            y='Frecuencia',
-            title="Palabras Clave más Frecuentes",
-            color='Frecuencia',
-            color_continuous_scale='Viridis'
-        )
+        # Filtrado adicional: remover palabras que aparecen solo una vez
+        keywords_df = keywords_df[keywords_df['Frecuencia'] > 1]
         
-        # Mejorar el diseño del gráfico
-        fig.update_layout(
-            xaxis_title="Palabra Clave",
-            yaxis_title="Frecuencia de Aparición",
-            xaxis_tickangle=45,
-            showlegend=False,
-            height=500
-        )
+        if keywords_df.empty:
+            st_object.warning("No se encontraron palabras clave con frecuencia suficiente")
+            return
         
-        # Mostrar gráfico
-        st_object.plotly_chart(fig, use_container_width=True)
+        # Crear visualización
+        col1, col2 = st_object.columns([2, 1])
+        
+        with col1:
+            # Gráfico de barras
+            fig = px.bar(
+                keywords_df.head(15),  # Top 15
+                x='Palabra',
+                y='Frecuencia',
+                title="Palabras Clave más Relevantes (Excluyendo Términos de Búsqueda)",
+                color='Frecuencia',
+                color_continuous_scale='Viridis',
+                text='Frecuencia'
+            )
+            
+            fig.update_layout(
+                xaxis_title="Palabra Clave",
+                yaxis_title="Frecuencia de Aparición",
+                xaxis_tickangle=45,
+                showlegend=False,
+                height=500
+            )
+            
+            fig.update_traces(texttemplate='%{text}', textposition='outside')
+            st_object.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Tabla con las keywords
+            st_object.subheader("📋 Top Keywords")
+            st_object.dataframe(
+                keywords_df.head(15),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    'Palabra': st_object.column_config.TextColumn("Keyword", width="medium"),
+                    'Frecuencia': st_object.column_config.NumberColumn("Freq.", width="small")
+                }
+            )
+            
+            # Métricas
+            total_unique = len(keywords_df)
+            total_mentions = keywords_df['Frecuencia'].sum()
+            st_object.metric("Keywords Únicas", total_unique)
+            st_object.metric("Total Menciones", total_mentions)
+        
+        # Información de debug (opcional)
+        with st_object.expander("🔍 Información de Filtrado"):
+            st_object.write(f"**Palabras de búsqueda filtradas:** {len(search_words)}")
+            if search_words:
+                st_object.write(f"**Términos excluidos:** {', '.join(sorted(list(search_words))[:10])}...")
+            st_object.write(f"**Total stopwords:** {len(all_blocked_words)}")
+            st_object.write(f"**Keywords encontradas antes del filtrado:** {len(all_keywords)}")
+            st_object.write(f"**Keywords finales:** {len(keywords_df)}")
         
 
     def show_hype_cycle_news_table(self, st, news_results):

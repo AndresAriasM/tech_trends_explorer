@@ -108,31 +108,41 @@ class CategoryAdminInterface:
         self._local_cache.clear()
         self._cache_timestamp.clear()
     
-    def _safe_float_format(self, value, format_str=".2f", default="0.00"):
+    def _safe_float_format(self, value, format_type="float", format_str=".2f", default="0.00"):
         """
-        Formatea un valor como float de forma segura
+        Formatea un valor como float de forma segura - VERSIÓN UNIFICADA
+        
+        Args:
+            value: Valor a formatear
+            format_type: Tipo de formato ("float", "percent", "int")
+            format_str: String de formato (ej: ".2f")
+            default: Valor por defecto si hay error
         """
         try:
-            # Convertir Decimal, int, float a float
-            if isinstance(value, Decimal):
-                num_value = float(value)
-            elif isinstance(value, (int, float)):
-                num_value = float(value)
-            elif isinstance(value, str):
-                # Intentar convertir string a float
-                num_value = float(value.replace(',', '').replace('%', ''))
-            elif value is None:
+            if value is None:
                 return default
+            
+            if isinstance(value, Decimal):
+                numeric_value = float(value)
+            elif isinstance(value, str):
+                clean_value = value.replace(',', '').replace('%', '').strip()
+                numeric_value = float(clean_value) if clean_value else 0.0
+            elif isinstance(value, (int, float)):
+                numeric_value = float(value)
             else:
                 return str(value)
             
-            # Verificar que no sea NaN o infinito
-            if math.isnan(num_value) or math.isinf(num_value):
+            if math.isnan(numeric_value) or math.isinf(numeric_value):
                 return default
             
-            # Aplicar formato
-            return f"{num_value:{format_str}}"
-            
+            # Aplicar formato según tipo
+            if format_type == "percent":
+                return f"{numeric_value * 100:.1f}%"
+            elif format_type == "int":
+                return str(int(numeric_value))
+            else:  # format_type == "float" o cualquier otro
+                return f"{numeric_value:{format_str}}"
+                
         except (ValueError, TypeError, decimal.InvalidOperation):
             return default
     
@@ -3108,3 +3118,695 @@ class CategoryAdminInterface:
                                 
                         except Exception as e:
                             st.error(f"❌ Error eliminando categoría: {str(e)}")
+        
+    def show_admin_interface(self):
+        """Muestra la interfaz principal de administración AMPLIADA CON IA"""
+        st.header("🏷️ Administración de Categorías - Hype Cycle")
+        
+        st.write("""
+        Gestiona las tecnologías analizadas por categoría y visualiza su posición 
+        en el Hype Cycle de Gartner. **Versión optimizada con análisis IA.**
+        """)
+        
+        # Pestañas principales - AMPLIADAS CON IA
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📊 Vista por Categorías",
+            "🎯 Gráfica Hype Cycle", 
+            "🏷️ Gestión de Categorías",
+            "⚙️ Gestión Avanzada",
+            "🧹 Limpieza de Datos",
+            "🤖 Análisis IA"  # NUEVA PESTAÑA
+        ])
+        
+        with tab1:
+            self._show_category_overview_optimized()
+        
+        with tab2:
+            self._show_hype_cycle_chart_optimized()
+        
+        with tab3:
+            self._show_category_management()
+        
+        with tab4:
+            self._show_advanced_management_optimized()
+        
+        with tab5:
+            self._show_data_cleanup()
+        
+        with tab6:
+            self._show_ai_analysis_interface()  # NUEVA FUNCIÓN
+
+    def _show_ai_analysis_interface(self):
+        """NUEVA: Interfaz completa para análisis con IA"""
+        st.subheader("🤖 Análisis Inteligente del Hype Cycle")
+        
+        st.write("""
+        Genera insights automáticos sobre el estado del Hype Cycle usando inteligencia artificial.
+        Analiza patrones, tendencias y genera recomendaciones estratégicas basadas en tus datos.
+        """)
+        
+        # Verificar dependencias y configuración
+        try:
+            from hype_ai_analyzer import (
+                HypeAIAnalyzer, validate_openai_key, estimate_analysis_cost, 
+                check_env_setup, get_openai_key_from_env
+            )
+            ai_available = True
+        except ImportError:
+            st.error("❌ Módulo de IA no disponible. Instala: `pip install openai python-dotenv`")
+            return
+        
+        # Verificar setup del entorno
+        env_status = check_env_setup()
+        
+        # Mostrar estado del entorno
+        self._show_environment_status(env_status)
+        
+        # Si no está listo automáticamente, permitir configuración manual
+        api_key = None
+        if env_status["ready"]:
+            api_key = get_openai_key_from_env()
+            st.success("✅ Configuración automática desde .env")
+        else:
+            api_key = self._show_manual_api_configuration(env_status)
+        
+        if not api_key:
+            st.stop()  # No continuar sin API key válida
+        
+        # === CONFIGURACIÓN PRINCIPAL ===
+        st.write("### ⚙️ Configuración del Análisis")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Selector de categoría
+            categories = self._get_cached_data(
+                "categories_ai", 
+                lambda: self.storage.storage.get_all_categories()
+            )
+            
+            if not categories:
+                st.error("No hay categorías disponibles para analizar")
+                return
+            
+            category_options = {}
+            category_stats = {}
+            
+            # Preparar opciones con estadísticas
+            for cat in categories:
+                cat_id = cat.get("category_id")
+                cat_name = cat.get("name", "Sin nombre")
+                
+                # Obtener consultas de la categoría
+                try:
+                    queries = self.storage.get_queries_by_category(cat_id)
+                    if queries:
+                        category_options[f"{cat_name} ({len(queries)} tecnologías)"] = cat_id
+                        category_stats[cat_id] = {
+                            "name": cat_name,
+                            "queries": queries,
+                            "count": len(queries)
+                        }
+                except Exception as e:
+                    continue
+            
+            if not category_options:
+                st.warning("No hay categorías con tecnologías para analizar")
+                return
+            
+            selected_category_display = st.selectbox(
+                "📁 Selecciona categoría para analizar:",
+                options=list(category_options.keys()),
+                key=f"{self._state_key_base}_ai_category_selector",
+                help="Selecciona la categoría que quieres que analice la IA"
+            )
+            
+            selected_category_id = category_options[selected_category_display]
+            selected_category_info = category_stats[selected_category_id]
+            queries = selected_category_info["queries"]
+            
+            # Mostrar preview de datos
+            self._show_category_preview_for_ai(queries, selected_category_info["name"])
+        
+        with col2:
+            st.write("#### 🎛️ Configuración IA")
+            
+            # Mostrar fuente de API key
+            if env_status["ready"]:
+                st.success("🔑 API Key: desde .env")
+            else:
+                st.info("🔑 API Key: manual")
+            
+            # Configuraciones de análisis
+            analysis_depth = st.selectbox(
+                "📊 Profundidad del análisis:",
+                options=["Ejecutivo", "Detallado", "Técnico"],
+                index=1,  # "Detallado" por defecto
+                key=f"{self._state_key_base}_analysis_depth",
+                help="Ejecutivo: Resumen para C-level | Detallado: Análisis completo | Técnico: Análisis profundo"
+            )
+            
+            # Modelo de IA
+            ai_model = st.selectbox(
+                "🧠 Modelo IA:",
+                options=["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+                index=0,  # GPT-4 por defecto
+                key=f"{self._state_key_base}_ai_model",
+                help="GPT-4: Mejor calidad | GPT-4-turbo: Más rápido | GPT-3.5: Más económico"
+            )
+            
+            # Mostrar estimación de costo
+            if queries:
+                cost_estimate = estimate_analysis_cost(len(queries), analysis_depth)
+                
+                st.write("💰 **Estimación:**")
+                st.caption(f"~{cost_estimate['estimated_tokens']} tokens")
+                st.caption(f"~${cost_estimate['estimated_cost']:.4f} USD")
+        
+        # === OPCIONES AVANZADAS ===
+        with st.expander("🔬 Opciones Avanzadas", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                custom_focus = st.text_area(
+                    "🎯 Enfoque personalizado (opcional):",
+                    placeholder="Ej: Enfócate en oportunidades de inversión\nAnaliza riesgos regulatorios\nCompara con competidores",
+                    height=100,
+                    key=f"{self._state_key_base}_custom_focus",
+                    help="Instrucciones específicas para personalizar el análisis"
+                )
+            
+            with col2:
+                # Configuraciones adicionales
+                include_comparisons = st.checkbox(
+                    "📈 Incluir comparaciones históricas",
+                    value=True,
+                    key=f"{self._state_key_base}_include_comparisons"
+                )
+                
+                focus_on_actionable = st.checkbox(
+                    "🎯 Priorizar insights accionables",
+                    value=True,
+                    key=f"{self._state_key_base}_focus_actionable"
+                )
+                
+                include_risks = st.checkbox(
+                    "⚠️ Incluir análisis de riesgos",
+                    value=False,
+                    key=f"{self._state_key_base}_include_risks"
+                )
+        
+        # === BOTÓN DE ANÁLISIS ===
+        st.write("---")
+        
+        # Determinar si puede analizar
+        can_analyze = bool(api_key and queries and len(queries) > 0)
+        
+        # Mostrar estado
+        if not api_key:
+            st.warning("⚠️ Configura tu OpenAI API Key para continuar")
+        elif not queries:
+            st.warning("⚠️ No hay tecnologías para analizar")
+        elif len(queries) == 0:
+            st.warning("⚠️ La categoría seleccionada está vacía")
+        else:
+            st.success("✅ Todo listo para el análisis IA")
+        
+        # Botón principal
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            if st.button(
+                f"🚀 GENERAR ANÁLISIS IA",
+                type="primary",
+                disabled=not can_analyze,
+                key=f"{self._state_key_base}_generate_analysis",
+                use_container_width=True
+            ):
+                # EJECUTAR ANÁLISIS
+                self._execute_ai_analysis(
+                    api_key=api_key,
+                    model=ai_model,
+                    queries=queries,
+                    category_name=selected_category_info["name"],
+                    analysis_depth=analysis_depth,
+                    custom_focus=custom_focus if custom_focus.strip() else None,
+                    advanced_options={
+                        "include_comparisons": include_comparisons,
+                        "focus_actionable": focus_on_actionable,
+                        "include_risks": include_risks
+                    }
+                )
+        
+        # === ANÁLISIS PREVIOS ===
+        self._show_previous_ai_analyses()
+
+    def _show_environment_status(self, env_status: Dict):
+        """Muestra el estado del entorno y configuración"""
+        st.write("### 🔧 Estado del Entorno")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if env_status["dotenv_available"]:
+                st.success("✅ dotenv")
+            else:
+                st.error("❌ dotenv")
+        
+        with col2:
+            if env_status["openai_available"]:
+                st.success("✅ OpenAI")
+            else:
+                st.error("❌ OpenAI")
+        
+        with col3:
+            if env_status["api_key_in_env"]:
+                st.success("✅ API Key")
+            else:
+                st.warning("⚠️ Sin API Key")
+        
+        with col4:
+            if env_status["ready"]:
+                st.success("✅ Listo")
+            else:
+                st.warning("⚠️ Config necesaria")
+        
+        # Mostrar detalles si hay problemas
+        if not env_status["ready"]:
+            with st.expander("🔍 Detalles de Configuración", expanded=False):
+                if not env_status["dotenv_available"]:
+                    st.write("❌ **python-dotenv no instalado**")
+                    st.code("pip install python-dotenv")
+                
+                if not env_status["openai_available"]:
+                    st.write("❌ **openai no instalado**")
+                    st.code("pip install openai")
+                
+                if not env_status["api_key_in_env"]:
+                    st.write("❌ **OPENAI_API_KEY no encontrada en .env**")
+                    st.write("Crea un archivo `.env` en la raíz del proyecto:")
+                    st.code("OPENAI_API_KEY=sk-tu-api-key-aqui")
+                
+                elif not env_status["api_key_valid"]:
+                    st.write("❌ **API Key en .env no es válida**")
+                    st.write("Verifica que la key sea correcta y tengas créditos disponibles")
+
+    def _show_manual_api_configuration(self, env_status: Dict) -> Optional[str]:
+        """Permite configuración manual de API key si la automática no funciona"""
+        
+        if env_status["ready"]:
+            return get_openai_key_from_env()
+        
+        st.write("### 🔑 Configuración Manual de API Key")
+        
+        # Explicar por qué necesita configuración manual
+        if not env_status["api_key_in_env"]:
+            st.info("💡 **Configuración recomendada:** Agrega `OPENAI_API_KEY=tu-key` a tu archivo `.env`")
+        elif not env_status["api_key_valid"]:
+            st.warning("⚠️ La API key en .env no es válida. Configura una key alternativa:")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            manual_api_key = st.text_input(
+                "🔑 OpenAI API Key:",
+                type="password",
+                help="Tu API key de OpenAI como alternativa a .env",
+                key=f"{self._state_key_base}_manual_openai_key",
+                placeholder="sk-..."
+            )
+        
+        with col2:
+            if manual_api_key:
+                if st.button("🔍 Validar", key=f"{self._state_key_base}_validate_manual_api"):
+                    with st.spinner("Validando..."):
+                        validation = validate_openai_key(manual_api_key)
+                        
+                        if validation["valid"]:
+                            st.success(f"✅ {validation['message']}")
+                            return manual_api_key
+                        else:
+                            st.error(f"❌ {validation['message']}")
+                            return None
+        
+        return manual_api_key if manual_api_key else None
+
+    def _show_category_preview_for_ai(self, queries: List[Dict], category_name: str):
+        """Muestra preview de los datos que se analizarán"""
+        st.write("#### 📊 Preview de Datos")
+        
+        if not queries:
+            st.warning("No hay datos para preview")
+            return
+        
+        # Estadísticas rápidas
+        phases = [q.get("hype_metrics", {}).get("phase", "Unknown") for q in queries]
+        phase_counts = {}
+        for phase in phases:
+            phase_counts[phase] = phase_counts.get(phase, 0) + 1
+        
+        confidences = []
+        mentions = []
+        
+        for q in queries:
+            hype_metrics = q.get("hype_metrics", {})
+            conf = self._safe_float_format(hype_metrics.get("confidence", 0), "float", "", "0")
+            ment = self._safe_int_format(hype_metrics.get("total_mentions", 0), 0)
+            
+            try:
+                confidences.append(float(conf))
+                mentions.append(int(ment))
+            except:
+                continue
+        
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+        total_mentions = sum(mentions) if mentions else 0
+        
+        # Mostrar métricas
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("🔬 Tecnologías", len(queries))
+            st.metric("🎯 Confianza Promedio", f"{avg_confidence:.2f}")
+        
+        with col2:
+            st.metric("📍 Fases Representadas", len(phase_counts))
+            st.metric("📊 Total Menciones", f"{total_mentions:,}")
+        
+        # Distribución de fases
+        if phase_counts:
+            st.write("**Distribución por Fases:**")
+            for phase, count in list(phase_counts.items())[:5]:  # Limitar para UI
+                percentage = (count / len(queries)) * 100
+                st.write(f"• {phase}: {count} ({percentage:.1f}%)")
+        
+        # Lista de tecnologías (primeras 5)
+        with st.expander("Ver tecnologías incluidas", expanded=False):
+            for i, query in enumerate(queries[:10]):  # Mostrar máximo 10
+                tech_name = (
+                    query.get("technology_name") or 
+                    query.get("search_query", "")[:40] or 
+                    f"Tecnología {i+1}"
+                )
+                phase = query.get("hype_metrics", {}).get("phase", "Unknown")
+                st.write(f"{i+1}. **{tech_name}** - {phase}")
+            
+            if len(queries) > 10:
+                st.write(f"... y {len(queries) - 10} tecnologías más")
+
+    def _execute_ai_analysis(self, api_key: str, model: str, queries: List[Dict], 
+                        category_name: str, analysis_depth: str, custom_focus: str = None,
+                        advanced_options: Dict = None):
+        """Ejecuta el análisis de IA y muestra resultados"""
+        
+        # Contenedor para el progreso
+        progress_container = st.empty()
+        results_container = st.container()
+        
+        try:
+            with progress_container:
+                with st.spinner(f"🤖 Generando análisis IA de '{category_name}'..."):
+                    
+                    # Inicializar analizador (ahora puede usar .env automáticamente)
+                    from hype_ai_analyzer import HypeAIAnalyzer
+                    
+                    # Si api_key es None, el analizador lo cargará desde .env
+                    analyzer = HypeAIAnalyzer(api_key=api_key, model=model)
+                    
+                    # Generar análisis
+                    result = analyzer.analyze_category_hype(
+                        queries=queries,
+                        category_name=category_name,
+                        analysis_depth=analysis_depth,
+                        custom_focus=custom_focus
+                    )
+            
+            # Limpiar spinner
+            progress_container.empty()
+            
+            # Mostrar resultados
+            with results_container:
+                if result["success"]:
+                    # ✅ ANÁLISIS EXITOSO
+                    st.success("🎉 ¡Análisis IA completado exitosamente!")
+                    
+                    # Mostrar fuente de API key
+                    api_source = getattr(analyzer, 'api_key_source', 'unknown')
+                    if api_source == 'environment':
+                        st.info("🔑 Usando API key desde archivo .env")
+                    
+                    # Métricas del análisis
+                    st.write("### 📊 Métricas del Análisis")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("🔬 Tecnologías", result["metadata"]["technologies_analyzed"])
+                    
+                    with col2:
+                        st.metric("🧠 Modelo", result["metadata"]["model_used"])
+                    
+                    with col3:
+                        st.metric("⏱️ Tiempo", f"{result['metadata']['processing_time']}s")
+                    
+                    with col4:
+                        st.metric("💰 Costo", f"${result['cost']['total']:.4f}")
+                    
+                    # Detalles adicionales en expander
+                    with st.expander("Ver detalles técnicos", expanded=False):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write("**Uso de Tokens:**")
+                            st.write(f"• Input: {result['usage']['prompt_tokens']:,}")
+                            st.write(f"• Output: {result['usage']['completion_tokens']:,}")
+                            st.write(f"• Total: {result['usage']['total_tokens']:,}")
+                        
+                        with col2:
+                            st.write("**Desglose de Costos:**")
+                            st.write(f"• Input: ${result['cost']['input_cost']:.4f}")
+                            st.write(f"• Output: ${result['cost']['output_cost']:.4f}")
+                            st.write(f"• Total: ${result['cost']['total']:.4f}")
+                            st.write(f"• Fuente API: {api_source}")
+                    
+                    # === EL ANÁLISIS PRINCIPAL ===
+                    st.write("---")
+                    st.write(f"### 🧠 Análisis IA: {category_name}")
+                    
+                    # Mostrar el análisis con formato mejorado
+                    analysis_text = result["analysis"]
+                    
+                    # Contenedor estilizado para el análisis
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background-color: #f8f9fa;
+                            color: #000000;
+                            padding: 20px;
+                            border-radius: 10px;
+                            border-left: 5px solid #28a745;
+                            margin: 10px 0;
+                        ">
+                        {analysis_text.replace(chr(10), '<br>')}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    
+                    # === ACCIONES POST-ANÁLISIS ===
+                    st.write("---")
+                    st.write("### 🎬 Acciones")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if st.button(
+                            "📄 Exportar PDF", 
+                            key=f"{self._state_key_base}_export_pdf",
+                            help="Exportar análisis como PDF"
+                        ):
+                            self._export_ai_analysis_pdf(result, category_name)
+                    
+                    with col2:
+                        if st.button(
+                            "📋 Copiar Texto", 
+                            key=f"{self._state_key_base}_copy_analysis",
+                            help="Mostrar texto para copiar"
+                        ):
+                            st.code(analysis_text, language="markdown")
+                    
+                    with col3:
+                        if st.button(
+                            "💾 Guardar Análisis", 
+                            key=f"{self._state_key_base}_save_analysis",
+                            help="Guardar análisis en historial"
+                        ):
+                            self._save_ai_analysis_to_history(result, category_name)
+                    
+                    with col4:
+                        if st.button(
+                            "🔄 Nuevo Análisis", 
+                            key=f"{self._state_key_base}_new_analysis",
+                            help="Limpiar y hacer nuevo análisis"
+                        ):
+                            # Limpiar estados y rerun
+                            for key in st.session_state.keys():
+                                if "ai_analysis_result" in key:
+                                    del st.session_state[key]
+                            st.rerun()
+                    
+                    # Guardar resultado en session_state para acciones posteriores
+                    st.session_state[f"{self._state_key_base}_last_ai_result"] = result
+                    
+                else:
+                    # ❌ ERROR EN EL ANÁLISIS
+                    st.error("❌ Error durante el análisis IA")
+                    
+                    error_msg = result.get("error", "Error desconocido")
+                    st.error(f"**Error:** {error_msg}")
+                    
+                    # Sugerencias de solución específicas para configuración .env
+                    st.write("### 🔧 Posibles soluciones:")
+                    
+                    if "api" in error_msg.lower() or "key" in error_msg.lower():
+                        st.write("• Verifica tu archivo `.env` tiene: `OPENAI_API_KEY=sk-tu-key`")
+                        st.write("• Asegúrate de tener créditos disponibles en OpenAI")
+                        st.write("• Reinicia la aplicación después de modificar .env")
+                    elif "token" in error_msg.lower():
+                        st.write("• Reduce el número de tecnologías analizadas")
+                        st.write("• Usa un análisis más breve ('Ejecutivo')")
+                    elif "rate" in error_msg.lower():
+                        st.write("• Espera unos minutos antes de volver a intentar")
+                        st.write("• Considera usar un modelo más económico (GPT-3.5)")
+                    else:
+                        st.write("• Verifica tu conexión a internet")
+                        st.write("• Verifica que el archivo .env esté en la raíz del proyecto")
+                        st.write("• Intenta nuevamente en unos momentos")
+                    
+                    # Botón para reintentar
+                    if st.button("🔄 Reintentar Análisis", key=f"{self._state_key_base}_retry_analysis"):
+                        st.rerun()
+        
+        except Exception as e:
+            progress_container.empty()
+            st.error(f"❌ Error inesperado: {str(e)}")
+            
+            # Ayuda específica para problemas de configuración
+            if "No se encontró API key" in str(e):
+                st.write("### 🔧 Configurar API Key en .env")
+                st.write("1. Crea un archivo `.env` en la raíz de tu proyecto")
+                st.write("2. Agrega la línea: `OPENAI_API_KEY=sk-tu-api-key-aqui`")
+                st.write("3. Reinicia la aplicación Streamlit")
+            
+            with st.expander("Ver detalles del error"):
+                st.code(str(e))
+
+    def _show_previous_ai_analyses(self):
+        """Muestra análisis de IA previos guardados"""
+        st.write("---")
+        st.write("### 📚 Análisis Previos")
+        
+        # Verificar si hay análisis previos en session_state
+        previous_analyses = []
+        
+        for key in st.session_state.keys():
+            if key.startswith(f"{self._state_key_base}_saved_analysis_"):
+                analysis = st.session_state[key]
+                previous_analyses.append(analysis)
+        
+        if previous_analyses:
+            # Ordenar por fecha (más recientes primero)
+            previous_analyses.sort(
+                key=lambda x: x.get("timestamp", ""), 
+                reverse=True
+            )
+            
+            for i, analysis in enumerate(previous_analyses[:5]):  # Mostrar últimos 5
+                with st.expander(
+                    f"📄 {analysis.get('category_name', 'Sin categoría')} - "
+                    f"{analysis.get('timestamp', 'Sin fecha')[:16]}", 
+                    expanded=False
+                ):
+                    # Información básica
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.write(f"**Categoría:** {analysis.get('category_name', 'N/A')}")
+                        st.write(f"**Profundidad:** {analysis.get('analysis_depth', 'N/A')}")
+                    
+                    with col2:
+                        st.write(f"**Tecnologías:** {analysis.get('technologies_analyzed', 'N/A')}")
+                        st.write(f"**Modelo:** {analysis.get('model_used', 'N/A')}")
+                    
+                    with col3:
+                        st.write(f"**Costo:** ${analysis.get('cost', 0):.4f}")
+                        st.write(f"**Tokens:** {analysis.get('total_tokens', 0):,}")
+                    
+                    # Botón para ver análisis completo
+                    if st.button(f"👁️ Ver Análisis", key=f"{self._state_key_base}_view_prev_{i}"):
+                        st.markdown("**Análisis completo:**")
+                        st.markdown(analysis.get('analysis_text', 'No disponible'))
+        else:
+            st.info("No hay análisis previos guardados. Genera tu primer análisis IA arriba.")
+
+    def _export_ai_analysis_pdf(self, result: Dict, category_name: str):
+        """Exporta el análisis IA como PDF"""
+        try:
+            # Por ahora, mostrar opción de descarga como texto
+            analysis_content = f"""
+    ANÁLISIS IA DEL HYPE CYCLE
+    Categoría: {category_name}
+    Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+    Modelo: {result['metadata']['model_used']}
+    Tecnologías analizadas: {result['metadata']['technologies_analyzed']}
+
+    {'-'*50}
+
+    {result['analysis']}
+
+    {'-'*50}
+
+    Métricas del análisis:
+    - Tokens utilizados: {result['usage']['total_tokens']:,}
+    - Costo del análisis: ${result['cost']['total']:.4f}
+    - Tiempo de procesamiento: {result['metadata']['processing_time']}s
+    """
+            
+            st.download_button(
+                label="📥 Descargar como .txt",
+                data=analysis_content,
+                file_name=f"hype_analysis_{category_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                key=f"{self._state_key_base}_download_txt"
+            )
+            
+            st.success("✅ Archivo preparado para descarga")
+            
+        except Exception as e:
+            st.error(f"Error preparando descarga: {str(e)}")
+
+    def _save_ai_analysis_to_history(self, result: Dict, category_name: str):
+        """Guarda el análisis IA en el historial local"""
+        try:
+            # Crear entrada de historial
+            history_entry = {
+                "category_name": category_name,
+                "analysis_text": result["analysis"],
+                "timestamp": datetime.now().isoformat(),
+                "analysis_depth": result["metadata"]["analysis_depth"],
+                "model_used": result["metadata"]["model_used"],
+                "technologies_analyzed": result["metadata"]["technologies_analyzed"],
+                "cost": result["cost"]["total"],
+                "total_tokens": result["usage"]["total_tokens"]
+            }
+            
+            # Guardar en session_state
+            timestamp_key = datetime.now().strftime("%Y%m%d_%H%M%S")
+            history_key = f"{self._state_key_base}_saved_analysis_{timestamp_key}"
+            
+            st.session_state[history_key] = history_entry
+            
+            st.success("💾 Análisis guardado en historial local")
+            
+        except Exception as e:
+            st.error(f"Error guardando en historial: {str(e)}")
