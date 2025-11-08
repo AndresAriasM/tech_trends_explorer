@@ -631,8 +631,7 @@ class NewsAnalyzer:
 
     def _search_complex_query(self, serp_api_key, query, start_year, current_year):
         """
-        ESTRATEGIA DIRECTA: Para consultas complejas (múltiples términos/operadores)
-        Usa rangos predefinidos con pocas llamadas por rango
+        ESTRATEGIA DIRECTA - CORREGIDA REALMENTE
         """
         base_params = {
             "api_key": serp_api_key,
@@ -649,12 +648,11 @@ class NewsAnalyzer:
         
         print(f"\n🎯 Usando ESTRATEGIA DIRECTA para consulta compleja...")
         
-        # Rangos predefinidos más amplios (menos llamadas)
         date_ranges = [
-            (start_year, start_year + 2),      # Primeros 3 años
-            (start_year + 3, start_year + 5),  # Siguientes 3 años
-            (start_year + 6, start_year + 8),  # Siguientes 3 años
-            (start_year + 9, current_year)     # Últimos años
+            (start_year, start_year + 2),
+            (start_year + 3, start_year + 5),
+            (start_year + 6, start_year + 8),
+            (start_year + 9, current_year)
         ]
         
         print(f"  📅 Configurados {len(date_ranges)} rangos amplios")
@@ -662,14 +660,19 @@ class NewsAnalyzer:
         for range_idx, (start_date, end_date) in enumerate(date_ranges):
             start = 0
             calls_in_range = 0
+            total_in_range = 0
+            previous_results_count = None
+            no_new_results_count = 0  # Contador de llamadas sin nuevos resultados
             
             print(f"\n  📅 Rango {range_idx + 1}/{len(date_ranges)}: {start_date}-{end_date}")
             
-            # Máximo 3 llamadas por rango para consultas complejas
-            while start < 300 and calls_in_range < 3:
+            # Máximo 10 llamadas por rango
+            while calls_in_range < 10:
                 try:
                     date_query = f"{query} after:{start_date}-01-01 before:{end_date}-12-31"
                     params = {**base_params, "q": date_query, "start": start}
+                    
+                    print(f"    🔄 Intento {calls_in_range + 1}: start={start}")
                     
                     response = requests.get(self.SERP_API_BASE_URL, params=params)
                     response.raise_for_status()
@@ -682,30 +685,58 @@ class NewsAnalyzer:
                         results = data["news_results"]
                         batch_size = len(results)
                         
-                        print(f"    🔗 Llamada {calls_in_range}: {batch_size} resultados")
+                        print(f"    ✅ Recibidos {batch_size} resultados")
                         
+                        # Procesar resultados
                         for item in results:
                             if self._is_valid_result(item):
                                 processed = self._process_news_item(item)
                                 if processed:
                                     all_results.append(processed)
                         
-                        if batch_size < 100:
-                            print(f"    ✅ Fin de rango (última página)")
-                            break
+                        total_in_range += batch_size
+                        
+                        # ✅ LÓGICA MEJORADA: Si recibió resultados, intenta siguiente página
+                        if batch_size > 0:
+                            no_new_results_count = 0  # Reset el contador
+                            start += batch_size  # Ir a próxima página
+                            time.sleep(0.3)
                         else:
-                            start += batch_size
-                            time.sleep(0.2)
+                            # Sin resultados en esta página
+                            print(f"    ⚠️ Sin resultados en start={start}")
+                            no_new_results_count += 1
+                            
+                            if no_new_results_count >= 2:
+                                print(f"    🛑 Sin resultados en últimas 2 llamadas - BREAK")
+                                break
+                            
+                            # Intenta siguiente página de todas formas
+                            start += 100
                             
                     else:
-                        print(f"    ❌ Sin resultados")
-                        break
+                        # No hay news_results en la respuesta
+                        print(f"    ❌ Sin resultados en esta página")
+                        no_new_results_count += 1
+                        
+                        if no_new_results_count >= 2:
+                            print(f"    🛑 API sin resultados - BREAK")
+                            break
+                        
+                        start += 100
                         
                 except Exception as e:
                     print(f"    ⚠️ Error: {str(e)}")
-                    break
+                    no_new_results_count += 1
+                    
+                    if no_new_results_count >= 2:
+                        break
+                    
+                    time.sleep(1)
+                    start += 100
+            
+            print(f"    📊 Total en rango: {total_in_range} resultados en {calls_in_range} llamadas")
         
-        # Procesar y retornar resultados
+        # Eliminar duplicados
         unique_results = self._remove_duplicates(all_results)
         
         print(f"\n✅ ESTRATEGIA DIRECTA COMPLETADA:")
