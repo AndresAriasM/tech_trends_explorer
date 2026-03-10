@@ -1,26 +1,193 @@
 @import "tailwindcss";
 
+/* ── Design tokens ────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --sidebar-w: 248px;
+  --header-h: 52px;
+
+  /* Surface scale */
+  --s0: #07090f;
+  --s1: #0c0f1a;
+  --s2: #131929;
+  --s3: #1a2236;
+  --s4: #222d42;
+  --border: rgba(255,255,255,0.055);
+
+  /* Accent blue */
+  --accent:       #3b7cff;
+  --accent-hover: #5490ff;
+  --accent-glow:  rgba(59,124,255,0.22);
+  --accent-sub:   rgba(59,124,255,0.07);
+
+  /* Text */
+  --t1: #eef2ff;
+  --t2: #8b96af;
+  --t3: #4a5568;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { color-scheme: dark; scroll-behavior: smooth; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--s0);
+  color: var(--t1);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--s4); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #2e3d58; }
+
+/* ── Gradient text ────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #3b7cff 0%, #7c5cff 60%, #3bdbff 100%);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: grad 5s ease infinite;
+}
+@keyframes grad {
+  0%,100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+/* ── Glass surface ────────────────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.028);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+}
+
+/* ── Pulse dot ────────────────────────────────────────────── */
+.pulse {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34,197,94,0.4);
+  animation: pulse 2.2s infinite;
+}
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(34,197,94,0.5); }
+  60%  { box-shadow: 0 0 0 7px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0   rgba(34,197,94,0); }
+}
+
+/* ── Shimmer skeleton ─────────────────────────────────────── */
+.shimmer {
+  background: linear-gradient(90deg, var(--s3) 25%, var(--s4) 50%, var(--s3) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Fade in ──────────────────────────────────────────────── */
+.fade-in { animation: fadeIn 0.28s ease; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Input ────────────────────────────────────────────────── */
+.inp {
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: var(--t1);
+  transition: border-color .15s, box-shadow .15s;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+}
+.inp::placeholder { color: var(--t3); }
+.inp:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 18px var(--accent-glow);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 0 28px var(--accent-glow);
+  transform: translateY(-1px);
+}
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; transform: none; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--t2);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--s2); color: var(--t1); }
+
+/* ── Badge ────────────────────────────────────────────────── */
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.badge-blue   { background: rgba(59,124,255,.12); color: #3b7cff; border: 1px solid rgba(59,124,255,.2); }
+.badge-green  { background: rgba(34,197,94,.1);   color: #22c55e; border: 1px solid rgba(34,197,94,.2); }
+.badge-yellow { background: rgba(245,158,11,.1);  color: #f59e0b; border: 1px solid rgba(245,158,11,.2); }
+.badge-purple { background: rgba(139,92,246,.1);  color: #a78bfa; border: 1px solid rgba(139,92,246,.2); }
+.badge-gray   { background: rgba(255,255,255,.05); color: var(--t2); border: 1px solid var(--border); }
+
+/* ── Card ─────────────────────────────────────────────────── */
+.card {
+  background: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.card-hover {
+  transition: border-color .2s, box-shadow .2s, transform .2s;
+}
+.card-hover:hover {
+  border-color: rgba(59,124,255,.3);
+  box-shadow: 0 4px 24px rgba(0,0,0,.35), 0 0 0 1px rgba(59,124,255,.08);
+  transform: translateY(-2px);
+}
+
+/* ── Section heading ──────────────────────────────────────── */
+.section-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--t3);
+  padding: 0 10px;
+  margin-bottom: 4px;
 }
