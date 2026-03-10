@@ -1,0 +1,27 @@
+# Backend FastAPI — Tech Trends Explorer
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.0
+pydantic-settings==2.2.1
+python-dotenv==1.0.0
+
+# Task queue
+celery==5.4.0
+redis==5.0.4
+
+# AWS (same as master)
+boto3==1.28.85
+botocore==1.31.85
+
+# Analysis (same as master)
+requests==2.31.0
+vaderSentiment>=3.3.2
+nltk==3.8.1
+scipy==1.11.4
+numpy>=1.21.0
+pandas==2.1.4
+serpapi==0.1.5
+google-api-python-client==2.108.0
+
+# CORS & SSE
+sse-starlette==1.8.2
