@@ -8,38 +8,27 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV = [
+const NAV_GROUPS = [
   {
-    group: "Hype Cycle",
-    icon: TrendingUp,
-    color: "#3b7cff",
+    group: "HYPE CYCLE",
     badge: "Activo",
     badgeClass: "badge-blue",
     items: [
-      { href: "/hype-cycle", label: "Análisis",    icon: Zap },
-      { href: "/history",    label: "Historial",   icon: History },
-      { href: "/categories", label: "Categorías",  icon: FolderOpen },
+      { href: "/hype-cycle", label: "Análisis",   icon: Zap },
+      { href: "/history",    label: "Historial",  icon: History },
+      { href: "/categories", label: "Categorías", icon: FolderOpen },
     ],
+    disabled: false,
   },
   {
-    group: "Curvas S",
-    icon: Activity,
-    color: "#a78bfa",
-    badge: "Pronto",
-    badgeClass: "badge-purple",
+    group: "PRÓXIMAMENTE",
+    badge: null,
+    badgeClass: null,
     items: [
-      { href: "/s-curve", label: "Análisis Scopus", icon: BarChart3 },
+      { href: "/s-curve", label: "Curvas S",       icon: Activity },
+      { href: "/trends",  label: "Búsqueda Web",  icon: Search },
     ],
-  },
-  {
-    group: "Tendencias",
-    icon: Search,
-    color: "#22c55e",
-    badge: "Pronto",
-    badgeClass: "badge-gray",
-    items: [
-      { href: "/trends", label: "Búsqueda web", icon: Search },
-    ],
+    disabled: true,
   },
 ];
 
@@ -53,126 +42,262 @@ export function Sidebar({ collapsed, onToggle }: Props) {
 
   return (
     <aside
-      className="sidebar flex flex-col shrink-0"
-      style={{
-        width: collapsed ? 60 : "var(--sidebar-w)",
-        transition: "width .2s cubic-bezier(.4,0,.2,1)",
-        minHeight: "100vh",
-      }}
+      className="sidebar flex flex-col"
+      style={{ width: collapsed ? 60 : 280 }}
     >
-      {/* Logo */}
+      {/* ── Logo area (64px tall) ── */}
       <div
-        className="flex items-center gap-3 px-3 py-3 shrink-0"
-        style={{ height: "var(--header-h)", borderBottom: "1px solid var(--border)" }}
+        className="flex items-center gap-3 shrink-0 px-4"
+        style={{
+          height: 64,
+          borderBottom: "1px solid var(--border)",
+        }}
       >
+        {/* Icon */}
         <div
-          className="flex items-center justify-center shrink-0 rounded-lg"
+          className="flex items-center justify-center shrink-0 rounded-xl"
           style={{
-            width: 32, height: 32,
-            background: "linear-gradient(135deg,#3b7cff 0%,#7c5cff 100%)",
-            boxShadow: "0 0 14px rgba(59,124,255,.4)",
+            width: 36,
+            height: 36,
+            background: "linear-gradient(135deg, #4f8ef7 0%, #8b5cf6 100%)",
+            boxShadow: "0 0 16px rgba(79,142,247,0.4)",
+            flexShrink: 0,
           }}
         >
-          <TrendingUp className="w-4 h-4 text-white" />
+          <TrendingUp style={{ width: 18, height: 18, color: "#fff" }} />
         </div>
+
+        {/* Wordmark */}
         {!collapsed && (
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold leading-none" style={{ color: "var(--t1)" }}>Tech Trends</p>
-            <p className="text-[10px] mt-0.5" style={{ color: "var(--t3)" }}>Explorer · UPB 2036</p>
+          <div className="flex-1 min-w-0">
+            <p
+              className="font-bold leading-none truncate"
+              style={{ fontSize: 14, color: "var(--text-1)", letterSpacing: "-0.02em" }}
+            >
+              Tech Trends Explorer
+            </p>
+            <p
+              className="mt-0.5 truncate"
+              style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: "0.02em" }}
+            >
+              UPB · 2036
+            </p>
           </div>
         )}
+
+        {/* Collapse toggle */}
         <button
           onClick={onToggle}
-          className="p-1.5 rounded-lg transition-colors hover:bg-white/5 shrink-0"
-          style={{ color: "var(--t3)" }}
-          title={collapsed ? "Expandir" : "Colapsar"}
+          title={collapsed ? "Expandir sidebar" : "Colapsar sidebar"}
+          style={{
+            padding: "7px",
+            borderRadius: 8,
+            color: "var(--text-3)",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            flexShrink: 0,
+            transition: "background 0.15s, color 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+            e.currentTarget.style.color = "var(--text-2)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--text-3)";
+          }}
         >
-          <PanelLeft className="w-3.5 h-3.5" />
+          <PanelLeft style={{ width: 15, height: 15 }} />
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 py-3 overflow-y-auto overflow-x-hidden space-y-1">
-        {NAV.map((group, gi) => {
-          const GroupIcon = group.icon;
-          const isDisabledGroup = group.badge === "Pronto";
-
-          return (
-            <div key={group.group}>
-              {/* Group label */}
-              {!collapsed ? (
-                <div className="flex items-center gap-2 px-4 py-1.5">
-                  <GroupIcon className="w-3.5 h-3.5 shrink-0" style={{ color: group.color }} />
-                  <span className="section-label flex-1 m-0 p-0">{group.group}</span>
-                  <span className={cn("badge", group.badgeClass)}>{group.badge}</span>
-                </div>
-              ) : (
-                gi > 0 && (
-                  <div className="my-2 mx-3" style={{ height: 1, background: "var(--border)" }} />
-                )
-              )}
-
-              {/* Items */}
-              <div className={cn("space-y-0.5", collapsed ? "px-1.5" : "px-2")}>
-                {group.items.map(({ href, label, icon: Icon }) => {
-                  const active = pathname === href || (href !== "/" && pathname.startsWith(href));
-                  return (
-                    <Link
-                      key={href}
-                      href={isDisabledGroup ? "#" : href}
-                      title={collapsed ? label : undefined}
-                      onClick={(e) => isDisabledGroup && e.preventDefault()}
-                      className={cn(
-                        "flex items-center gap-2.5 py-2 rounded-lg text-[13px] font-medium transition-all duration-150",
-                        collapsed ? "justify-center px-0" : "px-3",
-                        active ? "text-blue-400" : "text-[color:var(--t2)] hover:text-[color:var(--t1)]",
-                        isDisabledGroup && "opacity-35 cursor-not-allowed pointer-events-none",
-                      )}
-                      style={{
-                        background: active ? "var(--accent-sub)" : "transparent",
-                        border: `1px solid ${active ? "rgba(59,124,255,.18)" : "transparent"}`,
-                      }}
-                    >
-                      <Icon
-                        className="w-3.5 h-3.5 shrink-0"
-                        style={{ color: active ? "var(--accent)" : undefined }}
-                      />
-                      {!collapsed && (
-                        <>
-                          <span className="flex-1">{label}</span>
-                          {active && <ChevronRight className="w-3 h-3 opacity-40" />}
-                        </>
-                      )}
-                    </Link>
-                  );
-                })}
+      {/* ── Navigation ── */}
+      <nav
+        className="flex-1 overflow-y-auto overflow-x-hidden"
+        style={{ padding: "16px 0" }}
+      >
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={group.group} style={{ marginBottom: gi === 0 ? 24 : 0 }}>
+            {/* Group label */}
+            {!collapsed ? (
+              <div
+                className="flex items-center gap-2 px-5 mb-1"
+                style={{ marginBottom: 6 }}
+              >
+                <span className="label-sm" style={{ color: "var(--text-3)" }}>
+                  {group.group}
+                </span>
+                {group.badge && (
+                  <span className={cn("badge", group.badgeClass ?? "")}>
+                    {group.badge}
+                  </span>
+                )}
               </div>
+            ) : (
+              gi > 0 && (
+                <div
+                  style={{
+                    height: 1,
+                    background: "var(--border)",
+                    margin: "12px 12px",
+                  }}
+                />
+              )
+            )}
+
+            {/* Items */}
+            <div style={{ padding: "0 8px" }}>
+              {group.items.map(({ href, label, icon: Icon }) => {
+                const active = pathname === href || (href !== "/" && pathname.startsWith(href));
+
+                return (
+                  <Link
+                    key={href}
+                    href={group.disabled ? "#" : href}
+                    title={collapsed ? label : undefined}
+                    onClick={(e) => group.disabled && e.preventDefault()}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl transition-all duration-150",
+                      collapsed ? "justify-center px-0" : "px-3",
+                      group.disabled && "pointer-events-none",
+                    )}
+                    style={{
+                      height: 44,
+                      fontSize: 14,
+                      fontWeight: active ? 600 : 500,
+                      color: active
+                        ? "var(--accent)"
+                        : group.disabled
+                        ? "var(--text-4)"
+                        : "var(--text-2)",
+                      background: active
+                        ? "rgba(79,142,247,0.10)"
+                        : "transparent",
+                      borderLeft: active && !collapsed
+                        ? "2px solid var(--accent)"
+                        : "2px solid transparent",
+                      marginBottom: 2,
+                      textDecoration: "none",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!active && !group.disabled) {
+                        e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                        e.currentTarget.style.color = "var(--text-1)";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!active && !group.disabled) {
+                        e.currentTarget.style.background = "transparent";
+                        e.currentTarget.style.color = group.disabled
+                          ? "var(--text-4)"
+                          : "var(--text-2)";
+                      }
+                    }}
+                  >
+                    <Icon
+                      style={{
+                        width: 16,
+                        height: 16,
+                        flexShrink: 0,
+                        color: active ? "var(--accent)" : "inherit",
+                      }}
+                    />
+                    {!collapsed && (
+                      <>
+                        <span style={{ flex: 1 }}>{label}</span>
+                        {active && (
+                          <ChevronRight
+                            style={{ width: 13, height: 13, opacity: 0.5 }}
+                          />
+                        )}
+                      </>
+                    )}
+                  </Link>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </nav>
 
-      {/* User stub — auth-ready */}
-      <div className="px-2 py-2 shrink-0" style={{ borderTop: "1px solid var(--border)" }}>
+      {/* ── User area (72px) ── */}
+      <div
+        className="shrink-0"
+        style={{
+          borderTop: "1px solid var(--border)",
+          padding: "12px 8px",
+          height: 72,
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
         <div
           className={cn(
-            "flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors hover:bg-white/5",
-            collapsed && "justify-center",
+            "flex items-center gap-3 rounded-xl cursor-pointer w-full",
+            collapsed ? "justify-center" : "px-3",
           )}
+          style={{
+            height: 48,
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
         >
+          {/* Avatar */}
           <div
-            className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-[11px] font-bold"
-            style={{ background: "linear-gradient(135deg,#3b7cff,#7c5cff)", color: "#fff" }}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #4f8ef7 0%, #8b5cf6 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 13,
+              fontWeight: 700,
+              color: "#fff",
+              flexShrink: 0,
+            }}
           >
             A
           </div>
+
           {!collapsed && (
             <>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold truncate" style={{ color: "var(--t1)" }}>Andrés Arias</p>
-                <p className="text-[10px] truncate" style={{ color: "var(--t3)" }}>UPB · Data Scientist</p>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  className="truncate"
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--text-1)",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  Andrés Arias
+                </p>
+                <p
+                  className="truncate"
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-3)",
+                    marginTop: 2,
+                  }}
+                >
+                  Data Scientist · UPB
+                </p>
               </div>
-              <div className="pulse shrink-0" title="Conectado" />
+              {/* Online dot */}
+              <div
+                className="pulse-dot shrink-0"
+                title="En línea"
+              />
             </>
           )}
         </div>
