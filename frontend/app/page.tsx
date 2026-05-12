@@ -230,13 +230,15 @@ export default function DashboardPage() {
 
             {/* Headline */}
             <h1
+              className="heading-glow"
               style={{
-                fontSize: "clamp(36px, 4vw, 52px)",
+                fontSize: "clamp(38px, 4.5vw, 56px)",
                 fontWeight: 800,
-                letterSpacing: "-0.03em",
-                lineHeight: 1.1,
+                letterSpacing: "-0.04em",
+                lineHeight: 1.08,
                 color: "var(--text-1)",
-                marginBottom: 20,
+                marginBottom: 22,
+                fontFeatureSettings: '"cv02", "cv03", "cv11"',
               }}
             >
               Tech Trends{" "}
@@ -246,11 +248,12 @@ export default function DashboardPage() {
             {/* Subtitle */}
             <p
               style={{
-                fontSize: 17,
-                lineHeight: 1.7,
+                fontSize: 16,
+                lineHeight: 1.75,
                 color: "var(--text-2)",
-                maxWidth: 480,
-                marginBottom: 36,
+                maxWidth: 460,
+                marginBottom: 38,
+                fontWeight: 400,
               }}
             >
               Plataforma de análisis basada en el{" "}
@@ -364,26 +367,12 @@ export default function DashboardPage() {
 
               <div>
                 <p
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    color: "var(--text-3)",
-                    marginBottom: 4,
-                  }}
+                  className="label-sm"
+                  style={{ marginBottom: 6 }}
                 >
                   {stat.label}
                 </p>
-                <p
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 800,
-                    letterSpacing: "-0.03em",
-                    color: "var(--text-1)",
-                    lineHeight: 1,
-                  }}
-                >
+                <p className="stat-num">
                   {stat.value}
                 </p>
               </div>
@@ -624,11 +613,13 @@ function ModuleCard({
       {/* Title */}
       <h3
         style={{
-          fontSize: 18,
+          fontSize: 19,
           fontWeight: 700,
-          letterSpacing: "-0.02em",
+          letterSpacing: "-0.025em",
           color: "var(--text-1)",
           marginBottom: 10,
+          fontFeatureSettings: '"cv02", "cv11"',
+          lineHeight: 1.2,
         }}
       >
         {title}
@@ -638,7 +629,7 @@ function ModuleCard({
       <p
         style={{
           fontSize: 14,
-          lineHeight: 1.65,
+          lineHeight: 1.7,
           color: "var(--text-2)",
           flex: 1,
           marginBottom: 20,

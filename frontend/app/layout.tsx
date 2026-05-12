@@ -4,7 +4,12 @@ import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { Providers } from "./providers";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: { default: "Tech Trends Explorer", template: "%s · TTE" },

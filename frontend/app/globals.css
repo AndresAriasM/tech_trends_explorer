@@ -86,6 +86,8 @@ body {
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-variant-numeric: tabular-nums;
   overflow-x: hidden;
 }
 
@@ -159,17 +161,18 @@ body {
    UTILITY — GRADIENT TEXT
 ════════════════════════════════════════════════════════════ */
 .gradient-text {
-  background: linear-gradient(135deg, #4f8ef7 0%, #8b5cf6 55%, #38bdf8 100%);
-  background-size: 200% 200%;
+  background: linear-gradient(120deg, #60a5fa 0%, #818cf8 40%, #c084fc 75%, #38bdf8 100%);
+  background-size: 240% 240%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  animation: grad 6s ease infinite;
+  animation: grad 7s ease infinite;
 }
 
 @keyframes grad {
-  0%, 100% { background-position: 0% 50%; }
-  50%       { background-position: 100% 50%; }
+  0%   { background-position: 0%   50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0%   50%; }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -225,31 +228,66 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 1.4s linear infinite;
+}
+
 /* ════════════════════════════════════════════════════════════
    UTILITY — SECTION TITLE / LABEL
 ════════════════════════════════════════════════════════════ */
 .section-title {
   font-size: var(--text-2xl);
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.035em;
   color: var(--text-1);
-  line-height: 1.2;
+  line-height: 1.15;
+  font-feature-settings: "cv02", "cv03", "cv11";
+}
+
+.page-title {
+  font-size: var(--text-3xl);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text-1);
+  line-height: 1.1;
+  font-feature-settings: "cv02", "cv03", "cv11";
 }
 
 .section-label {
-  font-size: var(--text-xs);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--text-3);
 }
 
 .label-sm {
-  font-size: var(--text-xs);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* Monospace numerics — for metric values */
+.metric-value {
+  font-size: var(--text-3xl);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+
+/* Subtle text glow for hero headings */
+.heading-glow {
+  text-shadow:
+    0 0 80px rgba(79, 142, 247, 0.20),
+    0 0 160px rgba(139, 92, 246, 0.10);
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -350,8 +388,39 @@ body {
 ════════════════════════════════════════════════════════════ */
 .mesh-bg {
   background:
-    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(79, 142, 247, 0.10) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 80% at 80% 10%, rgba(139, 92, 246, 0.07) 0%, transparent 60%),
-    radial-gradient(ellipse 40% 40% at 50% 100%, rgba(56, 189, 248, 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 90% 60% at 15% -5%,  rgba(79, 142, 247, 0.13) 0%, transparent 55%),
+    radial-gradient(ellipse 65% 70% at 85%  10%, rgba(139, 92, 246, 0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 45% 45% at 50%  110%, rgba(56, 189, 248, 0.06) 0%, transparent 55%),
     var(--bg);
+}
+
+/* ════════════════════════════════════════════════════════════
+   DIVIDER
+════════════════════════════════════════════════════════════ */
+.divider {
+  height: 1px;
+  background: var(--border);
+}
+
+/* ════════════════════════════════════════════════════════════
+   STAT NUMBER — large bold figure in cards
+════════════════════════════════════════════════════════════ */
+.stat-num {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+
+/* ════════════════════════════════════════════════════════════
+   HOVER LIFT — lightweight alternative to card-hover
+════════════════════════════════════════════════════════════ */
+.hover-lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
 }

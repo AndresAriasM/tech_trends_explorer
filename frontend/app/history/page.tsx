@@ -1,19 +1,54 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Clock, TrendingUp } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+  Search,
+  Clock,
+  TrendingUp,
+  FolderOpen,
+  Check,
+  X as XIcon,
+} from "lucide-react";
 import { getHypeCycleHistory, getCategories } from "@/lib/api";
 import { HypeCycleChart } from "@/components/charts/HypeCycleChart";
 import { MentionsTimelineChart } from "@/components/charts/MentionsTimelineChart";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { useAnalysisStore } from "@/store/analysisStore";
-import type { HypeCycleQuery } from "@/types";
+import type { HypeCycleQuery, HypePhase } from "@/types";
 
-export default function HistoryPage() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+const PHASE_COLORS: Record<HypePhase, string> = {
+  "Innovation Trigger": "#60a5fa",
+  "Peak of Inflated Expectations": "#f59e0b",
+  "Trough of Disillusionment": "#ef4444",
+  "Slope of Enlightenment": "#34d399",
+  "Plateau of Productivity": "#818cf8",
+  Unknown: "#9ca3af",
+};
+
+const PHASE_SHORT: Record<HypePhase, string> = {
+  "Innovation Trigger": "Lanzamiento",
+  "Peak of Inflated Expectations": "Pico de expectativas",
+  "Trough of Disillusionment": "Valle de desilusión",
+  "Slope of Enlightenment": "Rampa de consolidación",
+  "Plateau of Productivity": "Meseta de productividad",
+  Unknown: "Desconocida",
+};
+
+function HistoryPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedId = searchParams.get("id");
+  const preselectedCategory = searchParams.get("category");
+
+  const [selectedId, setSelectedId] = useState<string | null>(preselectedId);
+  const [categoryFilter, setCategoryFilter] = useState<string>(
+    preselectedCategory ?? "all"
+  );
   const [search, setSearch] = useState("");
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
 
   const { data: categories } = useQuery({
     queryKey: ["categories"],
@@ -35,37 +70,86 @@ export default function HistoryPage() {
       q.search_query.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Auto-select first result if preselectedId is set but not yet in view
+  useEffect(() => {
+    if (preselectedId && !selectedId) setSelectedId(preselectedId);
+  }, [preselectedId, selectedId]);
+
   const selected = filtered.find((q) => q.query_id === selectedId) ?? null;
 
+  function toggleMulti(id: string) {
+    setMultiSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearMulti() {
+    setMultiSelected(new Set());
+  }
+
+  function compareSelected() {
+    const ids = Array.from(multiSelected).join(",");
+    const base = categoryFilter !== "all" ? `category=${categoryFilter}&` : "";
+    router.push(`/hype-cycle/compare?${base}ids=${ids}`);
+  }
+
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Historial de análisis</h1>
-        <p className="text-gray-400 text-sm mt-1">
-          Consultas guardadas en DynamoDB. Reutiliza un análisis para ahorrar créditos de API.
+    <div style={{ padding: "32px 48px", maxWidth: 1400, margin: "0 auto" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h1
+          className="heading-glow"
+          style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 6 }}
+        >
+          Historial de análisis
+        </h1>
+        <p style={{ fontSize: 14, color: "var(--text-2)", maxWidth: 720 }}>
+          Consultas guardadas en DynamoDB. Selecciona múltiples para compararlas
+          en un solo Hype Cycle.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left — list */}
-        <div className="lg:col-span-1 space-y-3">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(320px, 380px) 1fr",
+          gap: 24,
+          alignItems: "flex-start",
+        }}
+      >
+        {/* ── Left column — list ────────────────────────────────── */}
+        <div>
           {/* Filters */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+            <div style={{ position: "relative", marginBottom: 10 }}>
+              <Search
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 14,
+                  height: 14,
+                  color: "var(--text-3)",
+                }}
+              />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar tecnología..."
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                placeholder="Buscar por nombre o query…"
+                className="inp"
+                style={{ width: "100%", paddingLeft: 34 }}
               />
             </div>
-
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+              className="inp"
+              style={{ width: "100%", cursor: "pointer" }}
             >
               <option value="all">Todas las categorías</option>
               {categories?.map((c) => (
@@ -76,42 +160,173 @@ export default function HistoryPage() {
             </select>
           </div>
 
+          {/* Quick action: view category on Hype Cycle */}
+          {categoryFilter !== "all" && filtered.length > 0 && (
+            <Link
+              href={`/hype-cycle/compare?category=${categoryFilter}`}
+              className="btn btn-primary"
+              style={{
+                width: "100%",
+                justifyContent: "center",
+                marginBottom: 12,
+                fontSize: 12.5,
+              }}
+            >
+              <TrendingUp style={{ width: 13, height: 13 }} />
+              Graficar categoría completa
+            </Link>
+          )}
+
           {/* Query list */}
-          <div className="space-y-2">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {isLoading && (
-              <p className="text-sm text-gray-500 text-center py-8">Cargando...</p>
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "var(--text-3)",
+                  textAlign: "center",
+                  padding: 32,
+                }}
+              >
+                Cargando…
+              </p>
             )}
             {!isLoading && filtered.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-8">
-                No hay análisis guardados.
-              </p>
+              <div className="card" style={{ padding: 40, textAlign: "center" }}>
+                <FolderOpen
+                  style={{
+                    width: 28,
+                    height: 28,
+                    color: "var(--text-4)",
+                    margin: "0 auto 10px",
+                  }}
+                />
+                <p style={{ fontSize: 13, color: "var(--text-3)" }}>
+                  No hay análisis guardados.
+                </p>
+              </div>
             )}
             {filtered.map((q) => (
               <QueryCard
                 key={q.query_id}
                 query={q}
                 isActive={q.query_id === selectedId}
+                isChecked={multiSelected.has(q.query_id)}
                 onClick={() => {
                   setSelectedId(q.query_id);
                   setSelectedQuery(q);
                 }}
+                onToggleCheck={() => toggleMulti(q.query_id)}
               />
             ))}
           </div>
         </div>
 
-        {/* Right — detail */}
-        <div className="lg:col-span-2">
+        {/* ── Right column — detail ─────────────────────────────── */}
+        <div>
           {selected ? (
             <QueryDetail query={selected} />
           ) : (
-            <div className="bg-gray-900 border border-dashed border-gray-700 rounded-xl p-12 flex items-center justify-center h-full">
-              <p className="text-gray-600 text-sm">Selecciona un análisis de la lista</p>
+            <div
+              className="card"
+              style={{
+                padding: 60,
+                textAlign: "center",
+                borderStyle: "dashed",
+                minHeight: 300,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <TrendingUp
+                style={{ width: 32, height: 32, color: "var(--text-4)", marginBottom: 12 }}
+              />
+              <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 4 }}>
+                Selecciona un análisis para ver el detalle
+              </p>
+              <p style={{ fontSize: 12, color: "var(--text-3)" }}>
+                O marca varios con la casilla para compararlos en un solo Hype
+                Cycle.
+              </p>
             </div>
           )}
         </div>
       </div>
+
+      {/* ── Floating multi-select action bar ─────────────────────── */}
+      {multiSelected.size > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 40,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 14px 10px 18px",
+            background: "rgba(10, 15, 24, 0.95)",
+            backdropFilter: "blur(10px)",
+            border: "1px solid var(--accent-border)",
+            boxShadow: "0 0 32px var(--accent-glow), 0 8px 32px rgba(0,0,0,0.5)",
+            borderRadius: 999,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 13,
+              color: "var(--text-1)",
+              fontWeight: 600,
+            }}
+          >
+            {multiSelected.size} {multiSelected.size === 1 ? "seleccionada" : "seleccionadas"}
+          </span>
+          <button
+            className="btn btn-primary"
+            onClick={compareSelected}
+            disabled={multiSelected.size < 2}
+            style={{ fontSize: 12.5 }}
+            title={
+              multiSelected.size < 2
+                ? "Selecciona al menos 2 para comparar"
+                : "Comparar en Hype Cycle"
+            }
+          >
+            <TrendingUp style={{ width: 13, height: 13 }} />
+            Comparar
+          </button>
+          <button
+            onClick={clearMulti}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--text-3)",
+              cursor: "pointer",
+              padding: 6,
+              borderRadius: 999,
+              display: "flex",
+              transition: "color 0.15s",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-1)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-3)")}
+            aria-label="Limpiar selección"
+          >
+            <XIcon style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 48, color: "var(--text-3)" }}>Cargando…</div>}>
+      <HistoryPageInner />
+    </Suspense>
   );
 }
 
@@ -120,43 +335,128 @@ export default function HistoryPage() {
 function QueryCard({
   query,
   isActive,
+  isChecked,
   onClick,
+  onToggleCheck,
 }: {
   query: HypeCycleQuery;
   isActive: boolean;
+  isChecked: boolean;
   onClick: () => void;
+  onToggleCheck: () => void;
 }) {
   const date = new Date(query.execution_date).toLocaleDateString("es-CO", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
+  const phase = query.hype_metrics.phase;
 
   return (
-    <button
+    <div
+      className="card"
+      style={{
+        padding: 14,
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+        cursor: "pointer",
+        borderColor: isActive ? "var(--accent-border)" : "var(--border)",
+        background: isActive ? "var(--accent-sub)" : undefined,
+        transition: "all 0.15s",
+      }}
       onClick={onClick}
-      className={`w-full text-left bg-gray-900 border rounded-xl p-4 transition-colors ${
-        isActive
-          ? "border-blue-500 bg-blue-500/5"
-          : "border-gray-800 hover:border-gray-700"
-      }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="font-medium text-white text-sm truncate">
-            {query.technology_name || query.search_query.slice(0, 30)}
-          </p>
-          <p className="text-xs text-gray-500 truncate mt-0.5">
-            {query.hype_metrics.phase}
-          </p>
+      {/* Checkbox */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleCheck();
+        }}
+        aria-label={isChecked ? "Deseleccionar" : "Seleccionar"}
+        style={{
+          width: 18,
+          height: 18,
+          flexShrink: 0,
+          marginTop: 2,
+          borderRadius: 4,
+          border: isChecked ? "none" : "1.5px solid var(--border-2)",
+          background: isChecked ? "var(--accent)" : "transparent",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          padding: 0,
+          transition: "all 0.15s",
+        }}
+      >
+        {isChecked && <Check style={{ width: 11, height: 11, color: "#fff" }} strokeWidth={3} />}
+      </button>
+
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--text-1)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={query.technology_name || query.search_query}
+        >
+          {query.technology_name || query.search_query.slice(0, 36)}
+        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: 4,
+            fontSize: 11,
+            color: "var(--text-3)",
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: PHASE_COLORS[phase],
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: "var(--text-2)",
+            }}
+          >
+            {PHASE_SHORT[phase]}
+          </span>
         </div>
-        <TrendingUp className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginTop: 6,
+            fontSize: 10.5,
+            color: "var(--text-3)",
+          }}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+            <Clock style={{ width: 10, height: 10 }} />
+            {date}
+          </span>
+          <span>· {query.hype_metrics.total_mentions} menciones</span>
+          <span>· {(query.hype_metrics.confidence * 100).toFixed(0)}%</span>
+        </div>
       </div>
-      <div className="flex items-center gap-1 mt-2 text-xs text-gray-600">
-        <Clock className="w-3 h-3" />
-        {date}
-      </div>
-    </button>
+    </div>
   );
 }
 
@@ -166,31 +466,109 @@ function QueryDetail({ query }: { query: HypeCycleQuery }) {
   const m = query.hype_metrics;
 
   return (
-    <div className="space-y-5">
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-white">
+      <div className="card" style={{ padding: 22 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <h2
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: "var(--text-1)",
+                letterSpacing: "-0.01em",
+              }}
+            >
               {query.technology_name || "Sin nombre"}
             </h2>
-            <p className="text-sm text-gray-400 mt-1">{m.phase}</p>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 8,
+                fontSize: 13,
+                color: "var(--text-2)",
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: PHASE_COLORS[m.phase],
+                }}
+              />
+              {PHASE_SHORT[m.phase]}
+            </div>
             {query.technology_description && (
-              <p className="text-xs text-gray-500 mt-2 max-w-lg">
+              <p
+                style={{
+                  fontSize: 12.5,
+                  color: "var(--text-3)",
+                  marginTop: 12,
+                  maxWidth: 560,
+                  lineHeight: 1.5,
+                }}
+              >
                 {query.technology_description}
               </p>
             )}
           </div>
-          <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full px-3 py-1">
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--accent)",
+              background: "var(--accent-sub)",
+              border: "1px solid var(--accent-border)",
+              borderRadius: 999,
+              padding: "4px 10px",
+              whiteSpace: "nowrap",
+            }}
+          >
             {(m.confidence * 100).toFixed(0)}% confianza
           </span>
         </div>
-        <p className="text-xs text-gray-600 mt-3 font-mono">{query.search_query}</p>
+        <p
+          style={{
+            fontSize: 11,
+            color: "var(--text-3)",
+            marginTop: 14,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            background: "rgba(255,255,255,0.02)",
+            padding: "6px 10px",
+            borderRadius: 6,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={query.search_query}
+        >
+          {query.search_query}
+        </p>
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Menciones" value={m.total_mentions.toLocaleString()} color="blue" />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <MetricCard
+          label="Menciones"
+          value={m.total_mentions.toLocaleString()}
+          color="blue"
+        />
         <MetricCard
           label="Pico"
           value={m.peak_mentions.toLocaleString()}
@@ -206,19 +584,37 @@ function QueryDetail({ query }: { query: HypeCycleQuery }) {
       </div>
 
       {/* Hype Cycle chart */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">
+      <div className="card" style={{ padding: 22 }}>
+        <p
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: "var(--text-3)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            marginBottom: 12,
+          }}
+        >
           Posición en el Hype Cycle
-        </h3>
+        </p>
         <HypeCycleChart queries={[query]} highlightId={query.query_id} />
       </div>
 
       {/* Timeline */}
       {query.yearly_stats?.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">
+        <div className="card" style={{ padding: 22 }}>
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--text-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              marginBottom: 12,
+            }}
+          >
             Menciones por año
-          </h3>
+          </p>
           <MentionsTimelineChart
             data={query.yearly_stats}
             technologyName={query.technology_name}

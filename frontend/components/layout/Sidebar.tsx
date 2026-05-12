@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  TrendingUp, History, FolderOpen, BarChart3,
-  Search, ChevronRight, PanelLeft, Zap, Activity,
+  TrendingUp, History, FolderOpen,
+  Search, ChevronRight, PanelLeft, Zap, Activity, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,12 +21,29 @@ const NAV_GROUPS = [
     disabled: false,
   },
   {
+    group: "CURVAS S",
+    badge: "Activo",
+    badgeClass: "badge-blue",
+    items: [
+      { href: "/s-curve", label: "Análisis S", icon: Activity },
+    ],
+    disabled: false,
+  },
+  {
+    group: "PROSPECTIVA",
+    badge: "Nuevo",
+    badgeClass: "badge-blue",
+    items: [
+      { href: "/workshop", label: "Taller LACCEI", icon: Users },
+    ],
+    disabled: false,
+  },
+  {
     group: "PRÓXIMAMENTE",
     badge: null,
     badgeClass: null,
     items: [
-      { href: "/s-curve", label: "Curvas S",       icon: Activity },
-      { href: "/trends",  label: "Búsqueda Web",  icon: Search },
+      { href: "/trends", label: "Búsqueda Web", icon: Search },
     ],
     disabled: true,
   },
@@ -72,13 +89,18 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           <div className="flex-1 min-w-0">
             <p
               className="font-bold leading-none truncate"
-              style={{ fontSize: 14, color: "var(--text-1)", letterSpacing: "-0.02em" }}
+              style={{
+                fontSize: 13.5,
+                color: "var(--text-1)",
+                letterSpacing: "-0.025em",
+                fontFeatureSettings: '"cv02", "cv11"',
+              }}
             >
               Tech Trends Explorer
             </p>
             <p
               className="mt-0.5 truncate"
-              style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: "0.02em" }}
+              style={{ fontSize: 10, color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}
             >
               UPB · 2036
             </p>
@@ -118,7 +140,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
         style={{ padding: "16px 0" }}
       >
         {NAV_GROUPS.map((group, gi) => (
-          <div key={group.group} style={{ marginBottom: gi === 0 ? 24 : 0 }}>
+          <div key={group.group} style={{ marginBottom: gi < NAV_GROUPS.length - 1 ? 20 : 0 }}>
             {/* Group label */}
             {!collapsed ? (
               <div

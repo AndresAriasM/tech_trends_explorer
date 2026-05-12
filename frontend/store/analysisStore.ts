@@ -33,6 +33,7 @@ interface AnalysisStore {
   addTerm: (term: SearchTerm) => void;
   updateTerm: (index: number, term: SearchTerm) => void;
   removeTerm: (index: number) => void;
+  setSearchTerms: (terms: SearchTerm[]) => void;
   setTechnologyName: (v: string) => void;
   setTechnologyDescription: (v: string) => void;
   setCategoryId: (v: string) => void;
@@ -76,6 +77,7 @@ export const useAnalysisStore = create<AnalysisStore>((set) => ({
     set((s) => ({
       searchTerms: s.searchTerms.filter((_, i) => i !== index),
     })),
+  setSearchTerms: (terms) => set({ searchTerms: terms }),
   setTechnologyName: (v) => set({ technologyName: v }),
   setTechnologyDescription: (v) => set({ technologyDescription: v }),
   setCategoryId: (v) => set({ categoryId: v }),

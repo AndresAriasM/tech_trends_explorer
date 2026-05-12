@@ -3,12 +3,15 @@
 import { useEffect, useRef } from "react";
 import {
   Zap, RefreshCw, Save, Sparkles, TrendingUp,
-  BarChart3, Activity, ChevronRight,
+  BarChart3, Activity, ChevronRight, Globe, Hash, Newspaper,
 } from "lucide-react";
 import { QueryBuilder } from "@/components/query-builder/QueryBuilder";
 import { HypeCycleChart } from "@/components/charts/HypeCycleChart";
 import { MentionsTimelineChart } from "@/components/charts/MentionsTimelineChart";
 import { AnalysisProgressBar } from "@/components/ui/AnalysisProgressBar";
+import { GeoMap } from "@/components/charts/GeoMap";
+import { KeywordsChart } from "@/components/charts/KeywordsChart";
+import { NewsResultsList } from "@/components/analysis/NewsResultsList";
 import { useAnalysisStore } from "@/store/analysisStore";
 import { startHypeCycleAnalysis, streamTaskProgress } from "@/lib/api";
 import type { TaskProgress, HypePhase } from "@/types";
@@ -313,11 +316,11 @@ export default function HypeCyclePage() {
     >
 
       {/* ════════════════════════════════════════
-          LEFT PANEL — Configuration (380px)
+          LEFT PANEL — Configuration (420px)
       ════════════════════════════════════════ */}
       <div
         style={{
-          width: 380,
+          width: 420,
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
@@ -701,7 +704,79 @@ export default function HypeCyclePage() {
                 <MentionsTimelineChart
                   data={result!.yearly_stats}
                   technologyName={result!.technology_name}
+                  innovationTriggerYear={m!.innovation_trigger_year}
+                  peakYear={m!.peak_year}
+                  troughYear={m!.trough_year}
                 />
+              </div>
+            )}
+
+            {/* Geographic distribution */}
+            {result!.country_stats && result!.country_stats.length > 0 && (
+              <div className="card" style={{ padding: "24px 28px", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                  <Globe style={{ width: 16, height: 16, color: "var(--accent)" }} />
+                  <p style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--text-1)" }}>
+                    Distribución geográfica
+                  </p>
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)" }}>
+                    {result!.country_stats.length} países
+                  </span>
+                </div>
+                <GeoMap data={result!.country_stats} />
+                {/* Top countries table */}
+                <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {result!.country_stats.slice(0, 8).map((c) => (
+                    <div key={c.country} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "6px 10px", borderRadius: 7, background: "rgba(255,255,255,0.03)",
+                      border: "1px solid var(--border)",
+                    }}>
+                      <span style={{ fontSize: 12, color: "var(--text-2)" }}>{c.country}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          fontSize: 11,
+                          color: c.sentiment_avg >= 0.05 ? "#22c55e" : c.sentiment_avg <= -0.05 ? "#ef4444" : "#f59e0b",
+                        }}>
+                          {c.sentiment_avg >= 0.05 ? "▲" : c.sentiment_avg <= -0.05 ? "▼" : "—"}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>{c.mentions}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top keywords */}
+            {result!.keyword_stats && result!.keyword_stats.length > 0 && (
+              <div className="card" style={{ padding: "24px 28px", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                  <Hash style={{ width: 16, height: 16, color: "var(--accent)" }} />
+                  <p style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--text-1)" }}>
+                    Términos más frecuentes
+                  </p>
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)" }}>
+                    Top {result!.keyword_stats.length}
+                  </span>
+                </div>
+                <KeywordsChart data={result!.keyword_stats} />
+              </div>
+            )}
+
+            {/* News results */}
+            {result!.news_items && result!.news_items.length > 0 && (
+              <div className="card" style={{ padding: "24px 28px", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                  <Newspaper style={{ width: 16, height: 16, color: "var(--accent)" }} />
+                  <p style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--text-1)" }}>
+                    Noticias encontradas
+                  </p>
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)" }}>
+                    {result!.news_items.length} artículos
+                  </span>
+                </div>
+                <NewsResultsList items={result!.news_items} />
               </div>
             )}
 
