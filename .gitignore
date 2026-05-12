@@ -142,3 +142,5 @@ sample_*.json
 *.backup
 
 assets/
+# Encuesta cruda LACCEI 2025 — contiene emails y nombres
+docs/LACCEI_2025/*.xlsx
