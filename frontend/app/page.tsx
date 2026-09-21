@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
-  TrendingUp, ArrowRight, Zap, History, FolderOpen,
+  TrendingUp, ArrowRight, Zap, Compass, FolderOpen,
   Clock, CheckCircle, Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,19 +37,14 @@ function DecorativeHypeCycle() {
   ];
 
   return (
-    <div
-      style={{
-        position: "relative",
-        width: "100%",
-        maxWidth: 400,
-      }}
-    >
+    <div style={{ position: "relative", width: "100%", maxWidth: 400 }}>
       {/* Subtle glow backdrop */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: "radial-gradient(ellipse 70% 50% at 50% 50%, rgba(79,142,247,0.06) 0%, transparent 70%)",
+          background:
+            "radial-gradient(ellipse 70% 50% at 50% 50%, rgba(79,142,247,0.06) 0%, transparent 70%)",
           borderRadius: 24,
           pointerEvents: "none",
         }}
@@ -61,16 +57,11 @@ function DecorativeHypeCycle() {
         style={{ width: "100%", height: "auto", display: "block" }}
       >
         {/* Phase zone shading */}
-        {/* Innovation Trigger zone */}
-        <rect x="10" y="0" width="85" height="200" fill="rgba(96,165,250,0.03)" rx="0" />
-        {/* Peak zone */}
-        <rect x="95" y="0" width="80" height="200" fill="rgba(245,158,11,0.03)" rx="0" />
-        {/* Trough zone */}
-        <rect x="175" y="0" width="55" height="200" fill="rgba(239,68,68,0.03)" rx="0" />
-        {/* Slope zone */}
-        <rect x="230" y="0" width="70" height="200" fill="rgba(52,211,153,0.03)" rx="0" />
-        {/* Plateau zone */}
-        <rect x="300" y="0" width="55" height="200" fill="rgba(167,139,250,0.04)" rx="0" />
+        <rect x="10" y="0" width="85" height="200" fill="rgba(96,165,250,0.03)" />
+        <rect x="95" y="0" width="80" height="200" fill="rgba(245,158,11,0.03)" />
+        <rect x="175" y="0" width="55" height="200" fill="rgba(239,68,68,0.03)" />
+        <rect x="230" y="0" width="70" height="200" fill="rgba(52,211,153,0.03)" />
+        <rect x="300" y="0" width="55" height="200" fill="rgba(167,139,250,0.04)" />
 
         {/* Grid lines */}
         {[40, 80, 120, 160].map((y) => (
@@ -99,11 +90,7 @@ function DecorativeHypeCycle() {
         </text>
 
         {/* Glow under curve */}
-        <path
-          d={curvePath + " L 350,175 L 10,175 Z"}
-          fill="url(#curveGradient)"
-          opacity="0.4"
-        />
+        <path d={curvePath + " L 350,175 L 10,175 Z"} fill="url(#curveGradient)" opacity="0.4" />
 
         {/* Main curve */}
         <path
@@ -115,35 +102,21 @@ function DecorativeHypeCycle() {
         />
 
         {/* Phase labels */}
-        <text x="52" y="190" textAnchor="middle" fill="rgba(96,165,250,0.55)" fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Trigger</text>
-        <text x="135" y="190" textAnchor="middle" fill="rgba(245,158,11,0.55)" fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Peak</text>
-        <text x="202" y="190" textAnchor="middle" fill="rgba(239,68,68,0.55)" fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Trough</text>
-        <text x="265" y="190" textAnchor="middle" fill="rgba(52,211,153,0.55)" fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Slope</text>
+        <text x="52"  y="190" textAnchor="middle" fill="rgba(96,165,250,0.55)"  fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Trigger</text>
+        <text x="135" y="190" textAnchor="middle" fill="rgba(245,158,11,0.55)"  fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Peak</text>
+        <text x="202" y="190" textAnchor="middle" fill="rgba(239,68,68,0.55)"   fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Trough</text>
+        <text x="265" y="190" textAnchor="middle" fill="rgba(52,211,153,0.55)"  fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Slope</text>
         <text x="327" y="190" textAnchor="middle" fill="rgba(167,139,250,0.55)" fontSize="7" fontFamily="Inter,sans-serif" fontWeight="600">Plateau</text>
 
         {/* Technology dots */}
         {dots.map((dot) => (
           <g key={dot.label}>
-            {/* Pulsing halo */}
             <circle cx={dot.cx} cy={dot.cy} r="10" fill={dot.color} opacity="0.10">
-              <animate
-                attributeName="r"
-                values="8;14;8"
-                dur="3s"
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="0.15;0.04;0.15"
-                dur="3s"
-                repeatCount="indefinite"
-              />
+              <animate attributeName="r" values="8;14;8" dur="3s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.15;0.04;0.15" dur="3s" repeatCount="indefinite" />
             </circle>
-            {/* Dot */}
             <circle cx={dot.cx} cy={dot.cy} r="5" fill={dot.color} opacity="0.9" />
             <circle cx={dot.cx} cy={dot.cy} r="2.5" fill="#fff" opacity="0.8" />
-
-            {/* Label */}
             <text
               x={dot.cx}
               y={dot.cy - 12}
@@ -159,7 +132,6 @@ function DecorativeHypeCycle() {
           </g>
         ))}
 
-        {/* Gradient definitions */}
         <defs>
           <linearGradient id="curveStroke" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%"   stopColor="#60a5fa" />
@@ -178,182 +150,189 @@ function DecorativeHypeCycle() {
   );
 }
 
+/* ── Métricas de cabecera ────────────────────────────────── */
+const TILES = [
+  { label: "Análisis guardados", value: "—", icon: Database,   color: "#22c55e" },
+  { label: "Categorías",         value: "—", icon: FolderOpen, color: "var(--accent)" },
+  { label: "Última ejecución",   value: "—", icon: Clock,      color: "#f59e0b" },
+];
+
+const SHELL = { maxWidth: 1180, margin: "0 auto" } as const;
+
 export default function DashboardPage() {
   return (
-    <div className="fade-in" style={{ padding: "0 0 64px" }}>
+    <div className="fade-in" style={{ padding: "0 0 72px" }}>
 
-      {/* ── Hero Section ────────────────────────────────────── */}
+      {/* ── Hero ────────────────────────────────────────────── */}
       <section
         className="mesh-bg"
-        style={{
-          padding: "80px 48px",
-          borderBottom: "1px solid var(--border)",
-        }}
+        style={{ padding: "72px 48px", borderBottom: "1px solid var(--border)" }}
       >
         <div
           style={{
-            maxWidth: 1120,
-            margin: "0 auto",
+            ...SHELL,
             display: "flex",
             alignItems: "center",
-            gap: 64,
+            gap: 48,
+            flexWrap: "wrap",
           }}
         >
-          {/* Left: copy */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Status pill */}
+          {/* Izquierda: identidad + promesa */}
+          <div style={{ flex: "1 1 520px", minWidth: 0 }}>
+            {/* Identidad del producto */}
             <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "5px 12px",
-                borderRadius: 99,
-                background: "rgba(79,142,247,0.08)",
-                border: "1px solid rgba(79,142,247,0.20)",
-                marginBottom: 28,
-              }}
+              className="flex items-center"
+              style={{ gap: 12, marginBottom: 26 }}
             >
-              <div className="pulse-dot" style={{ width: 6, height: 6 }} />
               <span
                 style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--accent)",
-                  letterSpacing: "0.03em",
+                  width: 42,
+                  height: 42,
+                  borderRadius: 12,
+                  background:
+                    "linear-gradient(135deg, rgba(79,142,247,0.22) 0%, rgba(139,92,246,0.22) 100%)",
+                  border: "1px solid rgba(139,92,246,0.28)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
                 }}
               >
-                Sistema activo — UPB
+                <Image
+                  src="/prospecta-mark.png"
+                  alt=""
+                  width={26}
+                  height={26}
+                  priority
+                  style={{ width: 26, height: 26, objectFit: "contain" }}
+                />
               </span>
+              <div>
+                <p
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: "var(--text-1)",
+                    letterSpacing: "-0.02em",
+                    lineHeight: 1.1,
+                  }}
+                >
+                  Prospecta
+                </p>
+                <p
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 600,
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                    color: "var(--text-3)",
+                    marginTop: 4,
+                    lineHeight: 1,
+                  }}
+                >
+                  Portal de prospectiva · UPB
+                </p>
+              </div>
             </div>
 
-            {/* Headline */}
+            {/* Titular */}
             <h1
               className="heading-glow"
               style={{
-                fontSize: "clamp(38px, 4.5vw, 56px)",
+                fontSize: "clamp(32px, 3.2vw, 50px)",
                 fontWeight: 800,
                 letterSpacing: "-0.04em",
-                lineHeight: 1.08,
+                lineHeight: 1.05,
                 color: "var(--text-1)",
                 marginBottom: 22,
                 fontFeatureSettings: '"cv02", "cv03", "cv11"',
               }}
             >
-              Pros<span className="gradient-text">pecta</span>
+              El futuro en <span className="gradient-text">convergencia</span>
             </h1>
 
-            {/* Subtitle */}
+            {/* Promesa */}
             <p
               style={{
                 fontSize: 16,
-                lineHeight: 1.75,
+                lineHeight: 1.7,
                 color: "var(--text-2)",
-                maxWidth: 460,
-                marginBottom: 38,
-                fontWeight: 400,
+                maxWidth: 520,
+                marginBottom: 34,
               }}
             >
-              Plataforma de{" "}
-              <strong style={{ color: "var(--text-1)", fontWeight: 600 }}>
-                prospectiva tecnológica
-              </strong>
-              . Combina evidencia de fuentes web y académicas con el juicio de
-              paneles de expertos para leer el futuro de una tecnología.
+              Prospecta alinea tus estudios de futuro combinando{" "}
+              <strong style={{ color: "var(--text-1)", fontWeight: 600 }}>Curvas S</strong>,{" "}
+              <strong style={{ color: "var(--text-1)", fontWeight: 600 }}>Hype Cycle</strong>{" "}
+              y la matriz de patentes y papers, potenciado con IA para llevar las
+              señales del horizonte a decisiones.
             </p>
 
-            {/* CTAs */}
+            {/* Llamadas a la acción */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <Link href="/hype-cycle" className="btn btn-primary" style={{ fontSize: 15, padding: "12px 24px" }}>
+              <a
+                href="#herramientas"
+                className="btn btn-primary"
+                style={{ fontSize: 15, padding: "12px 22px", textDecoration: "none" }}
+              >
+                <Compass style={{ width: 17, height: 17 }} />
+                Explorar herramientas
+              </a>
+              <Link
+                href="/hype-cycle"
+                className="btn btn-ghost"
+                style={{ fontSize: 15, padding: "12px 22px", textDecoration: "none" }}
+              >
                 <Zap style={{ width: 17, height: 17 }} />
-                Nuevo análisis
-              </Link>
-              <Link href="/history" className="btn btn-ghost" style={{ fontSize: 15, padding: "12px 24px" }}>
-                <History style={{ width: 17, height: 17 }} />
-                Ver historial
+                Iniciar con Hype Cycle
               </Link>
             </div>
           </div>
 
-          {/* Right: animated SVG */}
+          {/* Derecha: lectura de un vistazo */}
           <div
+            className="card"
             style={{
-              flexShrink: 0,
-              width: 380,
-              padding: "24px 28px",
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
+              flex: "0 1 400px",
+              minWidth: 320,
+              padding: "22px 26px 18px",
               borderRadius: 20,
-              boxShadow: "0 24px 64px rgba(0,0,0,0.3), 0 0 0 1px rgba(79,142,247,0.06)",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.30), 0 0 0 1px rgba(79,142,247,0.06)",
             }}
           >
-            <div style={{ marginBottom: 12 }}>
-              <p className="label-sm" style={{ marginBottom: 4 }}>Hype Cycle de Gartner</p>
-              <p style={{ fontSize: 12, color: "var(--text-3)" }}>
-                Posición actual de tecnologías clave
-              </p>
-            </div>
+            <p className="label-sm" style={{ marginBottom: 6 }}>
+              Hype Cycle de Gartner
+            </p>
+            <p style={{ fontSize: 12.5, color: "var(--text-3)", marginBottom: 10 }}>
+              Posición actual de tecnologías clave
+            </p>
             <DecorativeHypeCycle />
           </div>
         </div>
       </section>
 
-      {/* ── Stats Row ────────────────────────────────────────── */}
-      <section
-        style={{
-          maxWidth: 1120,
-          margin: "0 auto",
-          padding: "48px 48px 0",
-        }}
-      >
+      {/* ── Métricas ─────────────────────────────────────────── */}
+      <section style={{ ...SHELL, padding: "40px 48px 0" }}>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
             gap: 20,
           }}
         >
-          {[
-            {
-              label: "Análisis guardados",
-              value: "—",
-              icon: Database,
-              color: "#22c55e",
-              trend: null,
-            },
-            {
-              label: "Categorías",
-              value: "—",
-              icon: FolderOpen,
-              color: "var(--accent)",
-              trend: null,
-            },
-            {
-              label: "Última ejecución",
-              value: "—",
-              icon: Clock,
-              color: "#f59e0b",
-              trend: null,
-            },
-          ].map((stat) => (
+          {TILES.map((stat) => (
             <div
               key={stat.label}
               className="card"
-              style={{
-                padding: "24px 28px",
-                display: "flex",
-                alignItems: "center",
-                gap: 18,
-              }}
+              style={{ padding: "22px 26px", display: "flex", alignItems: "center", gap: 18 }}
             >
-              {/* Icon circle */}
               <div
                 style={{
                   width: 44,
                   height: 44,
                   borderRadius: 12,
-                  background: `${stat.color}14`,
-                  border: `1px solid ${stat.color}28`,
+                  background: `color-mix(in srgb, ${stat.color} 12%, transparent)`,
+                  border: `1px solid color-mix(in srgb, ${stat.color} 26%, transparent)`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -362,32 +341,23 @@ export default function DashboardPage() {
               >
                 <stat.icon style={{ width: 20, height: 20, color: stat.color }} />
               </div>
-
               <div>
-                <p
-                  className="label-sm"
-                  style={{ marginBottom: 6 }}
-                >
-                  {stat.label}
-                </p>
-                <p className="stat-num">
-                  {stat.value}
-                </p>
+                <p className="label-sm" style={{ marginBottom: 6 }}>{stat.label}</p>
+                <p className="stat-num">{stat.value}</p>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ── Module Cards ─────────────────────────────────────── */}
-      <section
-        style={{
-          maxWidth: 1120,
-          margin: "0 auto",
-          padding: "48px 48px 0",
-        }}
-      >
-        <p className="section-label" style={{ marginBottom: 20 }}>Módulos disponibles</p>
+      {/* ── Herramientas ─────────────────────────────────────── */}
+      <section id="herramientas" style={{ ...SHELL, padding: "44px 48px 0", scrollMarginTop: 24 }}>
+        <p className="section-label">Herramientas del portal</p>
+        <p style={{ fontSize: 14, color: "var(--text-3)", margin: "8px 0 22px" }}>
+          Cada herramienta aporta una mirada al futuro; Prospecta las alinea en
+          una sola lectura.
+        </p>
+
         <div
           style={{
             display: "grid",
@@ -398,7 +368,8 @@ export default function DashboardPage() {
           {MODULES.map((m) => {
             const primary = m.routes[0];
             const Icon = primary.icon;
-            const enabled = m.status !== "planned";
+            // Sólo lo terminado es navegable: lo demás llevaría a un 404.
+            const enabled = m.status === "active";
             return (
               <ModuleCard
                 key={m.id}
@@ -427,20 +398,14 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* ── Recent Activity ──────────────────────────────────── */}
-      <section
-        style={{
-          maxWidth: 1120,
-          margin: "0 auto",
-          padding: "48px 48px 0",
-        }}
-      >
+      {/* ── Actividad reciente ───────────────────────────────── */}
+      <section style={{ ...SHELL, padding: "44px 48px 0" }}>
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: 20,
+            marginBottom: 18,
           }}
         >
           <p className="section-label">Actividad reciente</p>
@@ -463,11 +428,10 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* Empty state */}
         <div
           className="card"
           style={{
-            padding: "64px 32px",
+            padding: "56px 32px",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -476,7 +440,6 @@ export default function DashboardPage() {
             textAlign: "center",
           }}
         >
-          {/* Icon */}
           <div
             style={{
               width: 56,
@@ -503,33 +466,22 @@ export default function DashboardPage() {
             >
               Ejecuta tu primer análisis
             </p>
-            <p
-              style={{
-                fontSize: 14,
-                color: "var(--text-2)",
-                lineHeight: 1.6,
-                maxWidth: 360,
-              }}
-            >
-              Tus análisis aparecerán aquí. Comienza analizando una tecnología con el módulo Hype Cycle.
+            <p style={{ fontSize: 14, color: "var(--text-2)", lineHeight: 1.6, maxWidth: 360 }}>
+              Tus análisis aparecerán aquí. Comienza analizando una tecnología
+              con el módulo Hype Cycle.
             </p>
           </div>
-          <Link
-            href="/hype-cycle"
-            className="btn btn-primary"
-            style={{ marginTop: 4 }}
-          >
+          <Link href="/hype-cycle" className="btn btn-primary" style={{ marginTop: 4, textDecoration: "none" }}>
             <Zap style={{ width: 15, height: 15 }} />
             Iniciar análisis
           </Link>
         </div>
       </section>
-
     </div>
   );
 }
 
-/* ── Module Card component ──────────────────────────────── */
+/* ── Tarjeta de módulo ──────────────────────────────────── */
 
 interface Action {
   href: string;
@@ -567,26 +519,25 @@ function ModuleCard({
     <div
       className={cn("card card-hover flex flex-col", disabled && "opacity-55")}
       style={{
-        padding: "28px",
+        padding: "26px",
         boxShadow: glow
           ? `0 0 0 1px ${color}20, 0 8px 40px rgba(0,0,0,0.2), 0 0 32px ${color}0a`
           : undefined,
         borderColor: glow ? `${color}25` : undefined,
       }}
     >
-      {/* Icon + badge row */}
       <div
         style={{
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "space-between",
-          marginBottom: 20,
+          marginBottom: 18,
         }}
       >
         <div
           style={{
-            width: 48,
-            height: 48,
+            width: 46,
+            height: 46,
             borderRadius: 14,
             background: `${color}14`,
             border: `1px solid ${color}28`,
@@ -595,15 +546,14 @@ function ModuleCard({
             justifyContent: "center",
           }}
         >
-          <Icon style={{ width: 22, height: 22, color }} />
+          <Icon style={{ width: 21, height: 21, color }} />
         </div>
         <span className={cn("badge", badgeClass)}>{badge}</span>
       </div>
 
-      {/* Title */}
       <h3
         style={{
-          fontSize: 19,
+          fontSize: 18.5,
           fontWeight: 700,
           letterSpacing: "-0.025em",
           color: "var(--text-1)",
@@ -615,24 +565,22 @@ function ModuleCard({
         {title}
       </h3>
 
-      {/* Description */}
       <p
         style={{
           fontSize: 14,
-          lineHeight: 1.7,
+          lineHeight: 1.65,
           color: "var(--text-2)",
           flex: 1,
-          marginBottom: 20,
+          marginBottom: 18,
         }}
       >
         {description}
       </p>
 
-      {/* Feature list */}
       <ul
         style={{
           listStyle: "none",
-          marginBottom: 24,
+          marginBottom: 22,
           display: "flex",
           flexDirection: "column",
           gap: 6,
@@ -649,26 +597,17 @@ function ModuleCard({
               color: "var(--text-2)",
             }}
           >
-            <CheckCircle
-              style={{
-                width: 13,
-                height: 13,
-                color,
-                flexShrink: 0,
-                opacity: 0.8,
-              }}
-            />
+            <CheckCircle style={{ width: 13, height: 13, color, flexShrink: 0, opacity: 0.8 }} />
             {f}
           </li>
         ))}
       </ul>
 
-      {/* Actions */}
       {!disabled && actions.length > 0 && (
         <div
           style={{
             borderTop: "1px solid var(--border)",
-            paddingTop: 20,
+            paddingTop: 18,
             display: "flex",
             flexDirection: "column",
             gap: 4,
@@ -680,7 +619,7 @@ function ModuleCard({
                 key={href}
                 href={href}
                 className="btn btn-primary"
-                style={{ justifyContent: "center", fontSize: 13 }}
+                style={{ justifyContent: "center", fontSize: 13, textDecoration: "none" }}
               >
                 <AIcon style={{ width: 14, height: 14 }} />
                 {label}

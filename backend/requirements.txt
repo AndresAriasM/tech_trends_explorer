@@ -13,6 +13,10 @@ redis==5.0.4
 supabase==2.31.0
 psycopg[binary]==3.3.6
 
+# Verificación de JWT. Llega de forma transitiva con supabase-auth, pero
+# depender de eso para validar firmas es frágil: se declara explícito.
+PyJWT[crypto]==2.14.0
+
 # AWS — sólo para leer datos antiguos durante la migración a Supabase
 boto3==1.28.85
 botocore==1.31.85
@@ -30,6 +34,9 @@ google-api-python-client==2.108.0
 
 # Asistente de IA y votos sintéticos
 openai==1.96.0
+
+# Importador del histórico Delphi (.xlsx)
+openpyxl==3.1.5
 
 # CORS & SSE
 sse-starlette==1.8.2

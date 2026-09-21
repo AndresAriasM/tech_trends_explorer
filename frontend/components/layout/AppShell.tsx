@@ -6,32 +6,33 @@ import { TopBar } from "./TopBar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
-
-  const sidebarWidth = collapsed ? 60 : 280;
+  const toggle = () => setCollapsed((v) => !v);
 
   return (
     <div
-      className="flex min-h-screen"
-      style={{ background: "var(--bg)" }}
+      className="flex"
+      style={{ background: "var(--bg)", height: "100vh", overflow: "hidden" }}
     >
-      {/* Fixed sidebar */}
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+      {/* El panel lateral es fijo y tiene su propio scroll interno. */}
+      <Sidebar collapsed={collapsed} onToggle={toggle} />
 
-      {/* Content area pushed by sidebar width */}
+      {/* El contenido se desplaza por el ancho del panel. */}
       <div
         className="flex flex-col flex-1 min-w-0"
         style={{
-          marginLeft: sidebarWidth,
+          marginLeft: collapsed
+            ? "var(--sidebar-collapsed-w)"
+            : "var(--sidebar-w)",
           transition: "margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
         }}
       >
-        {/* Sticky topbar */}
         <TopBar />
 
-        {/* Scrollable main */}
+        {/* Un único contenedor con scroll: antes lo tenían main y la ventana
+            a la vez, y salían dos barras que se estorbaban. */}
         <main
-          className="flex-1 overflow-auto fade-in"
-          style={{ minHeight: `calc(100vh - var(--header-h))` }}
+          className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden fade-in"
+          style={{ height: "calc(100vh - var(--header-h))" }}
         >
           {children}
         </main>

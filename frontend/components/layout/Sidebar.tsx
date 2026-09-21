@@ -3,181 +3,291 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, PanelLeft } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight, MoreHorizontal, PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NAV_SECTIONS, type NavItem } from "@/lib/modules";
+import {
+  HOME_ITEM,
+  NAV_SECTIONS,
+  type NavItem,
+  type SectionBadge,
+} from "@/lib/modules";
 
 interface Props {
   collapsed: boolean;
   onToggle: () => void;
 }
 
+const USER = {
+  name: "Andrés Arias",
+  affiliation: "Data Scientist · UPB",
+  initials: "AA",
+};
+
 function isActive(pathname: string, href: string) {
-  return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
+
+const BADGE_TONE: Record<SectionBadge["tone"], { fg: string; bg: string; bd: string }> = {
+  green:  { fg: "#22c55e", bg: "rgba(34,197,94,0.10)",   bd: "rgba(34,197,94,0.24)" },
+  purple: { fg: "#a78bfa", bg: "rgba(167,139,250,0.10)", bd: "rgba(167,139,250,0.24)" },
+  gray:   { fg: "var(--text-3)", bg: "rgba(255,255,255,0.04)", bd: "var(--border)" },
+};
 
 export function Sidebar({ collapsed, onToggle }: Props) {
   const pathname = usePathname();
 
+  /* La lista de módulos es más larga que la ventana en pantallas cortas:
+     su scroll es propio y se avisa con un degradado arriba/abajo. */
+  const listRef = useRef<HTMLDivElement>(null);
+  const [shade, setShade] = useState({ top: false, bottom: false });
+
+  const syncShade = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    setShade({
+      top: scrollTop > 4,
+      bottom: scrollTop + clientHeight < scrollHeight - 4,
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const raf = requestAnimationFrame(syncShade);
+    const ro = new ResizeObserver(syncShade);
+    ro.observe(el);
+    window.addEventListener("resize", syncShade);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("resize", syncShade);
+    };
+  }, [syncShade, collapsed]);
+
+  /* Si la lista desborda, el módulo en curso puede quedar fuera de vista:
+     se trae al área visible al cambiar de ruta. */
+  useEffect(() => {
+    const el = listRef.current?.querySelector('[aria-current="page"]');
+    el?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+
   return (
     <aside
       className="sidebar flex flex-col"
-      style={{ width: collapsed ? 60 : 280 }}
+      style={{ width: collapsed ? "var(--sidebar-collapsed-w)" : "var(--sidebar-w)" }}
     >
-      {/* ── Marca ── */}
+      {/* ── Marca (misma altura que la barra superior) ── */}
       <div
-        className="flex items-center gap-3 shrink-0 px-4"
-        style={{ height: 64, borderBottom: "1px solid var(--border)" }}
+        className="flex items-center shrink-0"
+        style={{
+          height: "var(--header-h)",
+          padding: collapsed ? "0 12px" : "0 12px 0 14px",
+          gap: 10,
+          borderBottom: "1px solid var(--border)",
+        }}
       >
         <Link
           href="/"
-          className="flex items-center gap-3 min-w-0 flex-1"
-          style={{ textDecoration: "none" }}
+          className="flex items-center min-w-0 flex-1"
+          style={{ textDecoration: "none", gap: 10 }}
           aria-label="Prospecta — inicio"
         >
           <Image
             src="/prospecta-mark.png"
             alt=""
-            width={34}
-            height={34}
+            width={32}
+            height={32}
             priority
-            style={{ width: 34, height: 34, objectFit: "contain", flexShrink: 0 }}
+            style={{ width: 32, height: 32, objectFit: "contain", flexShrink: 0 }}
           />
           {!collapsed && (
             <div className="min-w-0">
               <p
                 className="font-bold leading-none truncate"
-                style={{
-                  fontSize: 15,
-                  color: "var(--text-1)",
-                  letterSpacing: "-0.02em",
-                }}
+                style={{ fontSize: 15, color: "var(--text-1)", letterSpacing: "-0.02em" }}
               >
                 Prospecta
               </p>
               <p
-                className="mt-1 truncate"
+                className="truncate"
                 style={{
-                  fontSize: 9.5,
+                  fontSize: 8.5,
+                  marginTop: 3,
                   color: "var(--text-3)",
-                  letterSpacing: "0.09em",
+                  letterSpacing: "0.10em",
                   textTransform: "uppercase",
+                  lineHeight: 1,
                 }}
               >
-                Prospectiva · UPB
+                Portal de prospectiva · UPB
               </p>
             </div>
           )}
         </Link>
 
+        {!collapsed && (
+          <button
+            onClick={onToggle}
+            className="icon-btn shrink-0"
+            title="Colapsar menú"
+            aria-label="Colapsar menú"
+            aria-expanded
+            style={{ width: 28, height: 28 }}
+          >
+            <PanelLeft style={{ width: 15, height: 15 }} />
+          </button>
+        )}
+      </div>
+
+      {collapsed && (
         <button
           onClick={onToggle}
-          title={collapsed ? "Expandir menú" : "Colapsar menú"}
-          aria-label={collapsed ? "Expandir menú" : "Colapsar menú"}
-          aria-expanded={!collapsed}
-          style={{
-            padding: 7,
-            borderRadius: 8,
-            color: "var(--text-3)",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            flexShrink: 0,
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,255,255,0.06)";
-            e.currentTarget.style.color = "var(--text-2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "var(--text-3)";
-          }}
+          className="icon-btn shrink-0"
+          title="Expandir menú"
+          aria-label="Expandir menú"
+          aria-expanded={false}
+          style={{ width: 28, height: 28, margin: "10px auto 0" }}
         >
           <PanelLeft style={{ width: 15, height: 15 }} />
         </button>
-      </div>
+      )}
 
       {/* ── Navegación ── */}
-      <nav
-        className="flex-1 overflow-y-auto overflow-x-hidden"
-        style={{ padding: "14px 0" }}
-        aria-label="Módulos"
-      >
-        {NAV_SECTIONS.map((section, si) => (
-          <div key={section.id} style={{ marginBottom: 16 }}>
-            {!collapsed ? (
-              <div className="px-5" style={{ marginBottom: 4 }}>
-                <span className="label-sm" style={{ color: "var(--text-3)" }}>
-                  {section.label}
-                </span>
-              </div>
-            ) : (
-              si > 0 && (
+      <div className="relative flex-1 min-h-0">
+        <div className={cn("nav-fade nav-fade-top", shade.top && "is-on")} />
+        <div className={cn("nav-fade nav-fade-bottom", shade.bottom && "is-on")} />
+
+        <nav
+          ref={listRef}
+          onScroll={syncShade}
+          className="nav-scroll h-full"
+          style={{
+            padding: `12px var(--nav-gutter) 14px`,
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--nav-section-gap)",
+          }}
+          aria-label="Módulos"
+        >
+          {/* Inicio, suelto por encima de las secciones */}
+          <NavLink
+            item={HOME_ITEM}
+            collapsed={collapsed}
+            active={isActive(pathname, HOME_ITEM.href)}
+          />
+
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.id}>
+              {collapsed ? (
                 <div
+                  aria-hidden
                   style={{
                     height: 1,
                     background: "var(--border)",
-                    margin: "10px 12px",
+                    margin: `0 4px var(--nav-label-gap)`,
                   }}
                 />
-              )
-            )}
+              ) : (
+                <div
+                  className="flex items-center justify-between"
+                  style={{
+                    padding: "0 10px",
+                    marginBottom: "var(--nav-label-gap)",
+                    gap: 8,
+                    minHeight: 16,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: 700,
+                      letterSpacing: "0.10em",
+                      textTransform: "uppercase",
+                      color: "var(--text-3)",
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {section.label}
+                  </span>
+                  {section.badge && <SectionPill badge={section.badge} />}
+                </div>
+              )}
 
-            <div style={{ padding: "0 8px" }}>
-              {section.items.map((item) => (
-                <NavLink
-                  key={item.href}
-                  item={item}
-                  collapsed={collapsed}
-                  active={isActive(pathname, item.href)}
-                />
-              ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--nav-item-gap)" }}>
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    collapsed={collapsed}
+                    active={isActive(pathname, item.href)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
-      </nav>
+          ))}
+        </nav>
+      </div>
 
       {/* ── Usuario ── */}
       <div
-        className="shrink-0"
+        className="shrink-0 flex items-center"
         style={{
+          height: "var(--nav-footer-h)",
           borderTop: "1px solid var(--border)",
-          padding: "12px 8px",
-          height: 72,
-          display: "flex",
-          alignItems: "center",
+          padding: `0 ${collapsed ? "8px" : "10px"}`,
         }}
       >
         <div
           className={cn(
-            "flex items-center gap-3 rounded-xl cursor-pointer w-full",
-            collapsed ? "justify-center" : "px-3"
+            "flex items-center rounded-xl cursor-pointer w-full",
+            collapsed && "justify-center"
           )}
-          style={{ height: 48, transition: "background 0.15s" }}
+          style={{
+            gap: 10,
+            height: 46,
+            padding: collapsed ? 0 : "0 8px",
+            transition: "background 0.15s",
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = "rgba(255,255,255,0.05)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = "transparent";
           }}
+          title={collapsed ? `${USER.name} — ${USER.affiliation}` : undefined}
         >
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: "50%",
-              background: "linear-gradient(135deg, #2f6fe0 0%, #6aa9ff 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 13,
-              fontWeight: 700,
-              color: "#fff",
-              flexShrink: 0,
-            }}
-          >
-            AA
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #2f6fe0 0%, #6aa9ff 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#fff",
+              }}
+            >
+              {USER.initials}
+            </div>
+            <span
+              className="pulse-dot"
+              title="En línea"
+              style={{
+                position: "absolute",
+                right: -1,
+                bottom: -1,
+                width: 9,
+                height: 9,
+                border: "2px solid var(--surface)",
+              }}
+            />
           </div>
 
           {!collapsed && (
@@ -186,27 +296,64 @@ export function Sidebar({ collapsed, onToggle }: Props) {
                 <p
                   className="truncate"
                   style={{
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: 600,
                     color: "var(--text-1)",
-                    lineHeight: 1.2,
+                    lineHeight: 1.25,
                   }}
                 >
-                  Andrés Arias
+                  {USER.name}
                 </p>
                 <p
                   className="truncate"
-                  style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--text-3)",
+                    marginTop: 1,
+                    lineHeight: 1.25,
+                  }}
                 >
-                  Data Scientist · UPB
+                  {USER.affiliation}
                 </p>
               </div>
-              <div className="pulse-dot shrink-0" title="En línea" />
+              <button
+                className="icon-btn shrink-0"
+                style={{ width: 26, height: 26 }}
+                title="Opciones de la cuenta"
+                aria-label="Opciones de la cuenta"
+              >
+                <MoreHorizontal style={{ width: 15, height: 15 }} />
+              </button>
             </>
           )}
         </div>
       </div>
     </aside>
+  );
+}
+
+/* ── Distintivo de sección ──────────────────────────────────── */
+
+function SectionPill({ badge }: { badge: SectionBadge }) {
+  const tone = BADGE_TONE[badge.tone];
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        fontSize: 8.5,
+        fontWeight: 700,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        lineHeight: 1,
+        padding: "3px 6px",
+        borderRadius: 99,
+        color: tone.fg,
+        background: tone.bg,
+        border: `1px solid ${tone.bd}`,
+      }}
+    >
+      {badge.text}
+    </span>
   );
 }
 
@@ -217,7 +364,7 @@ function NavLink({
   collapsed,
   active,
 }: {
-  item: NavItem;
+  item: Pick<NavItem, "href" | "label" | "icon" | "disabled">;
   collapsed: boolean;
   active: boolean;
 }) {
@@ -228,7 +375,9 @@ function NavLink({
     ? disabled
       ? `${label} — próximamente`
       : label
-    : undefined;
+    : disabled
+      ? `${label} — próximamente`
+      : undefined;
 
   return (
     <Link
@@ -239,23 +388,20 @@ function NavLink({
       tabIndex={disabled ? -1 : undefined}
       onClick={(e) => disabled && e.preventDefault()}
       className={cn(
-        "flex items-center gap-3 rounded-xl transition-all duration-150",
-        collapsed ? "justify-center px-0" : "px-3",
+        "relative flex items-center transition-colors duration-150",
+        collapsed ? "justify-center" : "",
         disabled && "cursor-default"
       )}
       style={{
-        height: 40,
+        height: "var(--nav-item-h)",
+        gap: 10,
+        padding: collapsed ? 0 : "0 10px",
+        borderRadius: 9,
         fontSize: 13.5,
         fontWeight: active ? 600 : 500,
-        color: active ? "var(--accent)" : restingColor,
-        background: active ? "rgba(79,142,247,0.10)" : "transparent",
-        borderLeft:
-          active && !collapsed
-            ? "2px solid var(--accent)"
-            : "2px solid transparent",
-        marginBottom: 2,
+        color: active ? "var(--text-1)" : restingColor,
+        background: active ? "rgba(79,142,247,0.12)" : "transparent",
         textDecoration: "none",
-        transition: "all 0.15s",
       }}
       onMouseEnter={(e) => {
         if (!active && !disabled) {
@@ -270,6 +416,23 @@ function NavLink({
         }
       }}
     >
+      {/* Marca de posición: barra al borde del panel, no dentro del ítem,
+          para que no desplace el texto ni cambie la altura de la fila. */}
+      {active && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "calc(-1 * var(--nav-gutter))",
+            top: 6,
+            bottom: 6,
+            width: 3,
+            borderRadius: "0 3px 3px 0",
+            background: "var(--accent)",
+          }}
+        />
+      )}
+
       <Icon
         style={{
           width: 16,
@@ -279,6 +442,7 @@ function NavLink({
           opacity: disabled ? 0.55 : 1,
         }}
       />
+
       {!collapsed && (
         <>
           <span style={{ flex: 1, minWidth: 0 }} className="truncate">
@@ -287,13 +451,15 @@ function NavLink({
           {disabled ? (
             <span
               style={{
-                fontSize: 9,
+                fontSize: 8.5,
+                fontWeight: 600,
                 letterSpacing: "0.06em",
                 textTransform: "uppercase",
                 color: "var(--text-4)",
                 border: "1px solid var(--border)",
                 borderRadius: 5,
-                padding: "1px 5px",
+                padding: "2px 5px",
+                lineHeight: 1,
                 flexShrink: 0,
               }}
             >
@@ -301,7 +467,9 @@ function NavLink({
             </span>
           ) : (
             active && (
-              <ChevronRight style={{ width: 13, height: 13, opacity: 0.5 }} />
+              <ChevronRight
+                style={{ width: 13, height: 13, opacity: 0.5, flexShrink: 0 }}
+              />
             )
           )}
         </>

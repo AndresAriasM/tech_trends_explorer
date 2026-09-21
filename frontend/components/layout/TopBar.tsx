@@ -1,23 +1,34 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Search, ChevronRight } from "lucide-react";
-import { getModuleByPath } from "@/lib/modules";
+import { Bell, ChevronDown, ChevronRight, Home, Search } from "lucide-react";
+import {
+  getModuleByPath,
+  getRouteByPath,
+  getSectionCrumb,
+} from "@/lib/modules";
+
+const NOTIFICATIONS = 3;
+
+const USER = { short: "Andrés A.", initial: "A" };
+
+/** Atajo del buscador. Se muestra el símbolo de macOS, como en el diseño. */
+const SEARCH_SHORTCUT = "⌘K";
 
 /** Miga de pan derivada del registro de módulos, no de un mapa paralelo. */
-function useCrumb(pathname: string): { module: string; page: string } {
-  if (pathname === "/") return { module: "Prospecta", page: "Inicio" };
+function useCrumb(pathname: string): { section: string; page: string } {
+  if (pathname === "/") return { section: "Portal", page: "Inicio" };
 
   const mod = getModuleByPath(pathname);
-  if (!mod) return { module: "Prospecta", page: "" };
+  if (!mod) return { section: "Portal", page: "" };
 
-  const route = mod.routes.find(
-    (r) => pathname === r.href || pathname.startsWith(`${r.href}/`)
-  );
-  // Rutas anidadas (p. ej. /workshop/ABC123) cuelgan del label de su módulo.
+  const route = getRouteByPath(pathname) ?? mod.routes[0];
+  // Rutas anidadas (p. ej. /workshop/ABC123) cuelgan del nombre de su módulo.
   const page =
-    route && pathname !== route.href ? mod.name : route?.label ?? mod.name;
-  return { module: mod.name, page };
+    route && pathname !== route.href ? mod.name : (route?.label ?? mod.name);
+
+  return { section: getSectionCrumb(route.section), page };
 }
 
 export function TopBar() {
@@ -26,9 +37,11 @@ export function TopBar() {
 
   return (
     <header
-      className="glass shrink-0 flex items-center px-8 gap-4"
+      className="shrink-0 flex items-center"
       style={{
         height: "var(--header-h)",
+        gap: 24,
+        padding: "0 20px",
         borderBottom: "1px solid var(--border)",
         background: "rgba(6,9,15,0.85)",
         backdropFilter: "blur(16px)",
@@ -38,115 +51,112 @@ export function TopBar() {
         zIndex: 40,
       }}
     >
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 flex-1 min-w-0">
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            color: "var(--text-3)",
-          }}
+      {/* ── Miga de pan ── */}
+      <nav
+        className="flex items-center min-w-0"
+        style={{ gap: 7, flex: "0 1 auto" }}
+        aria-label="Ruta"
+      >
+        <Link
+          href="/"
+          className="icon-btn"
+          style={{ width: 26, height: 26, flexShrink: 0 }}
+          aria-label="Inicio"
+          title="Inicio"
         >
-          {crumb.module}
-        </span>
-        <ChevronRight style={{ width: 13, height: 13, color: "var(--text-4)" }} />
+          <Home style={{ width: 15, height: 15 }} />
+        </Link>
+        <ChevronRight style={{ width: 13, height: 13, color: "var(--text-4)", flexShrink: 0 }} />
         <span
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: "var(--text-1)",
-          }}
+          className="truncate"
+          style={{ fontSize: 13, fontWeight: 500, color: "var(--text-3)" }}
         >
-          {crumb.page}
+          {crumb.section}
         </span>
+        {crumb.page && (
+          <>
+            <ChevronRight
+              style={{ width: 13, height: 13, color: "var(--text-4)", flexShrink: 0 }}
+            />
+            <span
+              className="truncate"
+              style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}
+            >
+              {crumb.page}
+            </span>
+          </>
+        )}
+      </nav>
+
+      {/* ── Buscador central ── */}
+      <div className="flex justify-end flex-1 min-w-0">
+        <button
+          type="button"
+          className="topbar-search"
+          title="Buscar en el portal"
+          aria-label="Buscar en el portal"
+        >
+          <Search style={{ width: 14, height: 14, flexShrink: 0 }} />
+          <span className="truncate" style={{ flex: 1 }}>
+            Buscar análisis, tecnologías…
+          </span>
+          <span className="kbd" aria-hidden>
+            {SEARCH_SHORTCUT}
+          </span>
+        </button>
       </div>
 
-      {/* Right actions */}
-      <div className="flex items-center gap-1">
-        {/* Search */}
+      {/* ── Acciones ── */}
+      <div className="flex items-center shrink-0" style={{ gap: 10 }}>
         <button
-          title="Buscar"
-          style={{
-            padding: "8px",
-            borderRadius: 9,
-            color: "var(--text-3)",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,255,255,0.06)";
-            e.currentTarget.style.color = "var(--text-2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "var(--text-3)";
-          }}
-        >
-          <Search style={{ width: 16, height: 16 }} />
-        </button>
-
-        {/* Notifications */}
-        <button
-          title="Notificaciones"
-          style={{
-            padding: "8px",
-            borderRadius: 9,
-            color: "var(--text-3)",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            position: "relative",
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,255,255,0.06)";
-            e.currentTarget.style.color = "var(--text-2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "var(--text-3)";
-          }}
+          className="icon-btn"
+          style={{ width: 32, height: 32, position: "relative" }}
+          title={`${NOTIFICATIONS} notificaciones`}
+          aria-label={`${NOTIFICATIONS} notificaciones`}
         >
           <Bell style={{ width: 16, height: 16 }} />
-          {/* Notification dot */}
-          <span
-            style={{
-              position: "absolute",
-              top: 7,
-              right: 7,
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--accent)",
-              border: "1.5px solid var(--bg)",
-            }}
-          />
+          {NOTIFICATIONS > 0 && (
+            <span
+              style={{
+                position: "absolute",
+                top: 2,
+                right: 1,
+                minWidth: 14,
+                height: 14,
+                padding: "0 3px",
+                borderRadius: 99,
+                background: "var(--accent)",
+                border: "1.5px solid var(--bg)",
+                color: "#fff",
+                fontSize: 8.5,
+                fontWeight: 700,
+                lineHeight: "11px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {NOTIFICATIONS > 9 ? "9+" : NOTIFICATIONS}
+            </span>
+          )}
         </button>
 
-        {/* Divider */}
-        <div
+        <button
+          className="flex items-center"
           style={{
-            width: 1,
-            height: 20,
-            background: "var(--border)",
-            margin: "0 6px",
-          }}
-        />
-
-        {/* User pill */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
             gap: 8,
-            padding: "6px 12px",
-            borderRadius: 10,
+            height: 34,
+            padding: "0 8px 0 5px",
+            borderRadius: 99,
             border: "1px solid var(--border)",
+            background: "transparent",
             cursor: "pointer",
+            fontFamily: "inherit",
             transition: "background 0.15s, border-color 0.15s",
           }}
+          title="Cuenta"
+          aria-label="Menú de usuario"
+          aria-haspopup="menu"
           onMouseEnter={(e) => {
             e.currentTarget.style.background = "var(--surface-2)";
             e.currentTarget.style.borderColor = "var(--border-2)";
@@ -156,33 +166,28 @@ export function TopBar() {
             e.currentTarget.style.borderColor = "var(--border)";
           }}
         >
-          <div
+          <span
             style={{
-              width: 22,
-              height: 22,
+              width: 24,
+              height: 24,
               borderRadius: "50%",
               background: "linear-gradient(135deg, #4f8ef7 0%, #8b5cf6 100%)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: 700,
               color: "#fff",
               flexShrink: 0,
             }}
           >
-            A
-          </div>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--text-2)",
-            }}
-          >
-            Andrés A.
+            {USER.initial}
           </span>
-        </div>
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-2)" }}>
+            {USER.short}
+          </span>
+          <ChevronDown style={{ width: 14, height: 14, color: "var(--text-3)" }} />
+        </button>
       </div>
     </header>
   );
