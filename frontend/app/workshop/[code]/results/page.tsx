@@ -504,7 +504,7 @@ export default function ResultsPage() {
       {/* ── Footer ── */}
       <div className="mt-10 pt-6 border-t border-[var(--border)] flex items-center justify-between
                       text-[10px] text-[var(--text-4)] flex-wrap gap-2 print:mt-4">
-        <span>LACCEI · Tech Trends Explorer · UPB 2036</span>
+        <span>LACCEI · Prospecta · UPB</span>
         <span>Sala {code} · {synthesis.n_experts} expertos · {synthesis.n_variables} variables · 2026 → 2032</span>
       </div>
     </div>

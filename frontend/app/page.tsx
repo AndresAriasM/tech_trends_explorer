@@ -3,17 +3,16 @@
 import Link from "next/link";
 import {
   TrendingUp, ArrowRight, Zap, History, FolderOpen,
-  BarChart3, Activity, Clock, CheckCircle, Database,
+  Clock, CheckCircle, Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MODULES, type ModuleStatus } from "@/lib/modules";
 
-/* ── Phase dot colours ───────────────────────────────────── */
-const PHASE_COLOR: Record<string, string> = {
-  "Innovation Trigger":            "#60a5fa",
-  "Peak of Inflated Expectations": "#f59e0b",
-  "Trough of Disillusionment":     "#ef4444",
-  "Slope of Enlightenment":        "#34d399",
-  "Plateau of Productivity":       "#818cf8",
+/* ── Etiquetas de madurez para las tarjetas ──────────────── */
+const STATUS_LABEL: Record<ModuleStatus, string> = {
+  active: "Activo",
+  "in-progress": "En curso",
+  planned: "Próximamente",
 };
 
 /* ── Decorative mini Hype Cycle SVG ─────────────────────── */
@@ -224,7 +223,7 @@ export default function DashboardPage() {
                   letterSpacing: "0.03em",
                 }}
               >
-                Sistema activo — UPB 2036
+                Sistema activo — UPB
               </span>
             </div>
 
@@ -241,8 +240,7 @@ export default function DashboardPage() {
                 fontFeatureSettings: '"cv02", "cv03", "cv11"',
               }}
             >
-              Tech Trends{" "}
-              <span className="gradient-text">Explorer</span>
+              Pros<span className="gradient-text">pecta</span>
             </h1>
 
             {/* Subtitle */}
@@ -256,12 +254,12 @@ export default function DashboardPage() {
                 fontWeight: 400,
               }}
             >
-              Plataforma de análisis basada en el{" "}
+              Plataforma de{" "}
               <strong style={{ color: "var(--text-1)", fontWeight: 600 }}>
-                Hype Cycle de Gartner
+                prospectiva tecnológica
               </strong>
-              . Determina el posicionamiento de tecnologías usando fuentes web,
-              académicas y de mercado.
+              . Combina evidencia de fuentes web y académicas con el juicio de
+              paneles de expertos para leer el futuro de una tecnología.
             </p>
 
             {/* CTAs */}
@@ -311,7 +309,7 @@ export default function DashboardPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
             gap: 20,
           }}
         >
@@ -393,47 +391,39 @@ export default function DashboardPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
             gap: 20,
           }}
         >
-          <ModuleCard
-            icon={TrendingUp}
-            title="Hype Cycle"
-            color="#4f8ef7"
-            badge="Activo"
-            badgeClass="badge-blue"
-            description="Determina la fase de una tecnología en el ciclo de Gartner usando fuentes web, noticias y datos de mercado."
-            features={["Análisis en tiempo real", "Confianza por fase", "Histórico DynamoDB"]}
-            actions={[
-              { href: "/hype-cycle", label: "Iniciar análisis", icon: Zap, primary: true },
-              { href: "/history",    label: "Ver historial",    icon: History, primary: false },
-              { href: "/categories", label: "Categorías",       icon: FolderOpen, primary: false },
-            ]}
-            glow
-          />
-          <ModuleCard
-            icon={Activity}
-            title="Curvas S"
-            color="#a78bfa"
-            badge="En desarrollo"
-            badgeClass="badge-purple"
-            description="Analiza la adopción tecnológica a través del tiempo con publicaciones académicas de Scopus."
-            features={["Datos de Scopus", "Curvas logísticas", "Predicción temporal"]}
-            actions={[{ href: "/s-curve", label: "Próximamente", icon: BarChart3, primary: false }]}
-            disabled
-          />
-          <ModuleCard
-            icon={TrendingUp}
-            title="Tendencias Web"
-            color="#22c55e"
-            badge="En desarrollo"
-            badgeClass="badge-gray"
-            description="Mide el volumen y sentimiento de menciones en fuentes web, redes sociales y noticias."
-            features={["Análisis de sentimiento", "Volumen de menciones", "Tendencias temporales"]}
-            actions={[]}
-            disabled
-          />
+          {MODULES.map((m) => {
+            const primary = m.routes[0];
+            const Icon = primary.icon;
+            const enabled = m.status !== "planned";
+            return (
+              <ModuleCard
+                key={m.id}
+                icon={Icon}
+                title={m.name}
+                color={m.accent}
+                badge={STATUS_LABEL[m.status]}
+                badgeClass={enabled ? "badge-blue" : "badge-gray"}
+                description={m.purpose}
+                features={m.highlights}
+                actions={
+                  enabled
+                    ? m.routes.map((r, i) => ({
+                        href: r.href,
+                        label: i === 0 ? `Abrir ${m.name}` : r.label,
+                        icon: r.icon,
+                        primary: i === 0,
+                      }))
+                    : []
+                }
+                disabled={!enabled}
+                glow={m.status === "active"}
+              />
+            );
+          })}
         </div>
       </section>
 
