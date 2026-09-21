@@ -138,6 +138,68 @@ export interface SCurveSigmoidParams {
   x0_ci95: [number, number] | null;
   /** x0 fuera del rango observado: la inflexión está extrapolada. */
   x0_extrapolated: boolean;
+  /**
+   * Autocorrelación de los residuos (0–4; 2 = sin estructura). Muy por debajo
+   * de 2 delata sesgo sistemático por tramos que el R² no ve.
+   */
+  durbin_watson: number | null;
+  autocorrelation: SCurveAutocorrelation;
+}
+
+// ── Ajuste multi-modelo ───────────────────────────────────────
+
+export type SCurveAutocorrelation = "none" | "moderate" | "severe" | "unknown";
+
+export type SCurveModelKey =
+  | "logistic"
+  | "gompertz"
+  | "weibull"
+  | "hill"
+  | "chapman_richards";
+
+export interface SCurveModelFit {
+  key: SCurveModelKey;
+  label: string;
+  converged: boolean;
+  /** Nombres según el modelo: (L, x0, k), (L, lambda, beta), (L, Kh, n)… */
+  params: Record<string, number> | null;
+  param_stderr: Record<string, number | null> | null;
+  r2: number | null;
+  /** R² penalizado por los 3 parámetros del modelo. */
+  r2_adj: number | null;
+  /** Error estándar de la estimación, en unidades de la serie. */
+  se: number | null;
+  rmse: number | null;
+  durbin_watson: number | null;
+  autocorrelation: SCurveAutocorrelation;
+  aicc: number | null;
+  inflection_year: number | null;
+  /** La inflexión ya está dentro de los datos observados. */
+  inflection_passed: boolean;
+  saturation_L: number | null;
+  saturation_pct: number | null;
+  /** Parámetros que quedaron pegados a su cota: no son estimaciones. */
+  params_at_bound: string[];
+  /** L topado contra el límite del ajuste: el techo no es estimable. */
+  L_at_bound: boolean;
+  residuals: Array<{ year: number; residual: number }>;
+  is_best: boolean;
+}
+
+export interface SCurveModelComparison {
+  models: SCurveModelFit[];
+  best: SCurveModelKey | null;
+  best_label: string | null;
+  best_model: SCurveModelFit | null;
+  n_points: number;
+  /** Motivo por el que no se comparó (menos de 5 años). */
+  note: string | null;
+  /** Dispersión de la inflexión entre modelos: la incertidumbre real. */
+  inflection_range: [number, number] | null;
+  saturation_range: [number, number] | null;
+  /** Aviso de autocorrelación o de techo no estimable. */
+  warning: string | null;
+  converged_count: number;
 }
 
 export type SCurvePhaseName =
@@ -162,8 +224,13 @@ export interface SCurvePhase {
   before_inflection?: boolean;
 }
 
+export type SCurveSource = "scopus" | "epo" | "patents" | "local";
+
 export interface SCurveResult {
   query: string;
+  /** De dónde salió la serie: condiciona cómo se etiqueta y se compara. */
+  source?: SCurveSource;
+  source_label?: string;
   total_publications: number;
   year_from: number;
   year_to: number;
@@ -180,6 +247,14 @@ export interface SCurveResult {
   annual_growth_rate: Array<{ year: number; pct: number | null }>;
   peak_growth_year?: number;
   peak_growth_rate?: number;
+  /** Máximo del flujo anual observado (no del ajuste). */
+  peak_annual?: number;
+  peak_annual_year?: number | null;
+  /**
+   * Los cinco modelos de 3 parámetros comparados. `sigmoid_params` sigue
+   * siendo el logístico: esto se añade al lado, no lo sustituye.
+   */
+  model_comparison?: SCurveModelComparison;
   phase: SCurvePhase;
   /** Lo que Scopus dice que existe, frente a lo que se pudo descargar. */
   total_reported: number | null;
@@ -192,6 +267,53 @@ export interface SCurveResult {
   saturation_level: number | null;
   r2: number | null;
   analyzed_at: string;
+
+  // ── Sólo en la ruta EPO OPS ──────────────────────────────
+  /** Peticiones gastadas contra OPS (una por año). */
+  epo_requests?: number;
+  /** Años que OPS no pudo servir: la serie los tiene como hueco. */
+  epo_failed_years?: number[];
+  /** Cabecera X-Throttling-Control de la última respuesta. */
+  epo_throttle?: string | null;
+  /** OPS recortó el presupuesto de búsquedas durante la descarga. */
+  epo_throttled?: boolean;
+  /** La consulta CQL que se envió realmente. */
+  epo_cql?: string;
+}
+
+// ── Comparación papers ↔ patentes ─────────────────────────────
+
+export interface SCurveComparisonSide {
+  kind: "papers" | "patents";
+  label: string;
+  query: string | null;
+  records: number | null;
+  year_from: number | null;
+  year_to: number | null;
+  peak_annual: number | null;
+  peak_annual_year: number | null;
+  phase: string | null;
+  phase_color: string | null;
+  saturation_pct: number | null;
+  best_model: string | null;
+  inflection_year: number | null;
+  inflection_passed: boolean;
+  inflection_range: [number, number] | null;
+  durbin_watson: number | null;
+  warning: string | null;
+}
+
+export interface SCurveComparison {
+  papers: SCurveComparisonSide;
+  patents: SCurveComparisonSide;
+  /** Positivo = las patentes se inflexionan antes que los papers. */
+  lag_years: number | null;
+  direction: "patents_lead" | "papers_lead" | "simultaneous" | "unknown";
+  interpretation: string;
+  headline: string;
+  /** Razones para no tomarse el desfase al pie de la letra. */
+  caveats: string[];
+  compared_at: string;
 }
 
 export interface SCurveProgress {
@@ -207,6 +329,27 @@ export interface SCurveRequest {
   year_from?: number;
   year_to?: number;
   max_results?: number;
+}
+
+/**
+ * Patentes vía EPO OPS. Sin api_key: las credenciales de OPS son del
+ * servidor y no viajan desde el navegador, a diferencia de las de Scopus.
+ */
+export interface SCurvePatentsRequest {
+  query: string;
+  year_from?: number;
+  year_to?: number;
+}
+
+export interface EPOStatus {
+  configured: boolean;
+  authenticated: boolean;
+  search_ok?: boolean;
+  probe?: { cql: string; total: number };
+  throttle?: string | null;
+  /** Búsquedas por minuto que OPS permite ahora mismo. */
+  search_quota_per_min?: number | null;
+  message: string;
 }
 
 // ============================================================

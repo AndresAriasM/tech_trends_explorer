@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { Activity, Play, Square, RotateCcw, TrendingUp, Calendar, BookOpen, Target, Sigma, ChevronDown, ChevronUp, Download, Copy, Check, Database, FileText, Upload, X, Filter } from "lucide-react";
-import { streamSCurveAnalysis, analyzeSCurveLocal } from "@/lib/api";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Activity, Play, Square, RotateCcw, TrendingUp, Calendar, BookOpen, Target, Sigma, ChevronDown, ChevronUp, Download, Copy, Check, Database, FileText, Upload, X, Filter, AlertTriangle, CheckCircle2, GitCompareArrows, Scale, Landmark } from "lucide-react";
+import { streamSCurveAnalysis, analyzeSCurveLocal, API_BASE_URL } from "@/lib/api";
 import { SCurveChart } from "@/components/charts/SCurveChart";
-import type { SCurveResult, SCurveProgress } from "@/types";
+import type {
+  SCurveResult,
+  SCurveProgress,
+  SCurveModelFit,
+  SCurveComparison,
+  SCurvePatentsRequest,
+  EPOStatus,
+} from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -39,7 +46,109 @@ const PHASE_ICON: Record<string, string> = {
   "Sin datos": "❓",
 };
 
+const EPO_EXAMPLES = [
+  { label: "Biodiésel", query: 'txt="biodiesel"' },
+  { label: "Batería de estado sólido", query: 'txt="solid state battery"' },
+  { label: "Hidrógeno verde", query: 'txt="green hydrogen"' },
+  { label: "Captura de carbono", query: 'txt="carbon capture"' },
+];
+
+// ── SSE de patentes (EPO OPS) ─────────────────────────────────
+//
+// Mismo protocolo que `streamSCurveAnalysis` pero contra /analyze-patents y
+// sin api_key en el cuerpo: las credenciales de OPS viven en el servidor.
+
+function streamPatentsAnalysis(
+  payload: SCurvePatentsRequest,
+  onProgress: (evt: SCurveProgress) => void,
+  onComplete: (result: SCurveResult | undefined) => void,
+  onError: (message: string) => void
+): () => void {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/s-curve/analyze-patents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.body) throw new Error("El servidor no devolvió un stream");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim())
+            .join("");
+          if (!data) continue;
+
+          let evt: SCurveProgress;
+          try {
+            evt = JSON.parse(data) as SCurveProgress;
+          } catch {
+            continue;
+          }
+
+          if (evt.status === "error") {
+            controller.abort();
+            onError(evt.message ?? "Error consultando EPO OPS");
+            return;
+          }
+          onProgress(evt);
+          if (evt.status === "completed") {
+            controller.abort();
+            onComplete(evt.result);
+            return;
+          }
+        }
+      }
+      onComplete(undefined);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      onError(err instanceof Error ? err.message : "Error desconocido");
+    }
+  })();
+
+  return () => controller.abort();
+}
+
 // ── Helpers ───────────────────────────────────────────────────
+
+function fmt(n: number | null | undefined, digits = 0): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/**
+ * Color del estadístico Durbin-Watson: verde cerca de 2 (residuos sin
+ * estructura), ámbar por debajo de 1.5, rojo por debajo de 1 — ahí el R²
+ * alto ya no significa buen ajuste, sólo serie creciente.
+ */
+function dwColor(dw: number | null): string {
+  if (dw === null) return "var(--text-4)";
+  if (dw < 1.0 || dw > 3.0) return "#ef4444";
+  if (dw < 1.5 || dw > 2.5) return "#f59e0b";
+  return "#10b981";
+}
 
 function MetricCard({
   icon,
@@ -225,14 +334,407 @@ function QueryBlock({
   );
 }
 
+// ── Aviso de autocorrelación ──────────────────────────────────
+
+/**
+ * El aviso que el R² no da.
+ *
+ * Un Durbin-Watson de 0.624 con R² de 0.9998 significa que el modelo va
+ * sistemáticamente alto en un tramo y bajo en otro: el error no es ruido,
+ * es sesgo de forma. Sin esta banda, la tarjeta muestra un ajuste
+ * "excelente" que no lo es.
+ */
+function FitWarning({ text, tone = "warn" }: { text: string; tone?: "warn" | "info" }) {
+  const color = tone === "warn" ? "#f59e0b" : "#6366f1";
+  const [head, ...rest] = text.split(":");
+  const body = rest.join(":").trim();
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+        padding: "12px 14px",
+        borderRadius: 10,
+        border: `1px solid ${color}44`,
+        background: `${color}0f`,
+      }}
+    >
+      <AlertTriangle style={{ width: 15, height: 15, color, flexShrink: 0, marginTop: 1 }} />
+      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--text-2)" }}>
+        <strong style={{ color }}>{head}{body ? ":" : ""}</strong>{" "}
+        {body || null}
+      </p>
+    </div>
+  );
+}
+
+// ── Tabla comparativa de modelos ──────────────────────────────
+
+const MODEL_COLUMNS: Array<{
+  key: string;
+  label: string;
+  title: string;
+  align: "left" | "right";
+  render: (m: SCurveModelFit) => React.ReactNode;
+  color?: (m: SCurveModelFit) => string;
+}> = [
+  {
+    key: "r2_adj",
+    label: "R² aj.",
+    title: "R² penalizado por los 3 parámetros. Sobre un acumulado siempre sale alto: no lo leas solo.",
+    align: "right",
+    render: (m) => (m.r2_adj === null ? "—" : m.r2_adj.toFixed(5)),
+  },
+  {
+    key: "se",
+    label: "EE",
+    title: "Error estándar de la estimación, en unidades de la serie. Es el error real que el R² esconde.",
+    align: "right",
+    render: (m) => fmt(m.se, 3),
+  },
+  {
+    key: "dw",
+    label: "Durbin-Watson",
+    title: "Autocorrelación de los residuos (0–4). 2 = sin estructura; muy por debajo = sesgo sistemático.",
+    align: "right",
+    render: (m) => (m.durbin_watson === null ? "—" : m.durbin_watson.toFixed(3)),
+    color: (m) => dwColor(m.durbin_watson),
+  },
+  {
+    key: "infl",
+    label: "Inflexión",
+    title: "Año de máxima velocidad de adopción según ese modelo.",
+    align: "right",
+    render: (m) => (m.inflection_year === null ? "—" : m.inflection_year.toFixed(1)),
+  },
+  {
+    key: "L",
+    label: "Saturación L",
+    title: "Techo proyectado. Si el modelo lo topó contra el límite del ajuste, no es una estimación.",
+    align: "right",
+    render: (m) =>
+      m.L_at_bound ? (
+        <span title="L pegado al límite del ajuste: el techo no es estimable" style={{ color: "var(--text-4)" }}>
+          no estimable
+        </span>
+      ) : (
+        fmt(m.saturation_L)
+      ),
+  },
+  {
+    key: "sat",
+    label: "% sat.",
+    title: "Último acumulado observado sobre L.",
+    align: "right",
+    render: (m) =>
+      m.L_at_bound || m.saturation_pct === null ? "—" : `${m.saturation_pct}%`,
+  },
+];
+
+function ModelComparisonCard({ result }: { result: SCurveResult }) {
+  const comp = result.model_comparison;
+  if (!comp) return null;
+
+  if (comp.note || comp.models.length === 0) {
+    return (
+      <div className="card" style={{ padding: 20 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text-1)", marginBottom: 8 }}>
+          Ajuste multi-modelo
+        </p>
+        <p style={{ fontSize: 12.5, color: "var(--text-3)", lineHeight: 1.6 }}>
+          {comp.note ?? "No se pudo ajustar ningún modelo a esta serie."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: "var(--text-1)" }}>
+          Ajuste multi-modelo — {result.source_label ?? "serie"}
+        </p>
+        <span style={{ fontSize: 11, color: "var(--text-4)" }}>
+          {comp.converged_count} de {comp.models.length} convergieron
+        </span>
+      </div>
+      <p style={{ fontSize: 11.5, color: "var(--text-4)", lineHeight: 1.6, marginBottom: 14 }}>
+        Los cinco modelos ajustan la misma serie. El R² apenas los separa; lo que
+        cambia es el techo que extrapolan, y de ese techo sale la fase.
+      </p>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  color: "var(--text-4)",
+                  fontWeight: 500,
+                  fontSize: 11.5,
+                  borderBottom: "1px solid var(--border)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Modelo
+              </th>
+              {MODEL_COLUMNS.map((c) => (
+                <th
+                  key={c.key}
+                  title={c.title}
+                  style={{
+                    textAlign: c.align,
+                    padding: "8px 10px",
+                    color: "var(--text-4)",
+                    fontWeight: 500,
+                    fontSize: 11.5,
+                    borderBottom: "1px solid var(--border)",
+                    whiteSpace: "nowrap",
+                    cursor: "help",
+                  }}
+                >
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {comp.models.map((m) => (
+              <tr
+                key={m.key}
+                style={{
+                  background: m.is_best ? "rgba(16,185,129,0.07)" : "transparent",
+                  opacity: m.converged ? 1 : 0.45,
+                }}
+              >
+                <td
+                  style={{
+                    padding: "9px 10px",
+                    borderBottom: "1px solid var(--border)",
+                    color: m.is_best ? "#10b981" : "var(--text-2)",
+                    fontWeight: m.is_best ? 700 : 500,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                    {m.is_best && (
+                      <CheckCircle2 style={{ width: 13, height: 13, flexShrink: 0 }} />
+                    )}
+                    {m.label}
+                  </span>
+                </td>
+                {MODEL_COLUMNS.map((c) => (
+                  <td
+                    key={c.key}
+                    style={{
+                      textAlign: c.align,
+                      padding: "9px 10px",
+                      borderBottom: "1px solid var(--border)",
+                      color: c.color ? c.color(m) : "var(--text-2)",
+                      fontVariantNumeric: "tabular-nums",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {m.converged ? c.render(m) : "no converge"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+        {comp.inflection_range && comp.inflection_range[0] !== comp.inflection_range[1] && (
+          <p style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.6 }}>
+            Inflexión entre modelos:{" "}
+            <strong style={{ color: "var(--text-2)" }}>
+              {comp.inflection_range[0]}–{comp.inflection_range[1]}
+            </strong>
+            . Esa horquilla es la incertidumbre real sobre el año de inflexión —
+            mucho más honesta que el ± de un solo modelo, que sólo mide ruido
+            dentro de una forma funcional ya elegida.
+          </p>
+        )}
+        {comp.warning && <FitWarning text={comp.warning} />}
+      </div>
+    </div>
+  );
+}
+
+// ── Comparación papers ↔ patentes ─────────────────────────────
+
+function ComparisonSideCard({ side }: { side: SCurveComparison["papers"] }) {
+  const color = side.phase_color ?? "#6366f1";
+  return (
+    <div className="card" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {side.kind === "papers" ? (
+          <BookOpen style={{ width: 15, height: 15, color: "#6366f1" }} />
+        ) : (
+          <Landmark style={{ width: 15, height: 15, color: "#10b981" }} />
+        )}
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-1)" }}>
+          {side.label}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {side.phase && (
+          <span
+            style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              padding: "3px 10px",
+              borderRadius: 20,
+              background: `${color}1f`,
+              color,
+            }}
+          >
+            {side.phase}
+            {side.saturation_pct !== null ? ` · ${side.saturation_pct}%` : ""}
+          </span>
+        )}
+        {side.inflection_year !== null && (
+          <span
+            style={{
+              fontSize: 11.5,
+              fontWeight: 500,
+              padding: "3px 10px",
+              borderRadius: 20,
+              background: "var(--surface-2)",
+              color: "var(--text-2)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            Inflexión {side.inflection_year}{" "}
+            {side.inflection_passed ? "(superada)" : "(proyectada)"}
+          </span>
+        )}
+      </div>
+
+      <p style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.65 }}>
+        {fmt(side.records)} registros ({side.year_from}–{side.year_to})
+        {side.peak_annual !== null && side.peak_annual_year !== null
+          ? ` · pico anual ${fmt(side.peak_annual)} en ${side.peak_annual_year}`
+          : ""}
+        {side.best_model ? ` · mejor modelo: ${side.best_model}` : ""}
+        {side.inflection_range && side.inflection_range[0] !== side.inflection_range[1]
+          ? ` · inflexión entre modelos: ${side.inflection_range[0]}–${side.inflection_range[1]}`
+          : ""}
+      </p>
+
+      {side.warning && <FitWarning text={side.warning} />}
+    </div>
+  );
+}
+
+/**
+ * Desfase ciencia → tecnología.
+ *
+ * La lectura clásica es que la ciencia precede a la tecnología. Cuando el
+ * dato dice lo contrario no es un fallo de cálculo: es el perfil de una
+ * tecnología empujada por la industria, con la literatura llegando después
+ * a explicar lo que ya se fabricaba.
+ */
+function ComparisonPanel({
+  comparison,
+  onClose,
+}: {
+  comparison: SCurveComparison;
+  onClose: () => void;
+}) {
+  const lead =
+    comparison.direction === "patents_lead"
+      ? "#10b981"
+      : comparison.direction === "papers_lead"
+      ? "#6366f1"
+      : "var(--text-3)";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <ComparisonSideCard side={comparison.papers} />
+        <ComparisonSideCard side={comparison.patents} />
+      </div>
+
+      <div
+        className="card"
+        style={{
+          padding: "16px 20px",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 12,
+          border: `1px solid ${lead}33`,
+          background: `${lead}0a`,
+        }}
+      >
+        <GitCompareArrows style={{ width: 17, height: 17, color: lead, flexShrink: 0, marginTop: 1 }} />
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 13.5, color: "var(--text-2)", lineHeight: 1.6 }}>
+            <strong style={{ color: "var(--text-1)" }}>
+              Desfase ciencia → tecnología:
+            </strong>{" "}
+            {comparison.interpretation}
+          </p>
+          {comparison.lag_years !== null && comparison.direction === "patents_lead" && (
+            <p style={{ fontSize: 11.5, color: "var(--text-4)", lineHeight: 1.6, marginTop: 6 }}>
+              Las patentes van por delante: la tecnología se protegió antes de que
+              la literatura la consolidara. Perfil de desarrollo empujado por la
+              industria.
+            </p>
+          )}
+          {comparison.lag_years !== null && comparison.direction === "papers_lead" && (
+            <p style={{ fontSize: 11.5, color: "var(--text-4)", lineHeight: 1.6, marginTop: 6 }}>
+              La ciencia va por delante: la transferencia a patentes todavía está
+              en curso. Ese retraso es la ventana de oportunidad tecnológica.
+            </p>
+          )}
+          {comparison.caveats.length > 0 && (
+            <ul style={{ margin: "10px 0 0", paddingLeft: 18 }}>
+              {comparison.caveats.map((c, i) => (
+                <li
+                  key={i}
+                  style={{ fontSize: 11.5, color: "var(--text-4)", lineHeight: 1.6, marginBottom: 3 }}
+                >
+                  {c}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          title="Cerrar comparación"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--text-4)",
+            cursor: "pointer",
+            padding: 2,
+            flexShrink: 0,
+          }}
+        >
+          <X style={{ width: 14, height: 14 }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────
 
 // ── CSV row type ──────────────────────────────────────────────
 interface CsvRow { count: number; year: number; docType: string; }
 
+type TabKey = "scopus" | "epo" | "patents";
+
 export default function SCurvePage() {
   // Tab
-  const [activeTab, setActiveTab] = useState<"scopus" | "patents">("scopus");
+  const [activeTab, setActiveTab] = useState<TabKey>("scopus");
 
   // Scopus form state
   const [query, setQuery] = useState("");
@@ -241,6 +743,12 @@ export default function SCurvePage() {
   const [yearTo, setYearTo] = useState(new Date().getFullYear());
   const [maxResults, setMaxResults] = useState<number | "">("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Patents (EPO OPS) state — sin api key: las credenciales son del servidor
+  const [epoQuery, setEpoQuery] = useState("");
+  const [epoYearFrom, setEpoYearFrom] = useState(2000);
+  const [epoYearTo, setEpoYearTo] = useState(new Date().getFullYear());
+  const [epoStatus, setEpoStatus] = useState<EPOStatus | null>(null);
 
   // Patents (CSV) state
   const [csvRows, setCsvRows] = useState<CsvRow[]>([]);
@@ -257,10 +765,52 @@ export default function SCurvePage() {
   const [result, setResult] = useState<SCurveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Los dos últimos resultados por naturaleza de la fuente. Se guardan para
+  // poder comparar papers contra patentes sin repetir ninguna descarga: una
+  // corrida de EPO cuesta una petición por año y no conviene gastarla dos veces.
+  const [papersResult, setPapersResult] = useState<SCurveResult | null>(null);
+  const [patentsResult, setPatentsResult] = useState<SCurveResult | null>(null);
+  const [comparison, setComparison] = useState<SCurveComparison | null>(null);
+  const [comparing, setComparing] = useState(false);
+
   // Data table
   const [showTable, setShowTable] = useState(false);
 
   const cancelRef = useRef<(() => void) | null>(null);
+
+  // Estado de EPO OPS: se consulta una vez al abrir la pestaña para no
+  // dejar que el usuario escriba una consulta y descubra al final que las
+  // credenciales del servidor no están puestas.
+  useEffect(() => {
+    if (activeTab !== "epo" || epoStatus) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/s-curve/epo/status`);
+        const data = (await res.json()) as EPOStatus;
+        if (!cancelled) setEpoStatus(data);
+      } catch {
+        if (!cancelled) {
+          setEpoStatus({
+            configured: false,
+            authenticated: false,
+            message: "No se pudo verificar el estado de EPO OPS.",
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, epoStatus]);
+
+  /** Archiva el resultado en el lado que le corresponde para la comparación. */
+  const storeResult = useCallback((res: SCurveResult) => {
+    setResult(res);
+    if (res.source === "scopus") setPapersResult(res);
+    else if (res.source === "epo" || res.source === "patents") setPatentsResult(res);
+    setComparison(null);
+  }, []);
 
   // ── CSV parser ──────────────────────────────────────────────
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,14 +881,68 @@ export default function SCurvePage() {
       setProgress(60);
       setProgressMsg("Ajustando curva sigmoidal…");
       const res = await analyzeSCurveLocal(counts, patentTitle || "Análisis de patentes");
-      setResult(res);
+      // El CSV es una serie de patentes: se marca como tal para que entre en
+      // la comparación con papers igual que la de EPO OPS.
+      storeResult({ ...res, source: "patents", source_label: res.source_label ?? "patentes (CSV)" });
       setProgress(100);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
       setRunning(false);
     }
-  }, [csvRows, selectedTypes, patentTitle]);
+  }, [csvRows, selectedTypes, patentTitle, storeResult]);
+
+  // ── Patentes vía EPO OPS ────────────────────────────────────
+  const handleEpoAnalyze = useCallback(() => {
+    if (!epoQuery.trim()) {
+      setError("Escribe un término o una consulta CQL de EPO OPS.");
+      return;
+    }
+
+    setError(null);
+    setResult(null);
+    setComparison(null);
+    setRunning(true);
+    setProgress(0);
+    setProgressMsg("Conectando con EPO OPS…");
+
+    cancelRef.current = streamPatentsAnalysis(
+      { query: epoQuery.trim(), year_from: epoYearFrom, year_to: epoYearTo },
+      (evt: SCurveProgress) => {
+        setProgress(evt.progress);
+        setProgressMsg(evt.message);
+      },
+      (res) => {
+        if (res) storeResult(res);
+        setRunning(false);
+        setProgress(100);
+      },
+      (err) => {
+        setError(err);
+        setRunning(false);
+      }
+    );
+  }, [epoQuery, epoYearFrom, epoYearTo, storeResult]);
+
+  // ── Desfase ciencia → tecnología ────────────────────────────
+  const handleCompare = useCallback(async () => {
+    if (!papersResult || !patentsResult) return;
+    setComparing(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/s-curve/compare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ papers: papersResult, patents: patentsResult }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      setComparison((await res.json()) as SCurveComparison);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "No se pudo comparar las series.");
+    } finally {
+      setComparing(false);
+    }
+  }, [papersResult, patentsResult]);
 
   const handleAnalyze = useCallback(() => {
     if (!query.trim()) { setError("La ecuación de búsqueda no puede estar vacía."); return; }
@@ -363,7 +967,8 @@ export default function SCurvePage() {
         setProgressMsg(evt.message);
       },
       (res) => {
-        setResult(res ?? null);
+        if (res) storeResult(res);
+        else setResult(null);
         setRunning(false);
         setProgress(100);
       },
@@ -374,7 +979,7 @@ export default function SCurvePage() {
     );
 
     cancelRef.current = cancel;
-  }, [query, apiKey, yearFrom, yearTo, maxResults]);
+  }, [query, apiKey, yearFrom, yearTo, maxResults, storeResult]);
 
   const handleStop = () => {
     cancelRef.current?.();
@@ -389,6 +994,7 @@ export default function SCurvePage() {
     setError(null);
     setProgress(0);
     setProgressMsg("");
+    setComparison(null);
   };
 
   const downloadCSV = () => {
@@ -446,8 +1052,9 @@ export default function SCurvePage() {
           {/* Tabs */}
           <div style={{ display: "flex", gap: 2, marginTop: 14, marginBottom: -1 }}>
             {([
-              { key: "scopus", label: "Scopus", icon: <Database style={{ width: 13, height: 13 }} /> },
-              { key: "patents", label: "Patentes (CSV)", icon: <FileText style={{ width: 13, height: 13 }} /> },
+              { key: "scopus", label: "Papers", icon: <Database style={{ width: 13, height: 13 }} /> },
+              { key: "epo", label: "Patentes (EPO)", icon: <Landmark style={{ width: 13, height: 13 }} /> },
+              { key: "patents", label: "CSV", icon: <FileText style={{ width: 13, height: 13 }} /> },
             ] as const).map(tab => (
               <button
                 key={tab.key}
@@ -730,6 +1337,231 @@ export default function SCurvePage() {
               </button>
             )}
           </div>
+        </>) : activeTab === "epo" ? (<>
+
+          {/* ── Patentes vía EPO OPS ──────────────────────── */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: "1px solid rgba(16,185,129,0.25)",
+              background: "rgba(16,185,129,0.06)",
+            }}
+          >
+            <Landmark style={{ width: 15, height: 15, color: "#10b981", flexShrink: 0, marginTop: 1 }} />
+            <p style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.6 }}>
+              Automatizado vía <strong style={{ color: "var(--text-2)" }}>EPO OPS</strong> —
+              patentes publicadas en la base mundial DOCDB. Las credenciales
+              están en el servidor: no hace falta API key.
+            </p>
+          </div>
+
+          {/* Estado del servicio */}
+          {epoStatus && !epoStatus.authenticated && (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.3)",
+                color: "#fca5a5",
+                fontSize: 11.5,
+                lineHeight: 1.55,
+              }}
+            >
+              {epoStatus.message}
+            </div>
+          )}
+          {epoStatus?.authenticated && (
+            <p style={{ fontSize: 11, color: "var(--text-4)", display: "flex", alignItems: "center", gap: 6 }}>
+              <CheckCircle2 style={{ width: 12, height: 12, color: "#10b981" }} />
+              EPO OPS operativo
+              {epoStatus.search_quota_per_min
+                ? ` · ${epoStatus.search_quota_per_min} búsquedas/min disponibles`
+                : ""}
+            </p>
+          )}
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>
+              Consulta de patentes (CQL)
+            </label>
+            <textarea
+              value={epoQuery}
+              onChange={(e) => setEpoQuery(e.target.value)}
+              placeholder={`txt="biodiesel"`}
+              rows={3}
+              disabled={running}
+              style={{
+                width: "100%",
+                background: "var(--surface-1)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                padding: "10px 12px",
+                fontSize: 12,
+                color: "var(--text-1)",
+                fontFamily: "var(--font-mono, monospace)",
+                resize: "vertical",
+                outline: "none",
+              }}
+            />
+            <p style={{ fontSize: 10.5, color: "var(--text-4)", marginTop: 6, lineHeight: 1.55 }}>
+              Un término suelto se envuelve en <code>txt=&quot;…&quot;</code> (título,
+              resumen, solicitante e inventor). También admite CQL:{" "}
+              <code>txt=&quot;biodiesel&quot; and pa=&quot;basf&quot;</code>.
+            </p>
+          </div>
+
+          <div>
+            <p style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Ejemplos rápidos
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {EPO_EXAMPLES.map((ex) => (
+                <button
+                  key={ex.label}
+                  onClick={() => setEpoQuery(ex.query)}
+                  disabled={running}
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--text-3)",
+                    fontSize: 11.5,
+                    cursor: running ? "default" : "pointer",
+                  }}
+                >
+                  {ex.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 11, color: "var(--text-3)", marginBottom: 5 }}>
+                Desde
+              </label>
+              <input
+                type="number"
+                value={epoYearFrom}
+                min={1900}
+                max={epoYearTo}
+                onChange={(e) => setEpoYearFrom(Number(e.target.value))}
+                disabled={running}
+                className="inp"
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 11, color: "var(--text-3)", marginBottom: 5 }}>
+                Hasta
+              </label>
+              <input
+                type="number"
+                value={epoYearTo}
+                min={epoYearFrom}
+                max={new Date().getFullYear()}
+                onChange={(e) => setEpoYearTo(Number(e.target.value))}
+                disabled={running}
+                className="inp"
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
+
+          {/*
+            OPS cobra una petición por año y limita las búsquedas por minuto,
+            así que el coste del rango es visible antes de lanzarlo: un rango
+            largo no falla, tarda.
+          */}
+          <p style={{ fontSize: 10.5, color: "var(--text-4)", lineHeight: 1.55 }}>
+            {Math.max(epoYearTo - epoYearFrom + 1, 0)} años ={" "}
+            {Math.max(epoYearTo - epoYearFrom + 1, 0)} peticiones a OPS. Con el
+            servicio saturado (5 búsquedas/min) puede tardar varios minutos.
+          </p>
+
+          {/* Error */}
+          {error && (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.3)",
+                color: "#fca5a5",
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          {/* Progress */}
+          {running && <ProgressBar value={progress} message={progressMsg} />}
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 8 }}>
+            {!running ? (
+              <button
+                onClick={handleEpoAnalyze}
+                disabled={epoStatus ? !epoStatus.authenticated : false}
+                className="btn btn-primary"
+                style={{
+                  flex: 1,
+                  gap: 8,
+                  opacity: epoStatus && !epoStatus.authenticated ? 0.5 : 1,
+                }}
+              >
+                <Play style={{ width: 14, height: 14 }} />
+                Analizar patentes
+              </button>
+            ) : (
+              <button
+                onClick={handleStop}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  background: "rgba(239,68,68,0.1)",
+                  color: "#fca5a5",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                <Square style={{ width: 13, height: 13 }} />
+                Detener
+              </button>
+            )}
+            {hasResult && !running && (
+              <button
+                onClick={handleReset}
+                title="Limpiar resultados"
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-3)",
+                  cursor: "pointer",
+                }}
+              >
+                <RotateCcw style={{ width: 14, height: 14 }} />
+              </button>
+            )}
+          </div>
         </>) : (
 
         /* ── Patents (CSV) tab ─────────────────────────── */
@@ -956,6 +1788,38 @@ export default function SCurvePage() {
           /* Results */
           <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 24 }}>
 
+            {/* Desfase ciencia → tecnología */}
+            {comparison ? (
+              <ComparisonPanel comparison={comparison} onClose={() => setComparison(null)} />
+            ) : (
+              papersResult && patentsResult && (
+                <div
+                  className="card"
+                  style={{
+                    padding: "14px 18px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                  }}
+                >
+                  <Scale style={{ width: 16, height: 16, color: "#8b5cf6", flexShrink: 0 }} />
+                  <p style={{ flex: 1, fontSize: 12.5, color: "var(--text-3)", lineHeight: 1.55 }}>
+                    Hay una serie de papers y otra de patentes en memoria. Compáralas
+                    para medir cuántos años separan sus inflexiones.
+                  </p>
+                  <button
+                    onClick={handleCompare}
+                    disabled={comparing}
+                    className="btn btn-primary"
+                    style={{ gap: 8, flexShrink: 0, opacity: comparing ? 0.6 : 1 }}
+                  >
+                    <GitCompareArrows style={{ width: 14, height: 14 }} />
+                    {comparing ? "Comparando…" : "Comparar papers ↔ patentes"}
+                  </button>
+                </div>
+              )
+            )}
+
             {/* Phase banner */}
             <div
               style={{
@@ -1050,6 +1914,39 @@ export default function SCurvePage() {
                     }}
                   >
                     {result.r2.toFixed(3)}
+                  </p>
+                </div>
+              )}
+
+              {/*
+                El R² no viaja solo. Sobre un acumulado casi siempre supera
+                0.99, y es el Durbin-Watson el que dice si ese número
+                significa algo o sólo refleja que la serie crece.
+              */}
+              {result.sigmoid_params?.durbin_watson != null && (
+                <div
+                  title="Durbin-Watson sobre los residuos (0–4). Cerca de 2: sin estructura. Muy por debajo: el ajuste tiene sesgo sistemático que el R² no ve."
+                  style={{
+                    textAlign: "center",
+                    padding: "10px 16px",
+                    borderRadius: 10,
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid var(--border)",
+                    flexShrink: 0,
+                    cursor: "help",
+                  }}
+                >
+                  <p style={{ fontSize: 11, color: "var(--text-4)", marginBottom: 2 }}>
+                    Durbin-Watson
+                  </p>
+                  <p
+                    style={{
+                      fontSize: 20,
+                      fontWeight: 800,
+                      color: dwColor(result.sigmoid_params.durbin_watson),
+                    }}
+                  >
+                    {result.sigmoid_params.durbin_watson.toFixed(3)}
                   </p>
                 </div>
               )}
@@ -1225,6 +2122,9 @@ export default function SCurvePage() {
                 </div>
               </div>
             )}
+
+            {/* Ajuste multi-modelo */}
+            <ModelComparisonCard result={result} />
 
             {/* Data table toggle */}
             <div className="card" style={{ padding: 0, overflow: "hidden" }}>

@@ -18,6 +18,9 @@ import httpx
 import numpy as np
 from scipy.optimize import curve_fit
 
+from core.epo import EPOClient, EPOError
+from core.s_curve_models import durbin_watson, dw_verdict, fit_all_models
+
 # Scopus no pagina más allá de este tope por consulta (§8.3).
 SCOPUS_MAX_RESULTS = 5000
 
@@ -105,6 +108,12 @@ def fit_sigmoid(years: list[int], cumulative: list[int]) -> dict | None:
         L_significant = bool(t_L is not None and abs(t_L) > T_SIGNIFICANCE)
         k_significant = bool(t_k is not None and abs(t_k) > T_SIGNIFICANCE)
 
+        # Durbin-Watson sobre los residuos del ajuste logístico. Es la métrica
+        # que delata el ajuste que "se ve bien": un R² de 0.997 con DW de 0.15
+        # significa que el modelo va sistemáticamente alto en un tramo y bajo
+        # en otro, y que el error no es ruido sino sesgo de forma.
+        dw = durbin_watson(residuals)
+
         x0_ci = None
         if np.isfinite(x0_se):
             x0_ci = [round(float(x0 - 1.96 * x0_se), 2), round(float(x0 + 1.96 * x0_se), 2)]
@@ -132,6 +141,8 @@ def fit_sigmoid(years: list[int], cumulative: list[int]) -> dict | None:
             "k": float(k),
             "r2": round(r2, 4),
             "rmse": round(rmse, 3),
+            "durbin_watson": round(dw, 3) if dw is not None else None,
+            "autocorrelation": dw_verdict(dw),
             "L_stderr": round(L_se, 3) if np.isfinite(L_se) else None,
             "x0_stderr": round(x0_se, 3) if np.isfinite(x0_se) else None,
             "k_stderr": round(k_se, 4) if np.isfinite(k_se) else None,
@@ -334,14 +345,31 @@ def _assemble_result(
     total_retrieved: int,
     entries_without_date: int = 0,
     truncated_windows: list[dict] | None = None,
+    source: str = "scopus",
+    source_label: str | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Arma el contrato de salida, común a la ruta Scopus y a la local."""
     params = fit_sigmoid(years, cumulative)
     curves = _build_curves(years, cumulative, params)
     phase_info = detect_phase(params, cumulative, years, datetime.now().year)
 
-    return {
+    # Ajuste multi-modelo: la logística sigue gobernando `sigmoid_params` y
+    # todo el contrato existente; la comparación se añade al lado. Sin esto,
+    # elegir la logística es elegir su techo de saturación por omisión, y de
+    # ese techo sale la fase que muestra la UI.
+    comparison = fit_all_models(years, cumulative)
+
+    peak = max(zip(annual, years)) if annual else (0, None)
+
+    result = {
         "query": query,
+        "source": source,
+        "source_label": source_label or (
+            "papers (Scopus)" if source == "scopus"
+            else "patentes (EPO OPS)" if source == "epo"
+            else "serie local"
+        ),
         # total_publications se conserva por compatibilidad con el frontend;
         # total_reported / total_retrieved desambiguan (§8.5).
         "total_publications": int(total_retrieved),
@@ -357,7 +385,12 @@ def _assemble_result(
             for y, a, c in zip(years, annual, cumulative)
         ],
         "annual_growth_rate": _annual_growth_rate(annual, years),
+        "peak_annual": int(peak[0]),
+        "peak_annual_year": int(peak[1]) if peak[1] is not None else None,
         "sigmoid_params": params,
+        # Tabla comparativa de los cinco modelos de 3 parámetros, con el mejor
+        # marcado y el aviso de autocorrelación si lo hay.
+        "model_comparison": comparison,
         "sigmoid_curve": curves["sigmoid_curve"],
         "growth_curve": curves["growth_curve"],
         "residuals": curves["residuals"],
@@ -371,12 +404,38 @@ def _assemble_result(
         "analyzed_at": datetime.now().isoformat(),
     }
 
+    if extra:
+        result.update(extra)
+    return result
+
+
+def best_inflection(result: dict) -> float | None:
+    """
+    Año de inflexión del MEJOR modelo, con la logística como red de seguridad.
+
+    Es el número que debe usarse para comparar dos series entre sí: la
+    inflexión de la logística está sesgada por su simetría forzada (siempre
+    cae en el 50 % de L), y comparar dos logísticas propaga ese sesgo a la
+    diferencia.
+    """
+    comp = result.get("model_comparison") or {}
+    best = comp.get("best_model")
+    if best and best.get("inflection_year") is not None:
+        return float(best["inflection_year"])
+    params = result.get("sigmoid_params")
+    if params:
+        return float(params["x0"])
+    return None
+
 
 # ── Local (CSV) analysis ─────────────────────────────────────────────────────
 
 def analyze_from_yearly_data(
     yearly_counts: dict[int, int],
     title: str = "Análisis",
+    source: str = "local",
+    source_label: str | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Ajuste sobre datos ya agregados por año (CSV de patentes)."""
     # Rellenar todos los años del rango: los huecos deben ser 0 explícito o el
@@ -393,6 +452,9 @@ def analyze_from_yearly_data(
         cumulative=cumulative,
         total_reported=sum(annual),
         total_retrieved=sum(annual),
+        source=source,
+        source_label=source_label,
+        extra=extra,
     )
 
 
@@ -688,6 +750,7 @@ async def analyze_s_curve(
             {"from": w["from"], "to": w["to"], "total": w["total"]}
             for w in truncated_windows
         ],
+        source="scopus",
     )
 
     yield {"status": "running", "progress": 96, "message": "Calculando métricas finales…"}
@@ -707,3 +770,204 @@ async def analyze_s_curve(
         }
 
     yield {"status": "completed", "progress": 100, "message": "Análisis completado.", "result": result}
+
+
+# ── Patentes vía EPO OPS ──────────────────────────────────────────────────────
+
+async def analyze_patents_epo(
+    query: str,
+    year_from: int = 2000,
+    year_to: int | None = None,
+) -> AsyncGenerator[dict, None]:
+    """
+    Curva en S de patentes usando EPO OPS, con los mismos eventos SSE que la
+    ruta de Scopus.
+
+    A diferencia de Scopus, aquí no hay paginación ni tope de 5000 que
+    esquivar: OPS da el conteo total de cada año en una sola petición
+    (`Range=1-1` + `@total-result-count`). El cuello de botella no es el
+    volumen sino la CUOTA — OPS publica su presupuesto de búsquedas por
+    minuto en cada respuesta y el cliente se ajusta a él.
+
+    Las credenciales viven en el servidor (EPO_CONSUMER_KEY / EPO_API_KEY), no
+    viajan desde el navegador como la key de Scopus.
+    """
+    if year_to is None:
+        year_to = datetime.now().year
+
+    if year_from > year_to:
+        yield {"status": "error", "message": "El año inicial no puede ser posterior al final."}
+        return
+
+    counts: dict[int, int] = {}
+    meta: dict = {}
+
+    try:
+        async with EPOClient() as epo:
+            async for event in epo.yearly_counts(query, year_from, year_to):
+                if event.get("status") == "error":
+                    yield event
+                    return
+                if event.get("status") == "completed":
+                    counts = {int(k): int(v) for k, v in event["counts"].items()}
+                    meta = {
+                        "epo_requests": event.get("requests_made"),
+                        "epo_failed_years": event.get("failed_years") or [],
+                        "epo_throttle": event.get("throttle"),
+                        "epo_throttled": bool(event.get("throttled")),
+                        "epo_cql": event.get("cql"),
+                    }
+                else:
+                    yield event
+    except EPOError as exc:
+        yield {"status": "error", "message": str(exc)}
+        return
+
+    if not counts:
+        yield {"status": "error", "message": "EPO OPS no devolvió datos utilizables."}
+        return
+
+    yield {"status": "running", "progress": 90, "message": "Ajustando los cinco modelos…"}
+
+    # Los años sin patentes son ceros reales medidos, no huecos: OPS respondió
+    # y dijo cero. Se conservan en la serie para que el arranque de la curva
+    # no quede desplazado.
+    years = list(range(min(counts), max(counts) + 1))
+    annual = [int(counts.get(y, 0)) for y in years]
+    cumulative = [int(v) for v in np.cumsum(annual)]
+
+    result = _assemble_result(
+        query=query,
+        years=years,
+        annual=annual,
+        cumulative=cumulative,
+        total_reported=sum(annual),
+        total_retrieved=sum(annual),
+        source="epo",
+        source_label="patentes (EPO OPS)",
+        extra=meta,
+    )
+
+    yield {
+        "status": "completed",
+        "progress": 100,
+        "message": (
+            f"{sum(annual):,} patentes en {len(years)} años "
+            f"({meta.get('epo_requests', 0)} peticiones a OPS)."
+        ),
+        "result": result,
+    }
+
+
+# ── Comparación papers ↔ patentes ─────────────────────────────────────────────
+
+def _side_summary(result: dict, kind: str) -> dict:
+    comp = result.get("model_comparison") or {}
+    best = comp.get("best_model") or {}
+    phase = result.get("phase") or {}
+    infl = best_inflection(result)
+    last_year = result.get("year_to")
+    return {
+        "kind": kind,
+        "label": result.get("source_label") or kind,
+        "query": result.get("query"),
+        "records": result.get("total_retrieved") or result.get("total_publications"),
+        "year_from": result.get("year_from"),
+        "year_to": last_year,
+        "peak_annual": result.get("peak_annual"),
+        "peak_annual_year": result.get("peak_annual_year"),
+        "phase": phase.get("phase"),
+        "phase_color": phase.get("color"),
+        "saturation_pct": phase.get("saturation_pct"),
+        "best_model": best.get("label") or comp.get("best_label"),
+        "inflection_year": round(infl, 1) if infl is not None else None,
+        "inflection_passed": bool(
+            infl is not None and last_year is not None and infl <= last_year
+        ),
+        "inflection_range": comp.get("inflection_range"),
+        "durbin_watson": best.get("durbin_watson"),
+        "warning": comp.get("warning"),
+    }
+
+
+def compare_papers_patents(papers: dict, patents: dict) -> dict:
+    """
+    Desfase ciencia → tecnología.
+
+    La hipótesis clásica de prospectiva es que la ciencia precede a la
+    tecnología: primero se publica, después se patenta. Cuando el dato dice
+    lo contrario —la inflexión de patentes LLEGA ANTES que la de papers— no
+    es un error de cálculo, es el perfil de una tecnología empujada por la
+    industria, con la literatura académica llegando después a explicar lo que
+    ya se estaba fabricando.
+
+    El desfase se mide entre las inflexiones del MEJOR modelo de cada serie,
+    no entre las dos logísticas: la logística fuerza simetría y su inflexión
+    cae siempre en el 50 % de L, sesgo que al restar dos series se propaga a
+    la diferencia.
+    """
+    p = _side_summary(papers, "papers")
+    t = _side_summary(patents, "patents")
+
+    lag = None
+    direction = "unknown"
+    interpretation = "No hay inflexión estimable en alguna de las dos series."
+
+    if p["inflection_year"] is not None and t["inflection_year"] is not None:
+        lag = round(p["inflection_year"] - t["inflection_year"], 1)
+        if lag > 0:
+            direction = "patents_lead"
+            interpretation = (
+                f"la inflexión de patentes ocurre {abs(lag)} años antes que la "
+                f"de papers."
+            )
+        elif lag < 0:
+            direction = "papers_lead"
+            interpretation = (
+                f"la inflexión de papers ocurre {abs(lag)} años antes que la "
+                f"de patentes."
+            )
+        else:
+            direction = "simultaneous"
+            interpretation = (
+                "ambas inflexiones coinciden en el mismo año: ciencia y "
+                "tecnología avanzaron a la par."
+            )
+
+    caveats: list[str] = []
+    for side in (p, t):
+        if side["warning"]:
+            caveats.append(f"{side['label']}: {side['warning']}")
+    # Rangos de inflexión solapados: el desfase no se distingue del ruido de
+    # elección de modelo, y decirlo importa más que el número.
+    if (
+        p["inflection_range"]
+        and t["inflection_range"]
+        and p["inflection_range"][0] <= t["inflection_range"][1]
+        and t["inflection_range"][0] <= p["inflection_range"][1]
+    ):
+        caveats.append(
+            "Los rangos de inflexión entre modelos se solapan: el desfase no "
+            "es distinguible de la incertidumbre de forma funcional."
+        )
+    if p["year_from"] != t["year_from"] or p["year_to"] != t["year_to"]:
+        caveats.append(
+            f"Las series cubren rangos distintos ({p['year_from']}–{p['year_to']} "
+            f"vs {t['year_from']}–{t['year_to']}): el desfase puede estar "
+            "afectado por el truncamiento."
+        )
+
+    return {
+        "papers": p,
+        "patents": t,
+        "lag_years": lag,
+        "direction": direction,
+        "interpretation": interpretation,
+        "headline": (
+            f"Desfase ciencia → tecnología: {interpretation}"
+            if lag is not None
+            else interpretation
+        ),
+        "caveats": caveats,
+        "compared_at": datetime.now().isoformat(),
+    }
