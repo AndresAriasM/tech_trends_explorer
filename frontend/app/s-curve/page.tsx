@@ -33,6 +33,9 @@ const PHASE_ICON: Record<string, string> = {
   "Aceleración": "🚀",
   "Maduración": "🌿",
   "Saturación": "🏔️",
+  // Fases del eje temporal, cuando el techo L no es estimable.
+  "Pre-inflexión": "🌤️",
+  "Post-inflexión": "🌇",
   "Sin datos": "❓",
 };
 
@@ -300,7 +303,8 @@ export default function SCurvePage() {
   const toggleType = (t: string) => {
     setSelectedTypes(prev => {
       const next = new Set(prev);
-      next.has(t) ? next.delete(t) : next.add(t);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
       return next;
     });
   };
@@ -992,18 +996,34 @@ export default function SCurvePage() {
                   >
                     {result.phase.phase}
                   </span>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      padding: "2px 8px",
-                      borderRadius: 20,
-                      background: `${result.phase.color}22`,
-                      color: result.phase.color,
-                    }}
-                  >
-                    {result.phase.saturation_pct}% saturación
-                  </span>
+                  {result.phase.saturation_pct !== null ? (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: 20,
+                        background: `${result.phase.color}22`,
+                        color: result.phase.color,
+                      }}
+                    >
+                      {result.phase.saturation_pct}% saturación
+                    </span>
+                  ) : (
+                    <span
+                      title="El techo de saturación no se puede estimar con los datos disponibles"
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: 20,
+                        background: "var(--surface-3)",
+                        color: "var(--text-3)",
+                      }}
+                    >
+                      saturación no estimable
+                    </span>
+                  )}
                 </div>
                 <p style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.5 }}>
                   {result.phase.description}

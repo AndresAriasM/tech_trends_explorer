@@ -118,13 +118,48 @@ export interface SCurveSigmoidParams {
   x0: number;
   k: number;
   r2: number;
+  /** Error absoluto en publicaciones. El R² sobre un acumulado es siempre alto. */
+  rmse: number;
+  L_stderr: number | null;
+  x0_stderr: number | null;
+  k_stderr: number | null;
+  t_L: number | null;
+  t_k: number | null;
+  L_significant: boolean;
+  k_significant: boolean;
+  /** L_stderr / L. Por encima de 0.20 el techo no es utilizable. */
+  L_rel_error: number | null;
+  /**
+   * Gobierna si se puede reportar saturación. Más estricto que L_significant:
+   * el t-test de L contrasta contra cero y casi siempre pasa.
+   */
+  L_identifiable: boolean;
+  /** Intervalo de confianza al 95 % de x0 — para x0 el valor t no informa. */
+  x0_ci95: [number, number] | null;
+  /** x0 fuera del rango observado: la inflexión está extrapolada. */
+  x0_extrapolated: boolean;
 }
 
+export type SCurvePhaseName =
+  | "Emergente"
+  | "Crecimiento"
+  | "Aceleración"
+  | "Maduración"
+  | "Saturación"
+  | "Pre-inflexión"
+  | "Post-inflexión"
+  | "Sin datos";
+
 export interface SCurvePhase {
-  phase: "Emergente" | "Crecimiento" | "Aceleración" | "Maduración" | "Saturación" | "Sin datos";
+  phase: SCurvePhaseName;
   color: string;
   description: string;
-  saturation_pct: number;
+  /** null cuando L no es identificable: no hay porcentaje que reportar. */
+  saturation_pct: number | null;
+  /** La fase se apoya sólo en el eje temporal; trátala como no concluyente. */
+  provisional: boolean;
+  basis: "saturation+temporal" | "temporal" | "none";
+  before_inflection?: boolean;
 }
 
 export interface SCurveResult {
@@ -135,7 +170,24 @@ export interface SCurveResult {
   yearly_data: SCurveYearlyData[];
   sigmoid_params: SCurveSigmoidParams | null;
   sigmoid_curve: Array<{ year: number; value: number }>;
+  /** Velocidad de adopción: derivada analítica de la sigmoide. */
+  growth_curve: Array<{ year: number; rate: number }>;
+  /** Residuos por año: revelan estructura que el R² oculta. */
+  residuals: Array<{ year: number; residual: number }>;
+  /** Cinco años de predicción. Dibujar punteado: no es ajuste. */
+  projections: Array<{ year: number; value: number }>;
+  /** Variación interanual del flujo anual, no del acumulado. */
+  annual_growth_rate: Array<{ year: number; pct: number | null }>;
+  peak_growth_year?: number;
+  peak_growth_rate?: number;
   phase: SCurvePhase;
+  /** Lo que Scopus dice que existe, frente a lo que se pudo descargar. */
+  total_reported: number | null;
+  total_retrieved: number;
+  entries_without_date: number;
+  /** Scopus cortó resultados en algún periodo: la curva los subestima. */
+  truncated: boolean;
+  truncated_windows: Array<{ from: number; to: number; total: number | null }>;
   inflection_year: number | null;
   saturation_level: number | null;
   r2: number | null;
