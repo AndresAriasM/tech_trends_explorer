@@ -149,10 +149,15 @@ end$$;
 
 
 -- ── 7. Respuestas por variable y ronda ──────────────────────────────────────
+-- Las tres vistas de abajo se declaran con security_invoker = true. Sin eso una
+-- vista se ejecuta con los permisos de su dueño (postgres), que ignora la RLS:
+-- un panelista consultándola vería las respuestas de todo el panel, que es
+-- justo lo que el anonimato de Delphi prohíbe.
 -- Vista que aplana el camino answer → submission → participant/round y expone
 -- la variable. Es la base de todo el cálculo entre rondas.
 
-create or replace view delphi_variable_responses as
+create or replace view delphi_variable_responses
+  with (security_invoker = true) as
 select
   r.study_id,
   r.id            as round_id,
@@ -182,7 +187,8 @@ where q.variable_id is not null
 -- haya respondido ambas rondas. El agregado por ronda se calcula aparte, sobre
 -- la población de agregado, y las dos cifras se reportan siempre separadas.
 
-create or replace view delphi_transitions as
+create or replace view delphi_transitions
+  with (security_invoker = true) as
 with numeric_responses as (
   select
     vr.*,
@@ -228,7 +234,8 @@ join numeric_responses b
 -- celdas discordantes de McNemar. El contraste estadístico se calcula en
 -- Python (core/delphi.py); aquí se dejan los conteos listos.
 
-create or replace view delphi_variable_transition_matrix as
+create or replace view delphi_variable_transition_matrix
+  with (security_invoker = true) as
 select
   study_id,
   variable_id,
