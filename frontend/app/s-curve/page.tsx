@@ -739,6 +739,20 @@ export default function SCurvePage() {
   // Scopus form state
   const [query, setQuery] = useState("");
   const [apiKey, setApiKey] = useState("");
+  /* Si el servidor tiene SCOPUS_API_KEY no hay que pedirla: el campo pasa a
+     ser opcional, para quien quiera gastar su propia cuota. */
+  const [scopusOnServer, setScopusOnServer] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    fetch(`${API_BASE_URL}/api/s-curve/scopus/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => vivo && setScopusOnServer(Boolean(d?.configured)))
+      .catch(() => vivo && setScopusOnServer(false));
+    return () => {
+      vivo = false;
+    };
+  }, []);
   const [yearFrom, setYearFrom] = useState(1990);
   const [yearTo, setYearTo] = useState(new Date().getFullYear());
   const [maxResults, setMaxResults] = useState<number | "">("");
@@ -946,7 +960,10 @@ export default function SCurvePage() {
 
   const handleAnalyze = useCallback(() => {
     if (!query.trim()) { setError("La ecuación de búsqueda no puede estar vacía."); return; }
-    if (!apiKey.trim()) { setError("Ingresa tu API key de Scopus."); return; }
+    if (!apiKey.trim() && scopusOnServer === false) {
+      setError("No hay API key de Scopus configurada en el servidor. Ingresa la tuya.");
+      return;
+    }
 
     setError(null);
     setResult(null);
@@ -979,7 +996,7 @@ export default function SCurvePage() {
     );
 
     cancelRef.current = cancel;
-  }, [query, apiKey, yearFrom, yearTo, maxResults, storeResult]);
+  }, [query, apiKey, scopusOnServer, yearFrom, yearTo, maxResults, storeResult]);
 
   const handleStop = () => {
     cancelRef.current?.();
@@ -1161,20 +1178,28 @@ export default function SCurvePage() {
             <label
               style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}
             >
-              API Key de Scopus
+              API Key de Scopus{" "}
+              {scopusOnServer && (
+                <span style={{ fontWeight: 500, color: "var(--text-4)" }}>
+                  · opcional
+                </span>
+              )}
             </label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Elsevier API key…"
+              placeholder={
+                scopusOnServer ? "Usando la clave del servidor" : "Elsevier API key…"
+              }
               disabled={running}
               className="inp"
               style={{ width: "100%" }}
             />
             <p style={{ fontSize: 11, color: "var(--text-4)", marginTop: 4 }}>
-              Obtén tu key en{" "}
-              <span style={{ color: "var(--accent)" }}>dev.elsevier.com</span>
+              {scopusOnServer
+                ? "El servidor ya tiene una clave configurada. Indica una sólo si prefieres gastar tu propia cuota."
+                : <>Obtén tu key en <span style={{ color: "var(--accent)" }}>dev.elsevier.com</span></>}
             </p>
           </div>
 

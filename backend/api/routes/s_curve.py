@@ -10,6 +10,7 @@ GET  /api/s-curve/history          → list saved analyses (placeholder)
 """
 
 import json
+import os
 from typing import Any, Optional, AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
@@ -32,7 +33,9 @@ router = APIRouter()
 
 class SCurveRequest(BaseModel):
     query: str
-    api_key: str
+    # Opcional: si no viene, se usa SCOPUS_API_KEY del servidor. Se mantiene
+    # el campo para que un usuario pueda gastar su propia cuota.
+    api_key: str = ""
     year_from: int = 1980
     year_to: Optional[int] = None
     max_results: Optional[int] = None
@@ -90,6 +93,12 @@ async def _stream_analysis(payload: SCurveRequest) -> AsyncGenerator[str, None]:
 
 # ── Routes ────────────────────────────────────────────────────
 
+@router.get("/scopus/status")
+async def scopus_status():
+    """¿Hay clave de Scopus en el servidor? La UI la pide sólo si no."""
+    return {"configured": bool(os.getenv("SCOPUS_API_KEY", "").strip())}
+
+
 @router.post("/analyze")
 async def analyze(payload: SCurveRequest):
     """
@@ -99,8 +108,15 @@ async def analyze(payload: SCurveRequest):
     """
     if not payload.query.strip():
         return {"error": "La consulta no puede estar vacía"}
+
     if not payload.api_key.strip():
-        return {"error": "Se requiere una API key de Scopus"}
+        servidor = os.getenv("SCOPUS_API_KEY", "").strip()
+        if not servidor:
+            return {
+                "error": "No hay API key de Scopus: ni en la petición ni en el "
+                         "servidor (SCOPUS_API_KEY)."
+            }
+        payload = payload.model_copy(update={"api_key": servidor})
 
     return StreamingResponse(
         _stream_analysis(payload),
