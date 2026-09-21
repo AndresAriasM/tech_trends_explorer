@@ -2,19 +2,27 @@
 
 import { usePathname } from "next/navigation";
 import { Bell, Search, ChevronRight } from "lucide-react";
+import { getModuleByPath } from "@/lib/modules";
 
-const BREADCRUMBS: Record<string, { module: string; page: string }> = {
-  "/":            { module: "Dashboard",   page: "Inicio" },
-  "/hype-cycle":  { module: "Hype Cycle",  page: "Análisis" },
-  "/history":     { module: "Hype Cycle",  page: "Historial" },
-  "/categories":  { module: "Hype Cycle",  page: "Categorías" },
-  "/s-curve":     { module: "Curvas S",    page: "Análisis" },
-  "/trends":      { module: "Tendencias",  page: "Búsqueda" },
-};
+/** Miga de pan derivada del registro de módulos, no de un mapa paralelo. */
+function useCrumb(pathname: string): { module: string; page: string } {
+  if (pathname === "/") return { module: "Prospecta", page: "Inicio" };
+
+  const mod = getModuleByPath(pathname);
+  if (!mod) return { module: "Prospecta", page: "" };
+
+  const route = mod.routes.find(
+    (r) => pathname === r.href || pathname.startsWith(`${r.href}/`)
+  );
+  // Rutas anidadas (p. ej. /workshop/ABC123) cuelgan del label de su módulo.
+  const page =
+    route && pathname !== route.href ? mod.name : route?.label ?? mod.name;
+  return { module: mod.name, page };
+}
 
 export function TopBar() {
   const pathname = usePathname();
-  const crumb = BREADCRUMBS[pathname] ?? { module: "Tech Trends", page: "Explorer" };
+  const crumb = useCrumb(pathname);
 
   return (
     <header
