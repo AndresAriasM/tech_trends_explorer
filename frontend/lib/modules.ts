@@ -20,6 +20,7 @@ import {
   Network,
   Radar,
   Radio,
+  ShieldCheck,
   Users,
   Zap,
   type LucideIcon,
@@ -62,6 +63,7 @@ export const SECTIONS = [
     badge: { text: "Nuevo", tone: "purple" } as SectionBadge,
   },
   { id: "library", label: "Biblioteca", crumb: "Biblioteca", badge: undefined },
+  { id: "manage", label: "Gestión", crumb: "Gestión", badge: undefined },
 ] as const;
 
 export type SectionId = (typeof SECTIONS)[number]["id"];
@@ -302,6 +304,28 @@ export const MODULES: ProspectiveModule[] = [
         section: "futures",
         // Vive dentro del trabajo de escenarios; no ocupa sitio propio en el menú.
         hiddenInNav: true,
+      },
+    ],
+  },
+  {
+    id: "admin",
+    name: "Administración",
+    purpose: "¿Quién entra al portal y con qué rol?",
+    status: "active",
+    kind: "cross-cutting",
+    apiPrefix: "/api/auth",
+    accent: "#64748b",
+    highlights: [
+      "Usuarios y roles",
+      "Roles reservados por correo",
+      "Acceso restringido a administradores",
+    ],
+    routes: [
+      {
+        href: "/admin",
+        label: "Administración",
+        icon: ShieldCheck,
+        section: "manage",
       },
     ],
   },

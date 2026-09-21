@@ -4,8 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronRight, MoreHorizontal, PanelLeft } from "lucide-react";
+import { ChevronRight, PanelLeft, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ROLE_LABELS, getRole, getUser, onAuthChange, type Role, type SessionUser } from "@/lib/auth";
 import {
   HOME_ITEM,
   NAV_SECTIONS,
@@ -17,12 +18,6 @@ interface Props {
   collapsed: boolean;
   onToggle: () => void;
 }
-
-const USER = {
-  name: "Andrés Arias",
-  affiliation: "Data Scientist · UPB",
-  initials: "AA",
-};
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -37,6 +32,17 @@ const BADGE_TONE: Record<SectionBadge["tone"], { fg: string; bg: string; bd: str
 
 export function Sidebar({ collapsed, onToggle }: Props) {
   const pathname = usePathname();
+
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [role, setRole] = useState<Role | null>(null);
+  useEffect(() => {
+    const sync = () => {
+      setUser(getUser());
+      setRole(getRole());
+    };
+    sync();
+    return onAuthChange(sync);
+  }, []);
 
   /* La lista de módulos es más larga que la ventana en pantallas cortas:
      su scroll es propio y se avisa con un degradado arriba/abajo. */
@@ -240,94 +246,84 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           padding: `0 ${collapsed ? "8px" : "10px"}`,
         }}
       >
-        <div
+        <Link
+          href="/cuenta"
+          title="Mi cuenta"
           className={cn(
-            "flex items-center rounded-xl cursor-pointer w-full",
+            "flex items-center rounded-xl w-full",
             collapsed && "justify-center"
           )}
           style={{
             gap: 10,
             height: 46,
             padding: collapsed ? 0 : "0 8px",
+            textDecoration: "none",
+            background:
+              pathname === "/cuenta" ? "rgba(79,142,247,0.10)" : "transparent",
             transition: "background 0.15s",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+            if (pathname !== "/cuenta")
+              e.currentTarget.style.background = "rgba(255,255,255,0.05)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
+            if (pathname !== "/cuenta")
+              e.currentTarget.style.background = "transparent";
           }}
-          title={collapsed ? `${USER.name} — ${USER.affiliation}` : undefined}
         >
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                background: "linear-gradient(135deg, #2f6fe0 0%, #6aa9ff 100%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 12,
-                fontWeight: 700,
-                color: "#fff",
-              }}
-            >
-              {USER.initials}
-            </div>
-            <span
-              className="pulse-dot"
-              title="En línea"
-              style={{
-                position: "absolute",
-                right: -1,
-                bottom: -1,
-                width: 9,
-                height: 9,
-                border: "2px solid var(--surface)",
-              }}
-            />
-          </div>
+          <span
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #4f8ef7 0%, #8b5cf6 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#fff",
+              flexShrink: 0,
+            }}
+          >
+            {(user?.email?.[0] ?? "?").toUpperCase()}
+          </span>
 
           {!collapsed && (
             <>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span
                   className="truncate"
                   style={{
+                    display: "block",
                     fontSize: 12.5,
                     fontWeight: 600,
                     color: "var(--text-1)",
                     lineHeight: 1.25,
                   }}
                 >
-                  {USER.name}
-                </p>
-                <p
+                  {user?.email?.split("@")[0] ?? "Sin sesión"}
+                </span>
+                <span
                   className="truncate"
                   style={{
+                    display: "block",
                     fontSize: 10.5,
                     color: "var(--text-3)",
                     marginTop: 1,
-                    lineHeight: 1.25,
                   }}
                 >
-                  {USER.affiliation}
-                </p>
-              </div>
-              <button
-                className="icon-btn shrink-0"
-                style={{ width: 26, height: 26 }}
-                title="Opciones de la cuenta"
-                aria-label="Opciones de la cuenta"
-              >
-                <MoreHorizontal style={{ width: 15, height: 15 }} />
-              </button>
+                  {role ? ROLE_LABELS[role] : "—"}
+                </span>
+              </span>
+              <Settings2
+                style={{ width: 14, height: 14, color: "var(--text-3)", flexShrink: 0 }}
+              />
             </>
           )}
-        </div>
+        </Link>
       </div>
+
     </aside>
   );
 }
