@@ -1,356 +1,395 @@
-# Lógica del módulo Delphi
+# Módulo Delphi — de Google Forms a instrumento propio
 
-**Propósito:** extraer la mecánica de rondas tal como se ejecutó realmente, para
-poder construir el módulo. [ARQUITECTURA_MODULOS.md](ARQUITECTURA_MODULOS.md)
-declara que *"la mecánica concreta está pendiente de definición; no se implementa
-nada de Delphi hasta tenerla"* — este documento es esa definición.
+**Propósito:** definir la mecánica de rondas del módulo Delphi.
+[ARQUITECTURA_MODULOS.md](ARQUITECTURA_MODULOS.md) la declara *"pendiente de
+definición"* y bloqueante — este documento la resuelve.
 
-**Origen:** `~/Downloads/EmpleosFuturo_SegundaRonda.ipynb` (14 celdas)
-**Ejercicio:** Empleos del futuro, UPB — horizonte **2036**
+**Evidencia:** `~/Downloads/EmpleosFuturo_SegundaRonda.ipynb` — el ejercicio
+*Empleos del futuro UPB*, horizonte **2036**, ejecutado con Google Forms.
 **Relacionado:** [LOGICA_CURVA_S.md](LOGICA_CURVA_S.md)
 
 ---
 
-## 1. El ejercicio real
+## 0. La tesis de este documento
+
+El notebook tiene ~600 líneas. **Unas 40 son el análisis; el resto es reparar los
+daños de recolectar con un formulario que no controlamos.** Renombrar columnas por
+posición, cruzar personas por su nombre escrito a mano, adivinar qué significa una
+celda vacía, tratar `NS/NR` como un 6 dentro de la escala.
+
+Nada de eso es Delphi. Es peaje de Google Forms.
+
+> **Lo que hay que portar es la pregunta, no el pipeline.** La pregunta es: *¿cambió
+> el panel de opinión sobre esta variable entre rondas, y hacia dónde?* Al ser
+> dueños del instrumento, esa pregunta se responde con una consulta, no con una
+> limpieza.
+
+Este documento separa las dos cosas: **§1–3** extraen la mecánica real que hay que
+conservar; **§4–10** definen el sistema que la sustituye.
+
+---
+
+## 1. El ejercicio tal como ocurrió
 
 | | Ronda 1 | Ronda 2 |
 |---|---|---|
-| Archivo | `EmpleosFuturo.xlsx` | `EmpleosFuturo2.xlsx` |
 | Fechas | mayo–junio 2023 | enero–marzo 2024 |
 | Respondentes | **55** | **29** |
-| Escala | Likert **1–5** (+ 6 = NS/NR) | **binaria** |
-| Ítems tras limpieza | 67 | 67 |
+| Escala | Likert **1–5** (+ 6 = NS/NR) | **binaria** (prioritario / no a 2036) |
+| Ítems comparables | 67 | 67 |
 
-Los 29 de la ronda 2 **están todos** en la ronda 1 (celdas 9–10: la intersección
-da exactamente 29). Deserción del panel: 55 → 29, **47 %**. Ocho meses entre rondas.
+**El panel es anidado, no pareado:** los 29 de la ronda 2 están todos en la ronda 1
+(celdas 9–10: la intersección da exactamente 29). Deserción del 47 %, ocho meses
+entre rondas. Es el patrón normal y hay que diseñar para él, no tratarlo como
+anomalía (§6).
 
-> **El cambio de escala entre rondas es la decisión de diseño central.** Ronda 1
-> mide intensidad (1–5); ronda 2 fuerza una decisión (prioritario / no prioritario
-> a 2036). Es un diseño Delphi legítimo —la segunda ronda estrecha hacia el
-> acuerdo— pero implica que **no existe un estadístico de estabilidad sobre la
-> misma escala**. Todo el análisis depende de dicotomizar la ronda 1.
-
-### Taxonomía de los ítems
-
-Las 67 preguntas se agrupan en **8 familias de empleos + 1 bloque de competencias**,
-y la agrupación está codificada *posicionalmente* por columnas marcadoras de texto
-libre (`OpinionesCN`, `OpinionesPC`, `OpinionesDIA`, `OpinionesI`, `OpinionesGC`,
-`OpinionesM`, `OpinionesDP`, `OpinionesV`, `OpinionesOH`): cada una cierra su
-familia.
-
-| Marcador | Familia |
-|---|---|
-| `OpinionesCN` | Computación en la nube |
-| `OpinionesPC` | Producción de contenido |
-| `OpinionesDIA` | Datos e inteligencia artificial |
-| `OpinionesI` | Ingeniería y desarrollo |
-| `OpinionesGC` | Gestión del capital humano |
-| `OpinionesM` | Marketing y crecimiento |
-| `OpinionesDP` | Producto y calidad |
-| `OpinionesV` | Ventas |
-| `OpinionesOH` | Competencias / habilidades |
-
-El notebook **descarta las nueve** (celda 4) junto con la estructura de familias.
-Para el módulo, la familia debe ser un campo del ítem, no un artefacto del orden
-de columnas.
+Los 67 ítems se agrupan en **8 familias de empleos + 1 bloque de competencias**.
+Hoy la agrupación está codificada de forma implícita: unas columnas marcadoras de
+texto libre (`OpinionesCN`, `OpinionesPC`, `OpinionesDIA`, `OpinionesI`,
+`OpinionesGC`, `OpinionesM`, `OpinionesDP`, `OpinionesV`, `OpinionesOH`) cierran
+cada familia. El notebook las descarta y con ellas la taxonomía. En el modelo
+propio, la familia es un atributo de la variable.
 
 ---
 
-## 2. El pipeline, celda por celda
+## 2. La regla de comparación — lo único que hay que conservar
 
-```
- 2  Cargar ronda 1     → fillna(6), replace('NS/NR', 6)
- 3  Renombrar          → 60+ set_axis posicionales, nombre de ítem por posición
- 4  Podar              → drop de metadatos, K, Opiniones*; astype(int64) → 67 ítems
- 6  Cargar ronda 2     → mismo tratamiento de NS/NR
- 7  Podar              → drop posicional de ~200 columnas; conservar 68
- 9  Cruzar panel       → set(R1.Nombre) ∩ set(R2.Nombre2) → 29 nombres
-11  Armar matriz       → filas = panelistas cruzados, columnas = ítems de R1
-12  Verificar          → symmetric_difference de nombres de columna
-13  Codificar + exportar → Excel con relleno rojo/verde
-```
-
-La celda 12 merece rescate: es el **único control de integridad** del notebook.
-Compara los nombres de columna de ambas rondas y reporta las diferencias; el
-resultado real fue `['Nombre', 'Nombre2']`, es decir, los 67 ítems alinearon. Sin
-ese chequeo, la cirugía posicional de las celdas 4 y 7 fallaría en silencio.
-
----
-
-## 3. La regla de codificación — el núcleo
-
-Celda 13. Es toda la lógica del análisis de rondas:
+Celda 13. Es todo el análisis entre rondas:
 
 ```python
-if (valor_R1 in [4, 5, 4.0, 5.0]) and (valor_R2 == "Opción 1"):
-    matriz.at[fila, item] = 1        # relleno ROJO   #FFCCCC
-if (valor_R1 in [0, 1, 2, 3, 6])    and (valor_R2 == "Opción 2"):
-    matriz.at[fila, item] = 2        # relleno VERDE  #CCFFCC
-# en cualquier otro caso queda ""
+if valor_R1 in [4, 5]         and valor_R2 == "Opción 1":  celda = 1   # rojo
+if valor_R1 in [0,1,2,3,6]    and valor_R2 == "Opción 2":  celda = 2   # verde
+# cualquier otro caso: ""
 ```
 
-Puesto como matriz 2×2:
+Como matriz de transición, que es como hay que verlo:
 
-| | R2 = Opción 1 (prioritario) | R2 = Opción 2 (no prioritario) |
+| | R2 = prioritario | R2 = no prioritario |
 |---|---|---|
-| **R1 ∈ {4,5}** (alto) | **1** · rojo · mantiene alto | *(vacío)* · **bajó** |
-| **R1 ∈ {1,2,3}** o NS/NR | *(vacío)* · **subió** | **2** · verde · mantiene bajo |
+| **R1 alto** (4–5) | **a** · mantiene alto | **b** · *bajó* |
+| **R1 bajo** (1–3, NS/NR) | **c** · *subió* | **d** · mantiene bajo |
 
-> **El hallazgo principal: el notebook codifica sólo la diagonal.** Marca la
-> *estabilidad* y deja en blanco el *cambio*. Pero en un Delphi el dato que importa
-> es justamente la off-diagonal: quién se movió, en qué dirección y sobre qué ítem.
-> La ronda 2 existe para medir eso. Registrar sólo quién no cambió, y además sin
-> distinguirlo de un fallo de datos (§4), tira el resultado del método.
+El notebook colorea `a` y `d`, y deja `b` y `c` en blanco.
 
-**El umbral de dicotomización es ≥ 4.** Es el parámetro más consecuente de todo el
-ejercicio y está enterrado en un literal dentro de un `if`. Debe ser configuración
-explícita del estudio.
+> **`b` y `c` son la respuesta a la pregunta del ejercicio.** Son quienes cambiaron
+> de opinión. Y son, literalmente, las dos celdas discordantes de una **tabla de
+> McNemar**: el contraste estándar para datos binarios pareados, que prueba si el
+> movimiento del panel es asimétrico —convergencia real hacia una posición— o
+> simétrico —ruido—. La tabla estaba armada; sólo faltaba contarla.
+
+**El umbral de dicotomización es `≥ 4`** y está enterrado en un literal. Es el
+parámetro más consecuente del ejercicio: con umbral 3 el mapa de variables cambia
+por completo. Debe ser configuración del estudio (§5).
 
 ---
 
-## 4. La celda vacía significa cuatro cosas distintas
+## 3. Por qué la celda en blanco no sirve
 
-Este es el defecto que hay que no heredar. Un `""` en la matriz puede ser:
+Un `""` en la matriz significa hoy cuatro cosas indistinguibles:
 
-1. **Cambio real de opinión** — el panelista se movió entre rondas. *(la señal)*
-2. **Vocabulario distinto en la ronda 2.** El formulario no usa un solo par de
-   etiquetas: hay ítems con `"Opción 1"` / `"Opción 2"` y otros con
-   `"PRIORITARIO A 2036"` / `"NO PRIORITARIO A 2036"`. La comparación sólo prueba
-   contra el primer par, así que **todo ítem etiquetado con el segundo queda
-   permanentemente en blanco**. Verificado sobre `Gerente de productos digitales`
-   (columna 43 del set final): sus valores crudos son `PRIORITARIO A 2036` y nunca
-   pueden casar.
-3. **Ítem sin respuesta en toda la ronda 2.** `Desarrollador back-end` quedó como
-   `float64` tras `fillna(6)` — o sea, los 29 panelistas lo dejaron vacío. Una
-   columna numérica jamás iguala a `"Opción 1"`. El ítem desaparece sin avisar.
+1. **Cambio real de opinión** — la señal que se busca.
+2. **Vocabulario inconsistente en la ronda 2.** El formulario no usa un solo par de
+   etiquetas: hay ítems con `"Opción 1"/"Opción 2"` y otros con
+   `"PRIORITARIO A 2036"/"NO PRIORITARIO A 2036"`. La comparación sólo prueba contra
+   el primero, así que los del segundo grupo quedan **permanentemente en blanco**.
+   Verificado sobre `Gerente de productos digitales` (columna 43 del set final):
+   sus valores crudos son `PRIORITARIO A 2036` y nunca pueden casar.
+3. **Ítem sin ninguna respuesta en la ronda 2.** `Desarrollador back-end` quedó como
+   columna `float64` tras `fillna(6)` — nadie lo contestó. Una columna numérica
+   jamás iguala a `"Opción 1"`; el ítem desaparece sin aviso.
 4. **Dato faltante puntual.**
 
-Las cuatro se pintan igual: celda blanca. **La salida no permite distinguir
-convergencia de fallo del instrumento.** Al construir el módulo, cada par
-(ronda_n, ronda_n+1) debe producir un estado explícito —`mantiene_alto`,
-`mantiene_bajo`, `subió`, `bajó`, `sin_dato`, `no_comparable`— nunca una ausencia.
+**Consecuencia práctica:** los resultados exportados de esa ronda 2 no son
+confiables tal cual. Un número indeterminado de blancos son fallos de etiqueta, no
+convergencia. Antes de reutilizar esas conclusiones hay que reprocesar los Excel
+con la regla corregida (§10).
+
+Los cuatro casos son **síntomas del mismo problema**: el significado de una
+respuesta se decide al leer el export, no al recogerla.
 
 ---
 
-## 5. Lo que el instrumento recoge y el análisis tira
+## 4. Lo que desaparece al ser dueños del instrumento
 
-### 5.1 El coeficiente de competencia experta K — la pérdida grave
+Esta es la razón de construir el módulo. Casi todos los defectos del notebook son
+artefactos de la recolección, y se disuelven solos:
 
-La ronda 1 pregunta explícitamente:
+| Problema actual | Causa | Con instrumento propio |
+|---|---|---|
+| Renombrar 60 columnas por posición (celda 3) | El export es una hoja ancha con orden impredecible | La respuesta ya viene con `variable_id` |
+| Lista de ~200 índices literales para podar (celda 7) | Forms mezcla ítems, `Puntos:`, `Comentarios:`, metadatos | No hay columnas basura que podar |
+| Cruzar panel por nombre tecleado (celda 9) | No hay identidad estable entre formularios | `panelist_id` por token de invitación |
+| Dos vocabularios de etiquetas (§3.2) | Las opciones se escriben a mano por pregunta | La escala se define una vez, en el estudio |
+| `NS/NR → 6` dentro del rango (§3) | Forms no distingue abstención de valor | Abstención es un campo aparte, no un número |
+| Celda vacía ambigua (§3) | Todo lo anterior, aguas abajo | Cada par de rondas produce un estado explícito |
+| La celda 12 como único control | No hay garantía de que los ítems alineen | Los ítems **son** las variables del estudio |
+
+De esa tabla sale el criterio de portabilidad: **no se porta nada de las celdas 2–12.**
+Se porta la matriz de la §2 y se tira la ETL.
+
+Los síntomas del cruce por nombre valen como recordatorio de lo que se evita: en la
+salida real aparecen `'Sandra Milena Rondón Lagos '` y `'JOHN HARDY GARCIA ORTIZ '`
+con espacio final, mayúsculas inconsistentes, tildes variables. Dieron 29
+coincidencias, y **no hay forma de saber cuántas se perdieron** por un espacio —
+cada pérdida se lee como deserción del panel. Había un correo electrónico en el
+formulario y no se usó.
+
+---
+
+## 5. Lo que Google Forms no puede hacer, y es el punto
+
+Quitar fricción de limpieza justifica la mitad del esfuerzo. La otra mitad es que
+**un Delphi de verdad necesita algo que un formulario estático no da**:
+
+### 5.1 Devolución personalizada y anónima entre rondas
+
+En la ronda N+1, cada panelista debe ver, junto a cada variable:
+
+- **su propia respuesta anterior**,
+- **la distribución del panel** en esa variable (anónima y agregada),
+- **los argumentos de quienes opinaron distinto** (anónimos),
+- y sólo entonces, la opción de mantener o cambiar.
+
+Eso es el método. Sin ello la ronda 2 es una re-votación a ciegas, y es
+exactamente lo que ocurrió: el formulario de 2024 no le recordaba a nadie qué había
+contestado en 2023.
+
+Es imposible en un Google Form plano —requiere un formulario distinto por
+panelista— y es trivial cuando el portal es dueño de los datos.
+
+> Los argumentos cualitativos ya se recogen hoy: las nueve columnas `Opiniones*`,
+> una por familia. El notebook las descarta. **Son la materia prima de la
+> devolución** y deben persistirse por variable, no por familia, para poder
+> mostrarlas donde corresponde. Candidato natural para que el asistente redacte el
+> resumen anónimo, con la convención ya establecida en
+> [`ai_voter.py`](../backend/core/ai_voter.py) de marcar lo generado.
+
+### 5.2 Ponderar por competencia experta
+
+La ronda 1 ya pregunta:
 
 ```
 INFORMACIÓN PARA COEFICIENTE DE COMPETENCIA EXPERTA "K"
 FUENTE CONOCIMIENTO. Kc
-Por favor seleccione una de las siguientes opciones de acuerdo con el
-conocimiento que tiene sobre empleos del futuro
 ```
 
-con respuestas del tipo *"Soy especialista en el tema y tengo bastante
-conocimiento…"* / *"No soy especialista y tengo algún conocimiento…"* / *"…poco
-conocimiento…"*.
-
-Las celdas 3 y 4 **las descartan todas** (`columnas_a_eliminar = datos.columns[[1..11, …]]`),
+con respuestas del tipo *"Soy especialista y tengo bastante conocimiento…"* /
+*"No soy especialista y tengo algún conocimiento…"*. Las celdas 3–4 la descartan,
 junto con `Formación Académica` y `Afiliación laboral`.
 
-> El Delphi clásico pondera a cada experto por **K = (Kc + Ka) / 2** —fuente de
-> conocimiento y grado de argumentación— y suele excluir del panel a quienes
-> quedan por debajo de 0.5. El instrumento fue **diseñado** para eso: el
-> encabezado lo dice con todas las letras. El análisis lo ignora y trata a los 55
-> panelistas como intercambiables.
+El Delphi clásico pondera cada experto por **K = (Kc + Ka) / 2** y suele excluir a
+quienes quedan bajo 0.5. El instrumento fue diseñado para eso y el análisis trata a
+los 55 como intercambiables. Con panel propio, K se calcula una vez al alta y
+pondera toda agregación posterior.
 
-**Recuperarlo es la prioridad número uno del módulo.** Requiere: persistir Kc y Ka
-por panelista, calcular K, y que toda agregación acepte un vector de pesos.
+### 5.3 Decisión de diseño: escala constante, dicotomía en el análisis
 
-### 5.2 Las opiniones en texto libre
+El ejercicio cambió de Likert 1–5 a binaria entre rondas. Fuerza la decisión, sí,
+pero **destruye toda estadística pareada**: no se puede medir cuánto se movió
+alguien si la regla cambió de unidades.
 
-Nueve columnas `Opiniones*` —una por familia— con el argumento cualitativo del
-panelista. Descartadas en la celda 4.
+**Recomendación: recoger siempre en la escala completa y dicotomizar al analizar,
+con el umbral como parámetro.** Se obtiene lo mismo que hoy —la matriz 2×2 de la
+§2, con `umbral = 4`— *y además*:
 
-En Delphi esos textos **son la devolución**: lo que se muestra anonimizado al panel
-entre rondas para que reconsidere. Sin ellos la ronda 2 es una re-votación a ciegas,
-no un Delphi. Deben persistirse y ser el insumo del resumen anónimo entre rondas
-(candidato natural para el asistente de IA, con la convención ya establecida en
-[`ai_voter.py`](../backend/core/ai_voter.py) de marcar lo generado).
+- desplazamiento de la mediana por variable entre rondas,
+- reducción del rango intercuartílico (la medida de estabilidad clásica en Delphi),
+- Wilcoxon de rangos con signo sobre los pares, que usa la magnitud del cambio y no
+  sólo su signo,
+- la posibilidad de mover el umbral a posteriori y ver si el mapa aguanta.
 
-### 5.3 Las demás
-
-- `Formación Académica`, `Afiliación laboral` — estratificación del panel, perdida.
-- `Correo electrónico2` — **existía un identificador estable y no se usó** (§6.1).
-- `Puntos:` / `Comentarios:` por ítem en la ronda 2 — artefactos del modo
-  cuestionario de Microsoft Forms. Descartarlos está bien.
+La presión hacia el acuerdo la debe ejercer **la devolución** (§5.1), no el
+estrechamiento de la escala.
 
 ---
 
-## 6. Deudas técnicas del notebook
+## 6. El panel anidado: dos poblaciones, no una
 
-### 6.1 Cruce del panel por nombre escrito a mano
+Que R2 ⊆ R1 tiene una consecuencia que hay que resolver en el diseño, no en el
+análisis:
 
-```python
-nombres_repetidos = list(set(datos['Nombre']).intersection(set(datos1['Nombre2'])))
-```
+- **Población de agregado** — quienes contestaron esa ronda (55 en R1, 29 en R2).
+  Es lo que se reporta como resultado de la ronda y lo que se devuelve al panel.
+- **Población de cambio** — la intersección (29). Es la única sobre la que se puede
+  hablar de movimiento de opinión.
 
-Intersección exacta de cadenas que cada persona tecleó **dos veces, con ocho meses
-de diferencia**. En la salida real se ven los síntomas: `'Sandra Milena Rondón Lagos '`
-y `'JOHN HARDY GARCIA ORTIZ '` con espacio final, mayúsculas inconsistentes
-(`EDWIN PELAEZ` junto a `Elaine Torres`), tildes variables.
+Reportarlas como si fueran lo mismo es el error fácil: *"la prioridad de X subió del
+60 % al 75 %"* puede ser que nadie cambió de opinión y simplemente desertaron los
+que decían que no.
 
-Dieron 29 coincidencias. **No hay manera de saber cuántos se perdieron** por un
-espacio o una tilde — y cada pérdida se lee como deserción del panel. Y había un
-correo electrónico en el formulario.
+**Lo que el módulo debe calcular sin que nadie lo pida:**
 
-Al construir: identificador de panelista generado por la plataforma, invitación por
-token. El nombre nunca es la llave.
-
-### 6.2 Cirugía posicional de columnas
-
-Celda 7: una lista de ~200 índices enteros literales. Celda 3: sesenta llamadas a
-`set_axis` que renombran `datos.columns[N]` por posición. Cualquier reordenamiento
-del formulario desplaza todo en silencio. La celda 12 es el único paracaídas.
-
-### 6.3 `NS/NR` codificado como 6 y agrupado con lo bajo
-
-`fillna(6)` + `replace('NS/NR', 6)`, y luego `[0, 1, 2, 3, 6]` en la regla. Dos
-consecuencias:
-
-- **"No sabe" se convierte en juicio negativo.** Una abstención pasa a contar como
-  "no prioritario". Es una imputación fuerte y no declarada.
-- **6 > 5 rompe cualquier estadístico sobre la escala cruda.** El notebook no
-  calcula medias, pero los DataFrames quedan listos para que alguien lo haga y
-  obtenga basura. La ausencia debe ser `NaN`, no un valor dentro del rango.
-
-### 6.4 Menores
-
-- `.values[0]` en la búsqueda por nombre: si un nombre está duplicado, toma el
-  primero sin avisar.
-- Los dos `if` de la celda 13 no son `elif`, aunque las condiciones son
-  mutuamente excluyentes. Inofensivo, pero frágil ante cambios.
-- `'Diseño y programación de tecnología1'` — etiqueta duplicada por el formulario;
-  el notebook la descarta (índice 85). Correcto, pero por accidente posicional.
-- `excel_writer.save()` está deprecado; usar `with pd.ExcelWriter(...)`.
+1. Las dos cifras por separado, siempre etiquetadas.
+2. El agregado de la ronda 1 **restringido a los que siguieron**, junto al agregado
+   de los 55. Si difieren, la deserción no fue aleatoria y la estabilidad medida
+   sobre los 29 está sesgada. Es una comparación barata y nadie la hizo.
+3. La tasa de deserción por ronda como métrica de salud del panel.
 
 ---
 
-## 7. Lo que no existe y define al método
+## 7. El producto: el mapa de variables
 
-El notebook **no calcula ninguna medida de consenso ni de estabilidad**. La
-conclusión del ejercicio es una hoja de cálculo coloreada que se lee a ojo.
-
-Falta, en orden de importancia:
-
-1. **Grado de consenso por ítem** — % de acuerdo en la ronda 2, o IQR sobre la
-   escala de la ronda 1.
-2. **Estabilidad entre rondas** — la proporción de panelistas que no se movieron,
-   que es la matriz de la §3 bien contabilizada. Es el **criterio de parada**: el
-   Delphi termina cuando la estabilidad supera un umbral, no cuando se acaban las
-   ganas.
-3. **Dirección del cambio agregada** — cuántos subieron y cuántos bajaron por ítem.
-   Un ítem con 40 % de movimiento pero simétrico es ruido; uno con 40 % todo en la
-   misma dirección es convergencia hacia una posición nueva.
-4. **Kendall's W** sobre el ordenamiento de ítems, si se quiere una medida global.
-5. **Ponderación por K** (§5.1) en todas las anteriores.
-
-El módulo de taller ya tiene un precedente de lo (1):
-[`compute_synthesis`](../backend/core/workshop.py#L332) calcula media, desviación y
-un `consensus_score = 1 - std/1.5` por variable, y ordena por disenso. Esa función
-es el punto de partida más cercano —pero es **de ronda única**: no tiene
-`round_number` ni comparación entre rondas, que es exactamente lo que
-[ARQUITECTURA_MODULOS.md](ARQUITECTURA_MODULOS.md) señala como la diferencia entre
-Taller y Delphi.
-
----
-
-## 8. Modelo propuesto
-
-> Esta sección es **propuesta**, no extracción. Lo anterior describe lo que hay;
-> esto es lo que sugiero construir sobre el modelo de dominio compartido.
-
-Cuatro entidades, encajadas en `Study` / `Variable` / `Evidence` / `Juicio`:
+El objetivo declarado es *hacer el mapeo y evaluar las variables*. El resultado
+útil no es una hoja coloreada por panelista, sino **una clasificación de cada
+variable en dos ejes**: cuánto acuerdo hay, y cuánto se movió.
 
 ```
-DelphiPanel      study_id, horizon_year (2036), umbral_dicotomia (4),
-                 criterio_parada (estabilidad ≥ X)
+   consenso alto  ┌─────────────────────┬─────────────────────┐
+                  │  CONVERGIENDO       │  CERRADA            │
+                  │  el panel se movió  │  acuerdo estable    │
+                  │  hacia el acuerdo   │  → no repreguntar   │
+                  │  → una ronda más    │                     │
+                  ├─────────────────────┼─────────────────────┤
+                  │  INESTABLE          │  DISENSO PERSISTENTE│
+                  │  mucho movimiento,  │  desacuerdo firme   │
+                  │  sin dirección      │  → no lo resuelve   │
+                  │  → revisar redacción│    otra ronda       │
+   consenso bajo  └─────────────────────┴─────────────────────┘
+                    estabilidad baja       estabilidad alta
+```
+
+Los cuatro cuadrantes piden acciones distintas, y esa es la utilidad:
+
+- **Cerrada** — entra al estudio como juicio consolidado.
+- **Convergiendo** — justifica abrir la ronda siguiente sobre *esas* variables.
+- **Disenso persistente** — hallazgo legítimo: el panel está genuinamente dividido.
+  Más rondas no lo arreglan; se reporta como tal, o se busca la variable oculta que
+  separa a los dos grupos.
+- **Inestable** — señal de que la variable está mal formulada o es ambigua.
+
+Esto permite además **abrir rondas parciales**: la ronda 3 sólo pregunta por las
+variables que no cerraron. Reduce la carga sobre el panel, que es la causa principal
+de la deserción del 47 %.
+
+---
+
+## 8. Modelo de datos y flujo
+
+Encajado en `Study` / `Variable` / `Evidence` / `Juicio` de la arquitectura. El
+ítem Delphi **es** una `Variable` del estudio — así el juicio del panel sobre
+"Científico de datos" y la curva en S de esa misma ocupación cuelgan de la misma
+entidad, que es el objetivo.
+
+```
+DelphiPanel      study_id, horizon_year, escala, umbral_dicotomia,
+                 criterio_parada, max_rondas
 DelphiPanelist   panel_id, token, Kc, Ka, K, formación, afiliación, activo
-DelphiRound      panel_id, round_number, escala ('likert_1_5' | 'binaria'),
-                 abierta_desde, cerrada_en
-DelphiResponse   round_id, panelist_id, item_id (→ Variable),
-                 value, is_abstention (NO un 6), argumento (texto libre)
+DelphiRound      panel_id, round_number, estado, abierta_desde, cerrada_en,
+                 variables[]            ← ronda parcial: subconjunto
+DelphiResponse   round_id, panelist_id, variable_id,
+                 value, is_abstention, argumento
+DelphiTransition round_from, round_to, panelist_id, variable_id, estado
 ```
 
-El ítem es una `Variable` del estudio, con `familia` como atributo — así la curva
-en S de "Científico de datos" y el juicio del panel sobre ese mismo empleo cuelgan
-de la misma entidad, que es el objetivo de la arquitectura.
+Dos detalles que resuelven los problemas de la §3:
 
-**Transición entre rondas**, como estado explícito y no como celda vacía:
+- **`is_abstention` es un booleano aparte**, nunca un valor dentro de la escala. Se
+  acabó el 6.
+- **`DelphiTransition.estado` es un enum explícito**, nunca una ausencia:
 
 ```python
-TRANSICIONES = {
-    ("alto", "alto"):  "mantiene_alto",
-    ("bajo", "bajo"):  "mantiene_bajo",
-    ("bajo", "alto"):  "subio",
-    ("alto", "bajo"):  "bajo",
-}
-# más: "sin_dato" (abstención) y "no_comparable" (ítem ausente en una ronda)
+MANTIENE_ALTO | MANTIENE_BAJO | SUBIO | BAJO      # comparables
+ABSTUVO | NO_RESPONDIO | VARIABLE_AUSENTE          # no comparables, distinguibles
 ```
 
-**Salida del análisis de ronda**, por ítem:
+### Flujo de una ronda
 
-```jsonc
-{
-  "item_id": "cientifico-de-datos", "familia": "Datos e IA",
-  "n_ronda_1": 55, "n_ronda_2": 29, "n_pareados": 29,
-  "pct_prioritario_r2": 82.8,
-  "consenso": 0.83,              // ponderado por K
-  "estabilidad": 0.72,           // pareados que no se movieron
-  "transiciones": { "mantiene_alto": 18, "mantiene_bajo": 3,
-                    "subio": 5, "bajo": 2, "sin_dato": 1, "no_comparable": 0 },
-  "direccion_neta": +3,
-  "convergente": true            // estabilidad ≥ umbral del panel
-}
+```
+1. Abrir      → se genera el formulario por panelista desde variables[]
+2. Recoger    → una respuesta por (panelista, variable), con argumento opcional
+3. Cerrar     → automático por fecha o por umbral de participación
+4. Analizar   → dispara el cálculo de §9 sin intervención
+5. Devolver   → paquete anónimo por panelista para la ronda siguiente (§5.1)
+6. Decidir    → ¿hay variables sin cerrar? → proponer ronda N+1 sobre ellas
 ```
 
-Y a nivel de panel: deserción por ronda, K medio, número de ítems convergentes, y
-la recomendación de abrir o no una ronda 3.
+El paso 4 es *"automatizar los análisis entre rondas"*: cerrar la ronda es el único
+gesto manual; el informe y el paquete de devolución se generan solos.
 
 ---
 
-## 9. Resumen para la adaptación
+## 9. Métricas
 
-**Conservar del notebook**
-- La matriz 2×2 alto/bajo × ronda como estructura del análisis (§3) — pero
-  contabilizando las cuatro celdas, no sólo la diagonal.
-- La dicotomización de la ronda 1 en el umbral ≥ 4, ahora como parámetro.
-- El chequeo de alineación de ítems entre rondas (celda 12).
-- Las familias de ítems, hoy implícitas en los marcadores `Opiniones*` (§1).
-- La devolución visual rojo/verde: se lee bien y el panel la entiende.
+Ninguna existe hoy: la conclusión del ejercicio es una hoja leída a ojo.
 
-**Recuperar del instrumento, que ya lo recoge**
-- **Kc / Ka → K**, y ponderar toda agregación por K (§5.1).
-- Los argumentos en texto libre como devolución anónima entre rondas (§5.2).
-- Formación y afiliación para estratificar el panel.
-- El correo como identificador estable (§6.1).
+**Por variable y ronda**
+- `n`, tasa de respuesta, tasa de abstención
+- mediana, rango intercuartílico (IQR), % sobre el umbral
+- `consenso` — ponderado por K
 
-**Construir nuevo**
-- Métricas de consenso, estabilidad y dirección del cambio (§7).
-- Criterio de parada explícito.
-- `round_number` como primera clase: el módulo debe soportar N rondas, no dos.
+**Por variable, entre rondas** (sólo población de cambio, §6)
+- tabla de transición completa `a / b / c / d`
+- `estabilidad` = (a + d) / pareados
+- `direccion_neta` = c − b
+- **McNemar** sobre `b` y `c`: ¿el movimiento es asimétrico?
+- desplazamiento de la mediana y reducción del IQR (si la escala se mantiene, §5.3)
 
-**Descartar**
-- `NS/NR → 6` dentro de la escala; usar `NaN` + bandera de abstención (§6.3).
-- Tratar la abstención como juicio negativo.
-- El cruce del panel por nombre (§6.1).
-- La selección de columnas por índice literal (§6.2).
-- La celda vacía como valor semántico (§4).
+**Por panel**
+- deserción por ronda; comparación de agregados R1-total vs R1-restringido (§6.2)
+- K medio del panel activo
+- variables por cuadrante (§7)
+- **criterio de parada**: convencionalmente, estabilidad ≥ 85 % o IQR ≤ 1 en escala
+  de 5. Debe ser configurable y estar declarado antes de abrir la ronda 1.
+
+El punto de partida más cercano en el repo es
+[`compute_synthesis`](../backend/core/workshop.py#L332), que ya calcula media,
+desviación y un `consensus_score = 1 − std/1.5` por variable, y ordena por disenso.
+Sirve como base para el bloque "por variable y ronda" — pero es de **ronda única**:
+no tiene `round_number` ni comparación entre rondas, que es justo la diferencia
+entre Taller y Delphi que marca la arquitectura.
 
 ---
 
-## 10. Advertencia sobre los datos de este ejercicio
+## 10. Importar lo histórico
 
-Los dos Excel (`EmpleosFuturo.xlsx`, `EmpleosFuturo2.xlsx`) **no están en el
-repositorio** y contienen nombres completos, correos institucionales y afiliaciones
-de 55 personas identificables. Si se migran a Supabase, entran como datos
-personales: seudonimizar el panel y no versionar los archivos crudos.
+El ejercicio de 2023–2024 debe poder cargarse al sistema nuevo, tanto para no
+perderlo como para validar el módulo contra un caso conocido.
 
-Por el problema de la §4, además, **los resultados de la ronda 2 tal como se
-exportaron no son confiables**: un número indeterminado de celdas en blanco son
-fallos de emparejamiento de etiquetas, no cambios de opinión. Antes de reutilizar
-esas conclusiones habría que reprocesar los Excel originales con la regla corregida.
+La ETL del notebook (celdas 2–12) se convierte en **un importador de un solo uso**,
+fuera del núcleo: lee los dos `.xlsx`, mapea columnas a `variable_id`, cruza el
+panel y emite `DelphiResponse`. Con dos correcciones obligatorias:
+
+- **Normalizar ambos vocabularios de etiquetas** (`Opción 1` ≡ `PRIORITARIO A 2036`),
+  que es el fallo de la §3.2.
+- **`NS/NR` y vacío → `is_abstention = true`**, no 6, y nunca agrupados con el
+  extremo bajo. Hoy una abstención cuenta como juicio negativo: imputación fuerte y
+  no declarada.
+
+Una vez importado, el análisis corregido dirá cuántas de las celdas en blanco eran
+cambios reales de opinión y cuántas eran el bug. Es la prueba de aceptación natural
+del módulo.
+
+> **Datos personales.** Los dos Excel no están en el repositorio y contienen nombres
+> completos, correos institucionales y afiliaciones de 55 personas identificables.
+> Al migrar: seudonimizar el panel, no versionar los crudos, y que el `panelist_id`
+> sea opaco.
+
+---
+
+## 11. Resumen
+
+**Conservar del ejercicio actual**
+- La matriz de transición 2×2 (§2) — contando las cuatro celdas, no dos.
+- La dicotomización de la escala, ahora como parámetro y en el análisis (§5.3).
+- Las familias de variables, hoy implícitas en los marcadores `Opiniones*` (§1).
+- La devolución visual rojo/verde: el panel la entiende.
+
+**Recuperar del instrumento, que ya lo recoge y se tira**
+- Kc / Ka → K, ponderando toda agregación (§5.2).
+- Los argumentos en texto libre, como devolución entre rondas (§5.1).
+- Formación y afiliación, para estratificar.
+
+**Construir nuevo — es la razón del módulo**
+- Formulario por panelista con su respuesta anterior y la distribución del panel (§5.1).
+- Identidad estable por token; nunca por nombre (§4).
+- Abstención como campo, transición como enum (§8).
+- Métricas de consenso, estabilidad y dirección; criterio de parada (§9).
+- El mapa de variables en cuatro cuadrantes (§7).
+- Rondas parciales sobre las variables que no cerraron (§7).
+- N rondas, no dos.
+
+**Descartar sin reemplazo**
+- Toda la ETL de las celdas 2–12 (§4), salvo como importador histórico (§10).
+- La celda vacía como valor semántico (§3).
+- `NS/NR` dentro de la escala numérica.
+- El cambio de escala entre rondas (§5.3).
