@@ -28,14 +28,42 @@ import type {
 
 const AHORA = new Date().getFullYear();
 
-/* Ecuaciones de ejemplo: la sintaxis de Scopus y la de EPO OPS no son
-   iguales, y verlas juntas ahorra la mitad de las dudas. */
-const EJEMPLOS = [
-  { concepto: "Biodiésel", scopus: 'TITLE-ABS-KEY("biodiesel")', epo: 'txt="biodiesel"' },
-  { concepto: "Baterías de estado sólido", scopus: 'TITLE-ABS-KEY("solid state battery")', epo: 'txt="solid state battery"' },
-  { concepto: "Células solares de perovskita", scopus: 'TITLE-ABS-KEY("perovskite solar cell")', epo: 'txt="perovskite solar cell"' },
-  { concepto: "Hidrógeno verde", scopus: 'TITLE-ABS-KEY("green hydrogen")', epo: 'txt="green hydrogen"' },
+/* Ecuaciones de ejemplo, con el volumen real medido contra cada API en el
+   rango 2000-2026. El grupo es el cuadrante que se espera encontrar, no una
+   medición: depende de dónde caiga la inflexión de cada serie. */
+const EJEMPLOS: Array<{
+  concepto: string;
+  scopus: string;
+  epo: string;
+  papers: number;
+  patentes: number;
+  grupo: string;
+}> = [
+  // Campo maduro por ambos lados
+  { concepto: "Biodiésel", scopus: 'TITLE-ABS-KEY("biodiesel")', epo: 'txt="biodiesel"', papers: 62931, patentes: 43760, grupo: "Consolidada" },
+  { concepto: "CRISPR", scopus: 'TITLE-ABS-KEY("CRISPR")', epo: 'txt="CRISPR"', papers: 101336, patentes: 73984, grupo: "Consolidada" },
+
+  // Más patentes que papers: la industria va por delante
+  { concepto: "Vehículo autónomo", scopus: 'TITLE-ABS-KEY("autonomous vehicle")', epo: 'txt="autonomous vehicle"', papers: 71684, patentes: 115728, grupo: "Industria por delante" },
+  { concepto: "Computación cuántica", scopus: 'TITLE-ABS-KEY("quantum computing")', epo: 'txt="quantum computing"', papers: 35608, patentes: 92349, grupo: "Industria por delante" },
+  { concepto: "Gemelos digitales", scopus: 'TITLE-ABS-KEY("digital twin")', epo: 'txt="digital twin"', papers: 58349, patentes: 72599, grupo: "Industria por delante" },
+  { concepto: "Baterías de estado sólido", scopus: 'TITLE-ABS-KEY("solid state battery")', epo: 'txt="solid state battery"', papers: 22880, patentes: 32706, grupo: "Industria por delante" },
+
+  // Mucha publicación, poca patente: sigue en laboratorio
+  { concepto: "Perovskita fotovoltaica", scopus: 'TITLE-ABS-KEY("perovskite solar cell")', epo: 'txt="perovskite solar cell"', papers: 46334, patentes: 15372, grupo: "Ciencia por delante" },
+  { concepto: "Captura de carbono", scopus: 'TITLE-ABS-KEY("carbon capture")', epo: 'txt="carbon capture"', papers: 49924, patentes: 22008, grupo: "Ciencia por delante" },
+
+  // Emergentes: pocas de las dos, y las más rápidas de probar
+  { concepto: "Hidrógeno verde", scopus: 'TITLE-ABS-KEY("green hydrogen")', epo: 'txt="green hydrogen"', papers: 15045, patentes: 11475, grupo: "Incipiente" },
+  { concepto: "Envases biodegradables", scopus: 'TITLE-ABS-KEY("biodegradable packaging")', epo: 'txt="biodegradable packaging"', papers: 2553, patentes: 2791, grupo: "Incipiente" },
 ];
+
+const GRUPOS = [
+  "Consolidada",
+  "Industria por delante",
+  "Ciencia por delante",
+  "Incipiente",
+] as const;
 
 type EstadoLado = {
   corriendo: boolean;
@@ -200,26 +228,51 @@ export default function PatentsPapersPage() {
           </Campo>
         </div>
 
-        <div style={{ marginTop: 16 }}>
-          <p className="label-sm" style={{ color: "var(--text-3)", marginBottom: 8 }}>
+        <div style={{ marginTop: 18 }}>
+          <p className="label-sm" style={{ color: "var(--text-3)", marginBottom: 4 }}>
             Ejemplos
           </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {EJEMPLOS.map((ej) => (
-              <button
-                key={ej.concepto}
-                className="btn btn-ghost"
-                style={{ fontSize: 12, padding: "6px 11px" }}
-                disabled={corriendo}
-                onClick={() => {
-                  setScopusQ(ej.scopus);
-                  setEpoQ(ej.epo);
+          <p style={{ fontSize: 11, color: "var(--text-4)", marginBottom: 12 }}>
+            Volumen real medido en 2000–2026. El grupo es el cuadrante
+            esperable, no una medición.
+          </p>
+
+          {GRUPOS.map((g) => (
+            <div key={g} style={{ marginBottom: 10 }}>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  color: "var(--text-4)",
+                  marginBottom: 6,
                 }}
               >
-                {ej.concepto}
-              </button>
-            ))}
-          </div>
+                {g}
+              </p>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                {EJEMPLOS.filter((e) => e.grupo === g).map((ej) => (
+                  <button
+                    key={ej.concepto}
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, padding: "6px 11px", flexDirection: "column", alignItems: "flex-start", gap: 1 }}
+                    disabled={corriendo}
+                    title={`${ej.papers.toLocaleString()} papers · ${ej.patentes.toLocaleString()} patentes`}
+                    onClick={() => {
+                      setScopusQ(ej.scopus);
+                      setEpoQ(ej.epo);
+                    }}
+                  >
+                    <span>{ej.concepto}</span>
+                    <span style={{ fontSize: 9.5, color: "var(--text-4)", fontWeight: 500 }}>
+                      {(ej.papers / 1000).toFixed(0)}k · {(ej.patentes / 1000).toFixed(0)}k
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         <div
