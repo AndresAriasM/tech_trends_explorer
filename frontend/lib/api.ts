@@ -7,6 +7,9 @@
 
 import type {
   AnalyzeRequest,
+  EPOStatus,
+  SCurveComparison,
+  SCurvePatentsRequest,
   AnalyzeResponse,
   Category,
   HypeCycleQuery,
@@ -234,4 +237,134 @@ export function analyzeSCurveLocal(
     method: "POST",
     body: JSON.stringify({ yearly_counts: yearlyCounts, title }),
   });
+}
+
+
+/* ── Patentes (EPO OPS) y matriz papers ↔ patentes ─────────── */
+
+/**
+ * Lector SSE genérico: consume un endpoint que responde text/event-stream
+ * con eventos {status, progress, message} y un último {status:"completed"}.
+ *
+ * EventSource no sirve porque estos endpoints son POST.
+ */
+function streamSCurveEndpoint(
+  path: string,
+  body: unknown,
+  onProgress: (evt: SCurveProgress) => void,
+  onComplete: (result: SCurveResult | undefined) => void,
+  onError: (message: string) => void
+): () => void {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.body) throw new Error("El servidor no devolvió un stream");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim())
+            .join("");
+          if (!data) continue;
+
+          let evt: SCurveProgress;
+          try {
+            evt = JSON.parse(data) as SCurveProgress;
+          } catch {
+            continue;
+          }
+
+          if (evt.status === "error") {
+            controller.abort();
+            onError(evt.message ?? "Error en el análisis");
+            return;
+          }
+
+          onProgress(evt);
+
+          if (evt.status === "completed") {
+            controller.abort();
+            onComplete(evt.result);
+            return;
+          }
+        }
+      }
+      onComplete(undefined);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      onError(err instanceof Error ? err.message : "Error desconocido");
+    }
+  })();
+
+  return () => controller.abort();
+}
+
+/** Curva de patentes vía EPO OPS. Las credenciales viven en el servidor. */
+export function streamPatentsAnalysis(
+  payload: SCurvePatentsRequest,
+  onProgress: (evt: SCurveProgress) => void,
+  onComplete: (result: SCurveResult | undefined) => void,
+  onError: (message: string) => void
+): () => void {
+  return streamSCurveEndpoint(
+    "/api/s-curve/analyze-patents",
+    payload,
+    onProgress,
+    onComplete,
+    onError
+  );
+}
+
+/** Curva de publicaciones vía Scopus. La clave también es del servidor. */
+export function streamPapersAnalysis(
+  payload: { query: string; year_from?: number; year_to?: number },
+  onProgress: (evt: SCurveProgress) => void,
+  onComplete: (result: SCurveResult | undefined) => void,
+  onError: (message: string) => void
+): () => void {
+  return streamSCurveEndpoint(
+    "/api/s-curve/analyze",
+    { ...payload, api_key: "" },
+    onProgress,
+    onComplete,
+    onError
+  );
+}
+
+/** Desfase ciencia → tecnología entre dos análisis ya calculados. */
+export function comparePapersPatents(
+  papers: SCurveResult,
+  patents: SCurveResult
+): Promise<SCurveComparison> {
+  return request<SCurveComparison>("/api/s-curve/compare", {
+    method: "POST",
+    body: JSON.stringify({ papers, patents }),
+  });
+}
+
+/** ¿Están configuradas las credenciales de EPO OPS en el servidor? */
+export function getEPOStatus(): Promise<EPOStatus> {
+  return request<EPOStatus>("/api/s-curve/epo/status");
 }

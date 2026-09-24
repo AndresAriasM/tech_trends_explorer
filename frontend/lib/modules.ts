@@ -144,14 +144,14 @@ export const MODULES: ProspectiveModule[] = [
     name: "Matriz Pat./Papers",
     purpose:
       "¿Cómo se relacionan la producción científica y la actividad de patentes de una tecnología?",
-    // La pantalla aún no existe: se declara para la navegación, no es navegable.
-    status: "in-progress",
+    status: "active",
+    apiPrefix: "/api/s-curve",
     kind: "evidence",
     accent: "#38bdf8",
     highlights: [
-      "Papers frente a patentes",
-      "Cuadrantes de madurez",
-      "Brecha ciencia-industria",
+      "Scopus frente a EPO OPS",
+      "Desfase ciencia → tecnología",
+      "Inflexión por mejor modelo",
     ],
     routes: [
       {
