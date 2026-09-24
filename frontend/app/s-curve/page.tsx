@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Activity, Play, Square, RotateCcw, TrendingUp, Calendar, BookOpen, Target, Sigma, ChevronDown, ChevronUp, Download, Copy, Check, Database, FileText, Upload, X, Filter, AlertTriangle, CheckCircle2, GitCompareArrows, Scale, Landmark } from "lucide-react";
-import { streamSCurveAnalysis, analyzeSCurveLocal, API_BASE_URL } from "@/lib/api";
+import { streamPapersAnalysis, analyzeSCurveLocal, API_BASE_URL } from "@/lib/api";
 import { SCurveChart } from "@/components/charts/SCurveChart";
 import type {
   SCurveResult,
@@ -970,13 +970,13 @@ export default function SCurvePage() {
     setProgress(0);
     setProgressMsg("Iniciando…");
 
-    const cancel = streamSCurveAnalysis(
+    // Conteo anual: una petición por año en vez de paginar el corpus entero.
+    // maxResults deja de tener sentido aquí — no se descargan registros.
+    const cancel = streamPapersAnalysis(
       {
         query: query.trim(),
-        api_key: "",   // el backend usa la clave del servidor
         year_from: yearFrom,
         year_to: yearTo,
-        max_results: maxResults === "" ? undefined : Number(maxResults),
       },
       (evt: SCurveProgress) => {
         setProgress(evt.progress);
@@ -995,7 +995,7 @@ export default function SCurvePage() {
     );
 
     cancelRef.current = cancel;
-  }, [query, scopusOnServer, yearFrom, yearTo, maxResults, storeResult]);
+  }, [query, scopusOnServer, yearFrom, yearTo, storeResult]);
 
   const handleStop = () => {
     cancelRef.current?.();

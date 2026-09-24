@@ -504,9 +504,18 @@ def _window_query(base_query: str, y_from: int, y_to: int) -> str:
     Ventana temporal con BEF/AFT, que son exclusivos — de ahí los ±1.
     Más limpio que `PUBYEAR > a-1 AND PUBYEAR < b+1`.
     """
+    # El orden de las cláusulas NO es indiferente: en Scopus el NOT se lleva
+    # todo lo que viene detrás. Con
+    #     (...) AND NOT DOCTYPE(pt) AND PUBYEAR AFT 2014 AND PUBYEAR BEF 2016
+    # se interpreta NOT (DOCTYPE(pt) AND PUBYEAR...), que es cierto para casi
+    # todo: la ventana devolvía el corpus ENTERO —62.931 en vez de 3.128— y el
+    # filtro de años no se aplicaba nunca.
+    # Entre paréntesis, `AND (NOT DOCTYPE(pt))`, devuelve 0. La única forma
+    # correcta es dejar el NOT al final. Verificado contra la API.
     return (
-        f"({base_query}) AND NOT DOCTYPE(pt) "
-        f"AND PUBYEAR AFT {y_from - 1} AND PUBYEAR BEF {y_to + 1}"
+        f"({base_query}) "
+        f"AND PUBYEAR AFT {y_from - 1} AND PUBYEAR BEF {y_to + 1} "
+        f"AND NOT DOCTYPE(pt)"
     )
 
 
@@ -585,6 +594,123 @@ def _extract_year_sync(entry: dict) -> int | None:
         return int(m.group(0))
 
     return None
+
+
+async def analyze_papers_by_count(
+    query: str,
+    api_key: str,
+    year_from: int = 1980,
+    year_to: int | None = None,
+) -> AsyncGenerator[dict, None]:
+    """
+    Curva de publicaciones SIN descargar las publicaciones.
+
+    `analyze_s_curve` pagina el corpus entero de 25 en 25 para después contar
+    cuántos registros cayeron en cada año. Para una curva en S eso es trabajo
+    tirado: lo único que se usa de cada registro es su año. Con 62.931 papers
+    son 2.518 peticiones y cerca de una hora; preguntando "cuántos hay en
+    2015" año por año son 27 peticiones y menos de un minuto — 93 veces menos.
+
+    Es el mismo truco que `core/epo.py` ya usaba para patentes: pedir una
+    página mínima y leer el total que anuncia la cabecera.
+
+    Lo que se pierde: los metadatos de cada registro (títulos, países,
+    autores). Ningún cálculo de la curva los necesita, pero si algún día hace
+    falta un mapa o una nube de términos, para eso queda `analyze_s_curve`.
+    """
+    if year_to is None:
+        year_to = datetime.now().year
+
+    headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
+    anios = list(range(year_from, year_to + 1))
+
+    async with httpx.AsyncClient() as client:
+        yield {"status": "running", "progress": 3, "message": "Verificando consulta con Scopus…"}
+
+        total_reportado = await _probe_total(
+            client, headers, _window_query(query, year_from, year_to)
+        )
+        if total_reportado is None:
+            yield {
+                "status": "error",
+                "message": "No se pudo conectar con la API de Scopus. Verifica la consulta.",
+            }
+            return
+        if total_reportado == 0:
+            yield {"status": "error", "message": "No se encontraron publicaciones con esta consulta."}
+            return
+
+        yield {
+            "status": "running",
+            "progress": 6,
+            "message": (
+                f"{total_reportado:,} publicaciones. Contando por año "
+                f"({len(anios)} peticiones)…"
+            ),
+        }
+
+        pubs: dict[int, int] = {}
+        fallidos: list[int] = []
+
+        for i, anio in enumerate(anios, start=1):
+            n = await _probe_total(client, headers, _window_query(query, anio, anio))
+            if n is None:
+                fallidos.append(anio)
+            elif n > 0:
+                pubs[anio] = n
+
+            yield {
+                "status": "running",
+                "progress": min(6 + int(i / len(anios) * 80), 86),
+                "message": (
+                    f"Scopus {anio}: {n if n is not None else '—'} publicaciones "
+                    f"({i}/{len(anios)} años)"
+                ),
+            }
+            await asyncio.sleep(0.25)  # cortesía con la API
+
+    if not pubs:
+        yield {
+            "status": "error",
+            "message": "No se obtuvo ningún conteo anual de Scopus.",
+        }
+        return
+
+    yield {"status": "running", "progress": 90, "message": "Ajustando curva sigmoidal…"}
+
+    min_yr, max_yr = min(pubs), max(pubs)
+    years = list(range(min_yr, max_yr + 1))
+    annual = [int(pubs.get(y, 0)) for y in years]
+    cumulative = [int(v) for v in np.cumsum(annual)]
+
+    recuperado = sum(annual)
+    result = _assemble_result(
+        query=query,
+        years=years,
+        annual=annual,
+        cumulative=cumulative,
+        total_reported=total_reportado,
+        total_retrieved=recuperado,
+        entries_without_date=0,
+        truncated_windows=[{"from": a, "to": a, "total": None} for a in fallidos],
+    )
+    result["source"] = "papers"
+    result["source_label"] = "papers (Scopus)"
+    # El conteo por año no está sujeto al tope de 5000 por consulta: cada año
+    # se pregunta por separado y sólo se lee el total anunciado.
+    result["counting_mode"] = "annual_counts"
+
+    if fallidos:
+        yield {
+            "status": "running",
+            "progress": 96,
+            "message": (
+                f"Aviso: {len(fallidos)} año(s) sin respuesta de Scopus "
+                f"({', '.join(map(str, fallidos[:6]))}). La curva los omite."
+            ),
+        }
+
+    yield {"status": "completed", "progress": 100, "message": "Análisis completado.", "result": result}
 
 
 async def analyze_s_curve(

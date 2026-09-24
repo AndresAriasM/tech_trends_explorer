@@ -395,14 +395,30 @@ class EPOClient:
                 n = await self.count(build_cql(query, year))
                 counts[year] = n
             except EPOQuotaError:
-                # La cuota se agotó a mitad de serie: devolver lo que hay,
-                # marcado, es mejor que perderlo todo.
+                # Si no se llegó a obtener NINGÚN año, no hay curva que
+                # devolver: terminar con un resultado vacío se lee como "no
+                # devolvió nada" y esconde la causa real, que es la cuota.
+                if not counts:
+                    yield {
+                        "status": "error",
+                        "message": (
+                            "La cuota de EPO OPS está agotada: no se pudo "
+                            "obtener ningún año. El límite se restablece por "
+                            "horas; consulta el estado en «Estado de EPO» y "
+                            "reintenta más tarde, o acorta el rango de años."
+                        ),
+                    }
+                    return
+                # Agotada a mitad de serie: devolver lo que hay, marcado, es
+                # mejor que perderlo todo.
                 yield {
                     "status": "running",
                     "progress": 8 + int((i + 1) / len(years) * 78),
                     "message": (
                         f"Cuota de EPO OPS agotada en {year}. "
-                        f"Se devuelven los {len(counts)} años ya obtenidos."
+                        f"Se devuelven los {len(counts)} años ya obtenidos "
+                        f"({years[0]}–{years[i-1] if i else years[0]}); el resto "
+                        f"falta por cuota, no por ausencia de patentes."
                     ),
                 }
                 failed.extend(years[i:])

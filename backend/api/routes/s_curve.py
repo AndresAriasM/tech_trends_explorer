@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from core.epo import check_credentials, credentials_configured
 from core.s_curve import (
+    analyze_papers_by_count,
     analyze_from_yearly_data,
     analyze_patents_epo,
     analyze_s_curve,
@@ -65,6 +66,13 @@ class FitModelsRequest(BaseModel):
     cumulative: bool = False
 
 
+class PapersFastRequest(BaseModel):
+    """Conteo anual de Scopus: sin api_key, la del servidor basta."""
+    query: str
+    year_from: int = 2000
+    year_to: Optional[int] = None
+
+
 class CompareRequest(BaseModel):
     """Los dos resultados completos tal como los devolvió cada análisis."""
     papers: dict[str, Any]
@@ -97,6 +105,38 @@ async def _stream_analysis(payload: SCurveRequest) -> AsyncGenerator[str, None]:
 async def scopus_status():
     """¿Hay clave de Scopus en el servidor? La UI la pide sólo si no."""
     return {"configured": bool(os.getenv("SCOPUS_API_KEY", "").strip())}
+
+
+@router.post("/analyze-papers")
+async def analyze_papers(payload: PapersFastRequest):
+    """
+    Curva de publicaciones por CONTEO ANUAL: una petición por año en vez de
+    paginar el corpus entero. Para biodiésel son 27 peticiones y ~40 s, frente
+    a 2.518 peticiones y casi una hora del modo completo.
+
+    Usa este endpoint salvo que necesites los metadatos de cada publicación.
+    """
+    if not payload.query.strip():
+        return {"error": "La consulta no puede estar vacía"}
+
+    key = os.getenv("SCOPUS_API_KEY", "").strip()
+    if not key:
+        return {"error": "El servidor no tiene configurada SCOPUS_API_KEY."}
+
+    async def gen():
+        async for evt in analyze_papers_by_count(
+            query=payload.query,
+            api_key=key,
+            year_from=payload.year_from,
+            year_to=payload.year_to,
+        ):
+            yield _sse_event(evt)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/analyze")

@@ -337,7 +337,16 @@ export function streamPatentsAnalysis(
   );
 }
 
-/** Curva de publicaciones vía Scopus. La clave también es del servidor. */
+/**
+ * Curva de publicaciones vía Scopus, por conteo anual.
+ *
+ * Una petición por año leyendo sólo el total, en vez de paginar el corpus de
+ * 25 en 25: para biodiésel son 27 peticiones y ~50 s frente a 2.518
+ * peticiones y cerca de una hora. La clave es del servidor.
+ *
+ * Si algún día hace falta el detalle de cada publicación (países, títulos),
+ * ese es `streamSCurveAnalysis`, que sí descarga los registros.
+ */
 export function streamPapersAnalysis(
   payload: { query: string; year_from?: number; year_to?: number },
   onProgress: (evt: SCurveProgress) => void,
@@ -345,8 +354,8 @@ export function streamPapersAnalysis(
   onError: (message: string) => void
 ): () => void {
   return streamSCurveEndpoint(
-    "/api/s-curve/analyze",
-    { ...payload, api_key: "" },
+    "/api/s-curve/analyze-papers",
+    payload,
     onProgress,
     onComplete,
     onError
