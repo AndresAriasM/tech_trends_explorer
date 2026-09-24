@@ -18,6 +18,7 @@ import {
   streamPatentsAnalysis,
 } from "@/lib/api";
 import { SCurveChart } from "@/components/charts/SCurveChart";
+import { MaturityMatrix } from "@/components/charts/MaturityMatrix";
 import type {
   SCurveComparison,
   SCurveComparisonSide,
@@ -317,6 +318,15 @@ export default function PatentsPapersPage() {
 
       {errorComparar && (
         <Aviso texto={errorComparar} />
+      )}
+
+      {comparacion?.matrix && (
+        <section className="card" style={{ padding: 24, marginBottom: 22 }}>
+          <p className="label-sm" style={{ color: "var(--text-3)", marginBottom: 16 }}>
+            Matriz de madurez · ciencia × tecnología
+          </p>
+          <MaturityMatrix matrix={comparacion.matrix} />
+        </section>
       )}
 
       {comparacion && (

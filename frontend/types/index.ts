@@ -303,7 +303,26 @@ export interface SCurveComparisonSide {
   warning: string | null;
 }
 
+export interface SCurveMaturityMatrix {
+  available: boolean;
+  /** Posición en [-1,1]: 0 es la inflexión, positivo = ya la pasó. */
+  x: number | null;
+  y: number | null;
+  reason?: string;
+  quadrant?: "consolidada" | "ciencia_por_delante" | "industria_por_delante" | "incipiente";
+  label?: string;
+  description?: string;
+  color?: string;
+  /** Alguna inflexión está proyectada: la posición es una previsión. */
+  provisional?: boolean;
+  axes?: {
+    x: { label: string; source: string | null };
+    y: { label: string; source: string | null };
+  };
+}
+
 export interface SCurveComparison {
+  matrix: SCurveMaturityMatrix;
   papers: SCurveComparisonSide;
   patents: SCurveComparisonSide;
   /** Positivo = las patentes se inflexionan antes que los papers. */

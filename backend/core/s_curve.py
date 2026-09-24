@@ -1016,6 +1016,116 @@ def _side_summary(result: dict, kind: str) -> dict:
     }
 
 
+# ── Matriz de madurez ciencia × tecnología ──────────────────────────────────
+
+# Cada eje es la posición de una serie frente a SU propia inflexión: negativo
+# si aún no la ha alcanzado, positivo si ya la dejó atrás. El cruce de signos
+# define el cuadrante.
+MATRIX_QUADRANTS = {
+    (True, True): {
+        "id": "consolidada",
+        "label": "Consolidada",
+        "description": (
+            "Ciencia y tecnología han pasado su punto de máxima velocidad. El "
+            "campo está maduro: la ventaja competitiva ya no viene de entrar, "
+            "sino de diferenciarse."
+        ),
+        "color": "#22c55e",
+    },
+    (True, False): {
+        "id": "ciencia_por_delante",
+        "label": "Ciencia por delante",
+        "description": (
+            "Se publica de forma madura pero la actividad de patentes aún no "
+            "despega: conocimiento disponible sin apropiación. Es la ventana "
+            "típica para transferencia tecnológica."
+        ),
+        "color": "#a78bfa",
+    },
+    (False, True): {
+        "id": "industria_por_delante",
+        "label": "Industria por delante",
+        "description": (
+            "Se patenta más rápido de lo que se publica: desarrollo empujado "
+            "por empresa, con la literatura académica llegando después. Entrar "
+            "exige revisar el terreno de patentes antes que el de papers."
+        ),
+        "color": "#f59e0b",
+    },
+    (False, False): {
+        "id": "incipiente",
+        "label": "Incipiente",
+        "description": (
+            "Ninguna de las dos series ha alcanzado su inflexión. Campo "
+            "emergente: mucha incertidumbre sobre el techo, y por eso mismo "
+            "la posición es provisional."
+        ),
+        "color": "#6366f1",
+    },
+}
+
+
+def _maturity_axis(side: dict, span_years: int) -> float | None:
+    """
+    Posición de una serie en su ciclo de vida, en [-1, 1].
+
+    0 es exactamente la inflexión; el signo dice si ya pasó. Se normaliza por
+    la mitad del periodo observado para que el valor sea comparable entre dos
+    series que cubren el mismo rango, sin depender de su volumen: una con
+    60.000 registros y otra con 3.000 se sitúan por su forma, no por su tamaño.
+    """
+    infl = side.get("inflection_year")
+    last = side.get("year_to")
+    if infl is None or last is None:
+        return None
+    escala = max(span_years / 2, 1)
+    return max(-1.0, min(1.0, (last - infl) / escala))
+
+
+def build_maturity_matrix(p: dict, t: dict) -> dict:
+    """Ubica la tecnología en el plano madurez-científica × madurez-tecnológica."""
+    span = 0
+    for lado in (p, t):
+        if lado.get("year_from") and lado.get("year_to"):
+            span = max(span, lado["year_to"] - lado["year_from"])
+
+    x = _maturity_axis(p, span)
+    y = _maturity_axis(t, span)
+
+    if x is None or y is None:
+        return {
+            "available": False,
+            "reason": (
+                "No hay inflexión estimable en alguna de las dos series, así "
+                "que no se puede situar la tecnología en el plano."
+            ),
+            "x": x,
+            "y": y,
+        }
+
+    celda = MATRIX_QUADRANTS[(x >= 0, y >= 0)]
+
+    # El cuadrante se apoya en la inflexión de cada serie. Si alguna está
+    # extrapolada fuera de los datos, la posición es una proyección y hay que
+    # decirlo: es la misma cautela que aplica `L_identifiable` a la fase.
+    provisional = not (p.get("inflection_passed") and t.get("inflection_passed"))
+
+    return {
+        "available": True,
+        "x": round(x, 3),
+        "y": round(y, 3),
+        "quadrant": celda["id"],
+        "label": celda["label"],
+        "description": celda["description"],
+        "color": celda["color"],
+        "provisional": provisional,
+        "axes": {
+            "x": {"label": "Madurez científica", "source": p.get("label")},
+            "y": {"label": "Madurez tecnológica", "source": t.get("label")},
+        },
+    }
+
+
 def compare_papers_patents(papers: dict, patents: dict) -> dict:
     """
     Desfase ciencia → tecnología.
@@ -1094,6 +1204,7 @@ def compare_papers_patents(papers: dict, patents: dict) -> dict:
             if lag is not None
             else interpretation
         ),
+        "matrix": build_maturity_matrix(p, t),
         "caveats": caveats,
         "compared_at": datetime.now().isoformat(),
     }
