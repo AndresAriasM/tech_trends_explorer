@@ -292,9 +292,19 @@ export default function MatrixBoardPage() {
   );
 }
 
+/**
+ * Más allá de este año, una inflexión no es un pronóstico: la serie sigue
+ * creciendo y los modelos sólo extrapolan el techo (p. ej. 2189 para una
+ * curva de 564 000 papers que no ha girado). Se muestra como "sin inflexión
+ * a la vista" y, en la gráfica, pegada al borde con una flecha.
+ */
+const HORIZON = 2100;
+const year = (v: number) => (v > HORIZON ? `>${HORIZON}` : `${Math.round(v)}`);
+
 function fmtInfl(v: number | null, r: [number, number] | null) {
   if (v === null) return "—";
-  return r ? `${Math.round(v)} (${Math.round(r[0])}–${Math.round(r[1])})` : `${Math.round(v)}`;
+  if (v > HORIZON) return `> ${HORIZON} · sin inflexión a la vista`;
+  return r ? `${Math.round(v)} (${year(r[0])}–${year(r[1])})` : `${Math.round(v)}`;
 }
 
 /* ── Gráfica ─────────────────────────────────────────────────────────────── */
@@ -303,8 +313,8 @@ type Domain = { x: [number, number]; y: [number, number] };
 
 /** Vista que encuadra todos los puntos y el año de referencia, con margen. */
 function fitDomain(placed: MatrixRun[], refYear: number): Domain {
-  const xs = placed.map((r) => r.papers_inflection as number);
-  const ys = placed.map((r) => r.patents_inflection as number);
+  const xs = placed.map((r) => Math.min(r.papers_inflection as number, HORIZON));
+  const ys = placed.map((r) => Math.min(r.patents_inflection as number, HORIZON));
   const pad = (lo: number, hi: number): [number, number] => {
     const a = Math.floor(Math.min(lo, refYear - 10) / 5) * 5;
     const b = Math.ceil(Math.max(hi, refYear + 10) / 5) * 5;
@@ -480,12 +490,13 @@ function BoardChart({ runs, refYear }: { runs: MatrixRun[]; refYear: number }) {
           <line x1={cx} x2={cx} y1={m.t} y2={H - m.b} stroke="var(--text-2)" strokeDasharray="6 5" strokeWidth={1.5} />
           <line x1={m.l} x2={W - m.r} y1={cy} y2={cy} stroke="var(--text-2)" strokeDasharray="6 5" strokeWidth={1.5} />
           {placed.map((r) => {
-            const x = sx(r.papers_inflection as number), y = sy(r.patents_inflection as number);
+            const cap = (v: number) => Math.min(v, HORIZON);
+            const x = sx(cap(r.papers_inflection as number)), y = sy(cap(r.patents_inflection as number));
             const color = r.quadrant ? QUADRANTS[r.quadrant].color : "#94a3b8";
             return (
               <g key={`bars-${r.id}`}>
-                {r.papers_range && <line x1={sx(r.papers_range[0])} x2={sx(r.papers_range[1])} y1={y} y2={y} stroke={color} strokeWidth={2} opacity={0.5} />}
-                {r.patents_range && <line x1={x} x2={x} y1={sy(r.patents_range[0])} y2={sy(r.patents_range[1])} stroke={color} strokeWidth={2} opacity={0.5} />}
+                {r.papers_range && <line x1={sx(cap(r.papers_range[0]))} x2={sx(cap(r.papers_range[1]))} y1={y} y2={y} stroke={color} strokeWidth={2} opacity={0.5} />}
+                {r.patents_range && <line x1={x} x2={x} y1={sy(cap(r.patents_range[0]))} y2={sy(cap(r.patents_range[1]))} stroke={color} strokeWidth={2} opacity={0.5} />}
               </g>
             );
           })}
@@ -510,7 +521,10 @@ function BoardChart({ runs, refYear }: { runs: MatrixRun[]; refYear: number }) {
 
         {placed.map((r) => {
           const i = runs.indexOf(r);
-          const x = sx(r.papers_inflection as number), y = sy(r.patents_inflection as number);
+          const farX = (r.papers_inflection as number) > HORIZON;
+          const farY = (r.patents_inflection as number) > HORIZON;
+          const x = sx(Math.min(r.papers_inflection as number, HORIZON));
+          const y = sy(Math.min(r.patents_inflection as number, HORIZON));
           if (x < plot.x0 - 1 || x > plot.x1 + 1 || y < plot.y0 - 1 || y > plot.y1 + 1) return null;
           const color = r.quadrant ? QUADRANTS[r.quadrant].color : "#94a3b8";
           // Cerca del borde derecho la etiqueta va a la izquierda del punto.
@@ -520,10 +534,14 @@ function BoardChart({ runs, refYear }: { runs: MatrixRun[]; refYear: number }) {
               <title>
                 {`T${i + 1} ${r.label}\nPapers: ${fmtInfl(r.papers_inflection, r.papers_range)}\nPatentes: ${fmtInfl(r.patents_inflection, r.patents_range)}\n${r.quadrant_label ?? ""}${r.robust === false ? " (depende del modelo)" : ""}`}
               </title>
+              {/* Flechas: la inflexión real está más allá de 2100 en ese eje. */}
+              {farX && <path d={`M${x + 14},${y - 6} L${x + 24},${y} L${x + 14},${y + 6} Z`} fill={color} />}
+              {farY && <path d={`M${x - 6},${y - 14} L${x},${y - 24} L${x + 6},${y - 14} Z`} fill={color} />}
               <circle cx={x} cy={y} r={11} fill={color} stroke="var(--surface-2)" strokeWidth={3} />
               <text x={x} y={y + 4} textAnchor="middle" fontSize="10" fontWeight="800" fill="#0b1220">{i + 1}</text>
               <text x={flip ? x - 16 : x + 16} y={y - 10} textAnchor={flip ? "end" : "start"} fontSize="13" fontWeight="700" fill="var(--text-1)" stroke="var(--surface)" strokeWidth={4} paintOrder="stroke">
                 {r.label}
+                {(farX || farY) && <tspan fill="var(--text-3)" fontWeight="500"> (sin inflexión a la vista)</tspan>}
               </text>
             </g>
           );

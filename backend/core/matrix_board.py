@@ -41,6 +41,9 @@ QUADRANTS = {
     (False, False): "watch",
 }
 
+# Más allá de este año la inflexión es extrapolación pura, no un año que citar.
+HORIZON = 2100
+
 QUADRANT_LABELS = {
     "maturity": "Madurez y Optimización",
     "industrial": "Explotación Industrial y Ciencia Aplicada",
@@ -132,6 +135,9 @@ Reglas:
 1. Usa SOLO las cifras que te entregan. No inventes datos, años ni volúmenes.
 2. Las inflexiones son la mediana de cinco modelos; si "robust" es false, el cuadrante depende del modelo y debes decirlo.
 3. Una inflexión muy posterior al año de referencia es una extrapolación, no un pronóstico.
+   Si "sin_inflexion_a_la_vista" es true en un eje (inflexión > 2100), NUNCA cites ese año:
+   di que la curva sigue creciendo sin giro estimable, lo que suele indicar un campo amplio
+   en expansión o una ecuación demasiado general.
 4. Si una tecnología parece mal medida (muy pocos registros, una ecuación ambigua, un evento que no es una tecnología), dilo.
 5. Sólo puedes citar fragmentos del corpus que aparezcan en CONTEXTO, por su cite_key entre corchetes. Si no hay contexto, no cites.
 6. Escribe en español, claro y directo, para un público de taller.
@@ -153,8 +159,15 @@ def _run_brief(run: dict) -> dict:
         yd = s.get("yearly_data") or []
         return {str(d["year"]): d["annual"] for d in yd[-6:]}
 
+    def lejos(v):
+        return v is not None and float(v) > HORIZON
+
     return {
         "label": run["label"],
+        "sin_inflexion_a_la_vista": {
+            "papers": lejos(run.get("papers_inflection")),
+            "patentes": lejos(run.get("patents_inflection")),
+        },
         "cuadrante": run.get("quadrant"),
         "robust": run.get("robust"),
         "inflexion_papers": float(run["papers_inflection"]) if run.get("papers_inflection") is not None else None,
