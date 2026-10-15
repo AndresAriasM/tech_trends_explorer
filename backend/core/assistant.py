@@ -794,11 +794,13 @@ Traduces una ecuación de búsqueda entre estos sistemas, conservando su signifi
    Operadores AND, OR, AND NOT; frases entre comillas dobles; comodín *; proximidad W/n y PRE/n.
    Ej.: TITLE-ABS-KEY("solid state battery" OR "all-solid-state batter*")
 
-2. google_patents — Google Patents. Texto libre en todo el documento (título, resumen,
-   reivindicaciones, descripción). Operadores AND, OR, - (exclusión), paréntesis y comillas.
-   Campos: TI=(...), AB=(...), CL=(...), CPC=G06V40/16 (CPC=.../low incluye subgrupos),
-   assignee:(...). No hay proximidad W/n: se aproxima con AND o con la frase exacta.
-   Ej.: ("solid state battery" OR "all-solid-state battery") -cosmetic
+2. google_patents — Google Patents. Sin campo busca en TODO el documento (reivindicaciones
+   y descripción incluidas), lo que infla mucho los conteos: para "biodiesel" en 2020,
+   texto completo = 7 352 y título+resumen = 639. Campos: TI=(...) título, AB=(...) resumen,
+   CL=(...) reivindicaciones, CPC=G06V40/16 (CPC=.../low incluye subgrupos), assignee:(...).
+   Operadores AND, OR, - (exclusión), paréntesis y comillas. Sin proximidad W/n (usa AND).
+   Sin comodín: Google aplica stemming propio, así que el * se QUITA (packag* → packaging).
+   Ej.: (TI=("solid state battery") OR AB=("solid state battery")) -cosmetic
 
 3. epo — EPO OPS, sintaxis CQL. Campos txt (título, resumen, solicitante, inventor),
    ti, ab, ta (título o resumen), cpc, ipc, pa (solicitante). Operadores and, or, not;
@@ -811,8 +813,12 @@ Reglas:
   "amplia" (mayor exhaustividad) y, si tiene sentido, "acotada" (mayor precisión).
 - Cada opción lleva una nota breve en español: qué cambió y qué se pierde o se gana.
 - No incluyas filtros de fecha: la plataforma los añade sola.
-- Truncamiento: Google Patents y EPO no truncan de forma fiable. Si el origen usa un
-  comodín (personaliz*, batter*), en esos sistemas EXPÁNDELO a variantes explícitas
+- Campos: la variante "equivalente" de Google Patents DEBE replicar el campo del origen:
+  TITLE-ABS-KEY(x) → (TI=(x) OR AB=(x)); TITLE(x) → TI=(x); ABS(x) → AB=(x); EPO ta=
+  → TI/AB. El texto completo (sin campo) sólo puede ser la variante "amplia", y su nota
+  debe advertir que no es comparable con Scopus.
+- Truncamiento: EPO no trunca de forma fiable. Si el origen usa un
+  comodín (personaliz*, batter*), en EPO EXPÁNDELO a variantes explícitas
   ("personalized" OR "personalised" OR "personalization" OR "personalisation"). Nunca
   dejes una raíz truncada sin comodín, porque no encontraría nada. Esto vale también
   dentro de frases: "food print*" → "food printing" OR "food printer" OR "printed food".

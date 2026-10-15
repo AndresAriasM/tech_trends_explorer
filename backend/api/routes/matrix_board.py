@@ -47,6 +47,9 @@ class SessionCreate(BaseModel):
 class RunCreate(BaseModel):
     label: str = Field(..., min_length=1, max_length=200)
     scopus_query: str
+    # Fuente de la curva científica: hoy Scopus; se deja abierta para OpenAlex,
+    # Semantic Scholar o Lens sin cambiar el contrato.
+    papers_source: Literal["scopus", "openalex", "semantic_scholar", "lens"] = "scopus"
     patents_query: str
     patent_source: Literal["epo", "google"] = "google"
     year_from: int
@@ -120,12 +123,13 @@ def add_run(sid: UUID, body: RunCreate, conn=Depends(get_conn)):
     if body.comparison:
         comparison = {k: body.comparison.get(k) for k in ("lag_years", "direction", "interpretation", "caveats")}
     row = conn.execute("""
-        insert into matrix_runs (session_id, label, scopus_query, patents_query, patent_source,
-            year_from, year_to, papers, patents, comparison, papers_inflection, patents_inflection,
-            papers_range, patents_range, quadrant, robust)
-        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id
+        insert into matrix_runs (session_id, label, scopus_query, papers_source, patents_query,
+            patent_source, year_from, year_to, papers, patents, comparison, papers_inflection,
+            patents_inflection, papers_range, patents_range, quadrant, robust)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id
     """, (
-        sid, body.label.strip(), body.scopus_query, body.patents_query, body.patent_source,
+        sid, body.label.strip(), body.scopus_query, body.papers_source, body.patents_query,
+        body.patent_source,
         body.year_from, body.year_to, Jsonb(papers), Jsonb(patents),
         Jsonb(comparison) if comparison else None,
         pos["papers_inflection"], pos["patents_inflection"], pos["papers_range"],

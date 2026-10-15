@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 
 import {
+  PAPERS_SOURCE_LABELS,
+  PATENT_SOURCE_LABELS,
   QUADRANTS,
   analyzeSession,
   createSession,
@@ -206,7 +208,7 @@ export default function MatrixBoardPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}>
             <thead>
               <tr style={{ color: "var(--text-3)", textAlign: "left" }}>
-                {["", "Tecnología", "Papers", "Patentes", "Fuente", "Infl. papers", "Infl. patentes", "Cuadrante", ""].map((h, i) => (
+                {["", "Tecnología", "Papers", "Fuente papers", "Patentes", "Fuente patentes", "Infl. papers", "Infl. patentes", "Cuadrante", ""].map((h, i) => (
                   <th key={i} style={{ padding: "6px 8px", fontWeight: 600, borderBottom: "1px solid var(--border-2)" }}>{h}</th>
                 ))}
               </tr>
@@ -216,9 +218,10 @@ export default function MatrixBoardPage() {
                 <tr key={r.id} style={{ borderBottom: "1px solid var(--border)", color: "var(--text-2)" }}>
                   <td style={{ padding: "8px", fontWeight: 700, color: "var(--text-1)" }}>T{i + 1}</td>
                   <td style={{ padding: "8px", color: "var(--text-1)" }}><EditableLabel run={r} onSaved={() => void loadSession(sessionId)} /></td>
-                  <td style={{ padding: "8px" }}>{r.papers.total?.toLocaleString() ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>{r.patents.total?.toLocaleString() ?? "—"}</td>
-                  <td style={{ padding: "8px" }}>{r.patent_source === "google" ? "Google Patents" : "EPO OPS"}</td>
+                  <td style={{ padding: "8px" }}>{r.papers.total?.toLocaleString("es-CO") ?? "—"}</td>
+                  <td style={{ padding: "8px" }}>{PAPERS_SOURCE_LABELS[r.papers_source] ?? r.papers_source}</td>
+                  <td style={{ padding: "8px" }}>{r.patents.total?.toLocaleString("es-CO") ?? "—"}</td>
+                  <td style={{ padding: "8px" }}>{PATENT_SOURCE_LABELS[r.patent_source] ?? r.patent_source}</td>
                   <td style={{ padding: "8px" }}>{fmtInfl(r.papers_inflection, r.papers_range)}</td>
                   <td style={{ padding: "8px" }}>{fmtInfl(r.patents_inflection, r.patents_range)}</td>
                   <td style={{ padding: "8px", color: r.quadrant ? QUADRANTS[r.quadrant].color : undefined }}>

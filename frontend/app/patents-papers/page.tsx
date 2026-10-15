@@ -23,6 +23,7 @@ import { QUADRANTS, createSession, listSessions, saveRun, type MatrixSession } f
 import { AiEquationHelper } from "@/components/assistant/AiEquationHelper";
 import { AiInterpretation } from "@/components/assistant/AiInterpretation";
 import { AiQueryTranslator } from "@/components/assistant/AiQueryTranslator";
+import { scopusToGooglePatents } from "@/lib/assistant";
 import { MaturityMatrix } from "@/components/charts/MaturityMatrix";
 import type {
   SCurveComparison,
@@ -115,8 +116,8 @@ function creditosGoogle(desde: number, hasta: number) {
   return desde < 1985 ? 1 + Math.max(0, hasta - 1985 + 1) : hasta - desde + 1;
 }
 
-/** Ecuación de Google Patents a partir de la de Scopus del ejemplo. */
-const aGoogle = (scopus: string) => scopus.replace(/^TITLE-ABS-KEY\((.*)\)$/, "$1");
+/** Ecuación de Google Patents a partir de la de Scopus del ejemplo, respetando el campo. */
+const aGoogle = (scopus: string) => scopusToGooglePatents(scopus);
 
 export default function PatentsPapersPage() {
   const [scopusQ, setScopusQ] = useState("");
@@ -217,6 +218,7 @@ export default function PatentsPapersPage() {
       const r = await saveRun(sid, {
         label: etiqueta.trim(),
         scopus_query: scopusQ.trim(),
+        papers_source: "scopus",
         patents_query: patentQ.trim(),
         patent_source: fuente,
         year_from: yearFrom,

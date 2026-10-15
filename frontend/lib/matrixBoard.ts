@@ -8,6 +8,21 @@
 import { API_BASE_URL } from "@/lib/api";
 import type { SCurveComparison, SCurveResult } from "@/types";
 
+/** Fuente de la curva científica. Hoy sólo Scopus; OpenAlex y otras vendrán. */
+export type PapersSource = "scopus" | "openalex" | "semantic_scholar" | "lens";
+
+export const PAPERS_SOURCE_LABELS: Record<string, string> = {
+  scopus: "Scopus",
+  openalex: "OpenAlex",
+  semantic_scholar: "Semantic Scholar",
+  lens: "Lens",
+};
+
+export const PATENT_SOURCE_LABELS: Record<string, string> = {
+  google: "Google Patents",
+  epo: "EPO OPS",
+};
+
 export type Quadrant = "maturity" | "industrial" | "disruption" | "watch";
 
 export interface MatrixSession {
@@ -35,6 +50,7 @@ export interface MatrixRun {
   session_id: string;
   label: string;
   scopus_query: string;
+  papers_source: PapersSource;
   patents_query: string;
   patent_source: "epo" | "google";
   year_from: number;
@@ -96,6 +112,7 @@ export const saveRun = (
   body: {
     label: string;
     scopus_query: string;
+    papers_source: PapersSource;
     patents_query: string;
     patent_source: "epo" | "google";
     year_from: number;
