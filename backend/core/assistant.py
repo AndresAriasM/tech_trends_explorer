@@ -166,6 +166,11 @@ Puedes combinar con or / and. Ejemplo: txt = "solid state battery" or txt = "sol
 natural, sin operadores.
 
 Criterios:
+- Construye BLOQUES DE CONCEPTOS unidos con AND (la tecnología AND el sector o la
+  aplicación), no frases largas con preposiciones. "quantum computing in medicine" no
+  aparece en patentes ni en casi ningún título: ("quantum computing" OR "quantum computer")
+  AND (medicine OR healthcare OR medical OR clinical) sí. Una frase exacta debe ser un
+  término técnico de 1 a 3 palabras.
 - La PRECISIÓN manda sobre la exhaustividad: un término ambiguo mete ruido que arruina la
   curva acumulada. Es preferible una ecuación estrecha y defendible.
 - Scopus y EPO pueden ser MÁS ESTRICTAS que los términos de Hype Cycle: las noticias necesitan
@@ -822,6 +827,10 @@ Reglas:
   ("personalized" OR "personalised" OR "personalization" OR "personalisation"). Nunca
   dejes una raíz truncada sin comodín, porque no encontraría nada. Esto vale también
   dentro de frases: "food print*" → "food printing" OR "food printer" OR "printed food".
+- Si el origen usa frases largas con preposiciones ("X in Y", "X for Y"), conviértelas en
+  bloques de conceptos unidos con AND en todas las variantes y adviértelo: las patentes
+  casi nunca usan ese lenguaje y la frase exacta devuelve 0 (comprobado:
+  "quantum computing in medicine" en título/resumen = 0 patentes; con bloques = 46).
 - Organizaciones: el solicitante de una patente (EPO pa=, Google assignee:) equivale en
   Scopus a la afiliación AFFILORG(...), nunca a AUTHKEY.
 - Exclusión en Google Patents: el término excluido va con guion pegado (-pharmaceutical),
