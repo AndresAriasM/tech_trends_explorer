@@ -5,6 +5,7 @@ GET  /api/hype-cycle/history        → list saved queries from DynamoDB
 GET  /api/hype-cycle/queries/{id}   → single query detail
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -84,6 +85,30 @@ async def start_analysis(payload: AnalyzeRequest, background_tasks: BackgroundTa
         status="queued",
         message="Análisis iniciado. Conecta con el stream para ver el progreso.",
     )
+
+
+class TrendsRequest(BaseModel):
+    """Hasta 5 términos; cada uno cuesta una llamada (un crédito) de SerpAPI."""
+    terms: list[str]
+    gprop: Optional[str] = None  # None = búsqueda web; "news" es muy escasa en nicho
+
+
+@router.post("/trends")
+async def analyze_trends(payload: TrendsRequest):
+    """
+    Hype Cycle a partir de Google Trends: serie mensual desde 2004, ajuste
+    campana + logística y fase derivada de los parámetros (core/hype_trends.py).
+    Sustituye al conteo de noticias, que medía el orden del buscador.
+    """
+    terms = [t.strip() for t in payload.terms if t.strip()]
+    if not 1 <= len(terms) <= 5:
+        raise HTTPException(status_code=400, detail="Se requieren de 1 a 5 términos")
+    from core.hype_trends import analyze
+    try:
+        return await asyncio.to_thread(analyze, terms, None, payload.gprop)
+    except Exception as e:
+        logger.error("Trends analysis failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.get("/history")
