@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   BookOpen,
@@ -18,6 +19,9 @@ import {
   streamPatentsAnalysis,
 } from "@/lib/api";
 import { SCurveChart } from "@/components/charts/SCurveChart";
+import { QUADRANTS, createSession, listSessions, saveRun, type MatrixSession } from "@/lib/matrixBoard";
+import { AiEquationHelper } from "@/components/assistant/AiEquationHelper";
+import { AiInterpretation } from "@/components/assistant/AiInterpretation";
 import { MaturityMatrix } from "@/components/charts/MaturityMatrix";
 import type {
   SCurveComparison,
@@ -81,11 +85,40 @@ const LADO_INICIAL: EstadoLado = {
   error: null,
 };
 
+/* Fuente de patentes. Google Patents (vía SerpAPI) responde en ~1 s por año
+   y no bloquea; EPO OPS tolera ~10 búsquedas por minuto y bloquea por
+   "robot" si se excede. Sus series no se comparan entre sí: Google busca en
+   texto completo y cubre más oficinas. */
+type Fuente = "google" | "epo";
+
+const FUENTES: Record<Fuente, { nombre: string; etiqueta: string; ayuda: string; placeholder: string }> = {
+  google: {
+    nombre: "Google Patents",
+    etiqueta: "Ecuación Google Patents (patentes)",
+    ayuda: "Texto completo · CPC=G06V40/16/low",
+    placeholder: '"biodiesel"',
+  },
+  epo: {
+    nombre: "EPO OPS",
+    etiqueta: "Ecuación EPO OPS (patentes)",
+    ayuda: "Sintaxis CQL",
+    placeholder: 'txt="biodiesel"',
+  },
+};
+
+/** Ecuación de Google Patents a partir de la de Scopus del ejemplo. */
+const aGoogle = (scopus: string) => scopus.replace(/^TITLE-ABS-KEY\((.*)\)$/, "$1");
+
 export default function PatentsPapersPage() {
   const [scopusQ, setScopusQ] = useState("");
+  const [fuente, setFuente] = useState<Fuente>("google");
+  const [googleQ, setGoogleQ] = useState("");
   const [epoQ, setEpoQ] = useState("");
+  const patentQ = fuente === "google" ? googleQ : epoQ;
+  const setPatentQ = fuente === "google" ? setGoogleQ : setEpoQ;
   const [yearFrom, setYearFrom] = useState(2000);
-  const [yearTo, setYearTo] = useState(AHORA);
+  // Último año COMPLETO: el año en curso es parcial y dobla la curva hacia abajo.
+  const [yearTo, setYearTo] = useState(AHORA - 1);
 
   const [papers, setPapers] = useState<EstadoLado>(LADO_INICIAL);
   const [patents, setPatents] = useState<EstadoLado>(LADO_INICIAL);
@@ -95,17 +128,74 @@ export default function PatentsPapersPage() {
 
   const cancelarRef = useRef<Array<() => void>>([]);
 
+  // ── Guardado en una sesión del tablero (/matrix-board) ──
+  const [sesiones, setSesiones] = useState<MatrixSession[]>([]);
+  const [sesionId, setSesionId] = useState("");
+  const [nuevaSesion, setNuevaSesion] = useState("");
+  const [etiqueta, setEtiqueta] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState<string | null>(null);
+  const [errorGuardar, setErrorGuardar] = useState<string | null>(null);
+
+  useEffect(() => {
+    listSessions()
+      .then((l) => {
+        setSesiones(l);
+        setSesionId((cur) => cur || l[0]?.id || "");
+      })
+      .catch(() => setSesiones([]));
+  }, []);
+
+  const guardarEnSesion = useCallback(async () => {
+    if (!papers.resultado || !patents.resultado || !etiqueta.trim()) return;
+    setGuardando(true);
+    setErrorGuardar(null);
+    try {
+      let sid = sesionId;
+      if (!sid && nuevaSesion.trim()) {
+        const s = await createSession(nuevaSesion.trim());
+        sid = s.id;
+        setSesiones((l) => [{ ...s, n_runs: 0 }, ...l]);
+        setSesionId(s.id);
+        setNuevaSesion("");
+      }
+      if (!sid) throw new Error("Elige o crea una sesión.");
+      const r = await saveRun(sid, {
+        label: etiqueta.trim(),
+        scopus_query: scopusQ.trim(),
+        patents_query: patentQ.trim(),
+        patent_source: fuente,
+        year_from: yearFrom,
+        year_to: yearTo,
+        papers: papers.resultado,
+        patents: patents.resultado,
+        comparison: comparacion,
+      });
+      setGuardado(
+        r.quadrant
+          ? `Guardada: ${QUADRANTS[r.quadrant].label}${r.robust === false ? " (depende del modelo)" : ""}`
+          : "Guardada, sin inflexión estimable en alguna serie"
+      );
+    } catch (e: unknown) {
+      setErrorGuardar(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setGuardando(false);
+    }
+  }, [papers.resultado, patents.resultado, etiqueta, sesionId, nuevaSesion, scopusQ, patentQ, fuente, yearFrom, yearTo, comparacion]);
+
   const corriendo = papers.corriendo || patents.corriendo;
   const listos = papers.resultado && patents.resultado;
 
   /** Lanza ambos análisis a la vez y compara cuando los dos terminen. */
   const analizar = useCallback(() => {
-    if (!scopusQ.trim() || !epoQ.trim()) return;
+    if (!scopusQ.trim() || !patentQ.trim()) return;
 
     setComparacion(null);
     setErrorComparar(null);
+    setGuardado(null);
+    setErrorGuardar(null);
     setPapers({ ...LADO_INICIAL, corriendo: true, mensaje: "Consultando Scopus…" });
-    setPatents({ ...LADO_INICIAL, corriendo: true, mensaje: "Consultando EPO OPS…" });
+    setPatents({ ...LADO_INICIAL, corriendo: true, mensaje: `Consultando ${FUENTES[fuente].nombre}…` });
 
     const recogidos: { papers?: SCurveResult; patents?: SCurveResult } = {};
 
@@ -139,7 +229,7 @@ export default function PatentsPapersPage() {
     );
 
     const cancelPatents = streamPatentsAnalysis(
-      { query: epoQ.trim(), year_from: yearFrom, year_to: yearTo },
+      { query: patentQ.trim(), year_from: yearFrom, year_to: yearTo, source: fuente },
       (evt: SCurveProgress) =>
         setPatents((p) => ({ ...p, progreso: evt.progress, mensaje: evt.message })),
       (res) => {
@@ -153,7 +243,7 @@ export default function PatentsPapersPage() {
     );
 
     cancelarRef.current = [cancelPapers, cancelPatents];
-  }, [scopusQ, epoQ, yearFrom, yearTo]);
+  }, [scopusQ, patentQ, fuente, yearFrom, yearTo]);
 
   const detener = useCallback(() => {
     cancelarRef.current.forEach((c) => c());
@@ -190,6 +280,18 @@ export default function PatentsPapersPage() {
 
       {/* ── Consulta ── */}
       <section className="card" style={{ padding: 22, marginBottom: 22 }}>
+        <div style={{ marginBottom: 16 }}>
+          <AiEquationHelper
+            compact
+            disabled={corriendo}
+            onApply={(eq) => {
+              setScopusQ(eq.scopus);
+              setEpoQ(eq.epo);
+              setGoogleQ(eq.google);
+              setEtiqueta(eq.concept);
+            }}
+          />
+        </div>
         <div
           style={{
             display: "grid",
@@ -214,16 +316,30 @@ export default function PatentsPapersPage() {
 
           <Campo
             icono={<Landmark style={{ width: 14, height: 14, color: "#22c55e" }} />}
-            etiqueta="Ecuación EPO OPS (patentes)"
-            ayuda="Sintaxis CQL"
+            etiqueta={FUENTES[fuente].etiqueta}
+            ayuda={FUENTES[fuente].ayuda}
           >
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              {(Object.keys(FUENTES) as Fuente[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={f === fuente ? "btn btn-primary" : "btn btn-ghost"}
+                  style={{ fontSize: 11.5, padding: "4px 10px" }}
+                  disabled={corriendo}
+                  onClick={() => setFuente(f)}
+                >
+                  {FUENTES[f].nombre}
+                </button>
+              ))}
+            </div>
             <textarea
               className="inp"
               style={{ width: "100%", minHeight: 74, fontFamily: "var(--font-mono, monospace)", fontSize: 12.5 }}
-              value={epoQ}
-              onChange={(e) => setEpoQ(e.target.value)}
+              value={patentQ}
+              onChange={(e) => setPatentQ(e.target.value)}
               disabled={corriendo}
-              placeholder={'txt="biodiesel"'}
+              placeholder={FUENTES[fuente].placeholder}
             />
           </Campo>
         </div>
@@ -258,10 +374,12 @@ export default function PatentsPapersPage() {
                     className="btn btn-ghost"
                     style={{ fontSize: 12, padding: "6px 11px", flexDirection: "column", alignItems: "flex-start", gap: 1 }}
                     disabled={corriendo}
-                    title={`${ej.papers.toLocaleString()} papers · ${ej.patentes.toLocaleString()} patentes`}
+                    title={`${ej.papers.toLocaleString("es-CO")} papers · ${ej.patentes.toLocaleString("es-CO")} patentes (EPO)`}
                     onClick={() => {
                       setScopusQ(ej.scopus);
                       setEpoQ(ej.epo);
+                      setGoogleQ(aGoogle(ej.scopus));
+                      setEtiqueta(ej.concepto);
                     }}
                   >
                     <span>{ej.concepto}</span>
@@ -327,7 +445,7 @@ export default function PatentsPapersPage() {
               <button
                 className="btn btn-primary"
                 onClick={analizar}
-                disabled={!scopusQ.trim() || !epoQ.trim()}
+                disabled={!scopusQ.trim() || !patentQ.trim()}
               >
                 <Play style={{ width: 15, height: 15 }} />
                 Analizar ambas fuentes
@@ -337,10 +455,12 @@ export default function PatentsPapersPage() {
         </div>
 
         <p style={{ fontSize: 11.5, color: "var(--text-4)", marginTop: 12, lineHeight: 1.5 }}>
-          Las credenciales de Scopus y EPO están en el servidor. EPO consulta un
-          año por petición: {Math.max(0, yearTo - yearFrom + 1)} años ≈{" "}
-          {Math.max(0, yearTo - yearFrom + 1)} peticiones, y puede tardar varios
-          minutos si el servicio está saturado.
+          Las credenciales están en el servidor. Las patentes se consultan un año
+          por petición: {Math.max(0, yearTo - yearFrom + 1)} años ≈{" "}
+          {Math.max(0, yearTo - yearFrom + 1)} peticiones.{" "}
+          {fuente === "google"
+            ? "Google Patents tarda ~1 s por año y gasta un crédito de SerpAPI por petición."
+            : "EPO OPS admite ~10 por minuto: puede tardar varios minutos y bloquear si se satura."}
         </p>
       </section>
 
@@ -355,7 +475,7 @@ export default function PatentsPapersPage() {
           }}
         >
           <Progreso titulo="Papers · Scopus" estado={papers} color="#a78bfa" />
-          <Progreso titulo="Patentes · EPO OPS" estado={patents} color="#22c55e" />
+          <Progreso titulo={`Patentes · ${FUENTES[fuente].nombre}`} estado={patents} color="#22c55e" />
         </div>
       )}
 
@@ -371,6 +491,49 @@ export default function PatentsPapersPage() {
 
       {errorComparar && (
         <Aviso texto={errorComparar} />
+      )}
+
+      {listos && (
+        <section className="card" style={{ padding: 20, marginBottom: 22, border: "1px solid rgba(56,189,248,0.3)" }}>
+          <p className="label-sm" style={{ color: "var(--text-3)", marginBottom: 12 }}>
+            Guardar en una sesión del taller
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              className="inp"
+              placeholder="Nombre de la tecnología"
+              value={etiqueta}
+              onChange={(e) => setEtiqueta(e.target.value)}
+              style={{ width: 260 }}
+            />
+            <select className="inp" value={sesionId} onChange={(e) => setSesionId(e.target.value)} style={{ minWidth: 220 }}>
+              <option value="">— Nueva sesión —</option>
+              {sesiones.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {!sesionId && (
+              <input
+                className="inp"
+                placeholder="Nombre de la nueva sesión"
+                value={nuevaSesion}
+                onChange={(e) => setNuevaSesion(e.target.value)}
+                style={{ width: 220 }}
+              />
+            )}
+            <button
+              className="btn btn-primary"
+              onClick={() => void guardarEnSesion()}
+              disabled={guardando || !etiqueta.trim() || (!sesionId && !nuevaSesion.trim())}
+            >
+              {guardando ? <Loader2 className="animate-spin" style={{ width: 15, height: 15 }} /> : null}
+              Guardar en la sesión
+            </button>
+            <Link href="/matrix-board" className="btn btn-ghost">Ver tablero →</Link>
+          </div>
+          {guardado && <p style={{ fontSize: 12.5, color: "#34d399", marginTop: 10 }}>{guardado}</p>}
+          {errorGuardar && <p style={{ fontSize: 12.5, color: "#fca5a5", marginTop: 10 }}>{errorGuardar}</p>}
+        </section>
       )}
 
       {comparacion?.matrix && (
@@ -447,6 +610,20 @@ export default function PatentsPapersPage() {
         </section>
       )}
 
+      {listos && (
+        <AiInterpretation
+          concept={etiqueta || scopusQ}
+          papers={papers.resultado}
+          patents={patents.resultado}
+          extraContext={
+            comparacion
+              ? `Fuente de patentes: ${FUENTES[fuente].nombre}. Cuadrante de la app: ${comparacion.matrix?.label ?? "no disponible"}. ` +
+                `Advertencias: ${comparacion.caveats.join(" | ") || "ninguna"}.`
+              : undefined
+          }
+        />
+      )}
+
       {/* ── Curvas ── */}
       {listos && (
         <div
@@ -467,7 +644,7 @@ export default function PatentsPapersPage() {
           {patents.resultado && (
             <div className="card" style={{ padding: 20 }}>
               <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)", marginBottom: 14 }}>
-                Patentes · EPO OPS
+                Patentes · {patents.resultado.source === "google_patents" ? "Google Patents" : "EPO OPS"}
               </h3>
               <SCurveChart result={patents.resultado} />
             </div>
@@ -521,7 +698,7 @@ function LadoResumen({ lado, acento }: { lado: SCurveComparisonSide; acento: str
         )}
       </div>
 
-      <Dato etiqueta="Registros" valor={lado.records?.toLocaleString() ?? "—"} />
+      <Dato etiqueta="Registros" valor={lado.records?.toLocaleString("es-CO") ?? "—"} />
       <Dato etiqueta="Periodo" valor={lado.year_from && lado.year_to ? `${lado.year_from}–${lado.year_to}` : "—"} />
       <Dato etiqueta="Mejor modelo" valor={lado.best_model ?? "—"} />
       <Dato

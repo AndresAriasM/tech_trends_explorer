@@ -160,6 +160,12 @@ export const MODULES: ProspectiveModule[] = [
         icon: LayoutGrid,
         section: "surveillance",
       },
+      {
+        href: "/matrix-board",
+        label: "Tablero de la matriz",
+        icon: LayoutGrid,
+        section: "surveillance",
+      },
     ],
   },
   {
@@ -334,7 +340,7 @@ export const MODULES: ProspectiveModule[] = [
     name: "Asistente IA",
     purpose:
       "Capa transversal: interpreta resultados y asiste en cada módulo. No es una sección aislada.",
-    status: "planned",
+    status: "active",
     kind: "cross-cutting",
     accent: "#8b5cf6",
     highlights: [
@@ -348,8 +354,8 @@ export const MODULES: ProspectiveModule[] = [
         label: "Asistente IA",
         icon: Bot,
         section: "surveillance",
-        // Transversal: aparece dentro de cada módulo, no como entrada de menú.
-        hiddenInNav: true,
+        // Transversal: vive dentro de cada módulo; esta entrada reúne lo que no
+        // depende de un análisis (ecuaciones, corpus, estado del proveedor).
       },
     ],
   },

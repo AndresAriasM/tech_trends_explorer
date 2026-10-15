@@ -173,3 +173,21 @@ async def corpus_status(
     if not verbose:
         status["documents"] = len(status["documents"])
     return status
+
+
+@router.get("/status")
+async def provider_status() -> dict[str, Any]:
+    """
+    ¿Está conectado el proveedor de IA? Comprueba sólo la configuración (clave y
+    modelo), sin gastar una llamada: los créditos se descubren al primer uso,
+    y ese error llega a la UI con el mensaje del proveedor.
+    """
+    import os
+
+    from core.assistant import AI_PROVIDER, default_model
+
+    return {
+        "provider": AI_PROVIDER,
+        "model": default_model(),
+        "configured": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+    }

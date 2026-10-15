@@ -15,6 +15,7 @@ from api.routes import (
     categories,
     delphi,
     hype_cycle,
+    matrix_board,
     s_curve,
     tasks,
     workshop,
@@ -42,6 +43,7 @@ app.include_router(workshop.router,  prefix="/api/workshop",  tags=["Workshop"])
 app.include_router(auth.router,      prefix="/api/auth",      tags=["Auth"])
 app.include_router(delphi.router,    prefix="/api/delphi",    tags=["Delphi"])
 app.include_router(assistant.router, prefix="/api/assistant", tags=["Asistente IA"])
+app.include_router(matrix_board.router, prefix="/api/matrix-board", tags=["Tablero matriz"])
 
 
 @app.get("/health")
