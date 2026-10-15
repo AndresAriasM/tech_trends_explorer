@@ -110,6 +110,9 @@ export const saveRun = (
     { method: "POST", body: JSON.stringify(body) }
   );
 
+export const renameRun = (id: string, label: string) =>
+  call<{ id: string; label: string }>(`/runs/${id}`, { method: "PATCH", body: JSON.stringify({ label }) });
+
 export const deleteRun = (id: string) => call<void>(`/runs/${id}`, { method: "DELETE" });
 
 export const analyzeSession = (id: string) =>

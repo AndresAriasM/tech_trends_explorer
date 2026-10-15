@@ -6,6 +6,7 @@ POST   /api/matrix-board/sessions                    → crea una sesión ("Tall
 GET    /api/matrix-board/sessions/{id}               → sesión + tecnologías (para la gráfica)
 DELETE /api/matrix-board/sessions/{id}               → borra la sesión y sus tecnologías
 POST   /api/matrix-board/sessions/{id}/runs          → guarda una tecnología ya analizada
+PATCH  /api/matrix-board/runs/{id}                   → renombra una tecnología
 DELETE /api/matrix-board/runs/{id}                   → quita una tecnología
 POST   /api/matrix-board/sessions/{id}/analysis      → análisis de IA de la sesión (OpenAI)
 
@@ -132,6 +133,23 @@ def add_run(sid: UUID, body: RunCreate, conn=Depends(get_conn)):
     )).fetchone()
     conn.commit()
     return {"id": row["id"], **pos, "quadrant_label": QUADRANT_LABELS.get(pos["quadrant"])}
+
+
+class RunUpdate(BaseModel):
+    label: str = Field(..., min_length=1, max_length=200)
+
+
+@router.patch("/runs/{rid}")
+def rename_run(rid: UUID, body: RunUpdate, conn=Depends(get_conn)):
+    """Cambia el nombre con el que la tecnología aparece en el tablero."""
+    row = conn.execute(
+        "update matrix_runs set label = %s where id = %s returning id, label",
+        (body.label.strip(), rid),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Tecnología no encontrada")
+    conn.commit()
+    return row
 
 
 @router.delete("/runs/{rid}", status_code=204)
