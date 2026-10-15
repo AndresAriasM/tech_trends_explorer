@@ -224,7 +224,7 @@ export interface SCurvePhase {
   before_inflection?: boolean;
 }
 
-export type SCurveSource = "scopus" | "epo" | "patents" | "local";
+export type SCurveSource = "scopus" | "epo" | "patents" | "google_patents" | "local";
 
 export interface SCurveResult {
   query: string;
@@ -358,6 +358,8 @@ export interface SCurvePatentsRequest {
   query: string;
   year_from?: number;
   year_to?: number;
+  /** "epo" (por defecto) o "google" (Google Patents vía SerpAPI). */
+  source?: "epo" | "google";
 }
 
 export interface EPOStatus {

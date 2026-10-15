@@ -753,14 +753,16 @@ export default function SCurvePage() {
     };
   }, []);
   const [yearFrom, setYearFrom] = useState(1990);
-  const [yearTo, setYearTo] = useState(new Date().getFullYear());
+  const [yearTo, setYearTo] = useState(new Date().getFullYear() - 1); // último año completo
   const [maxResults, setMaxResults] = useState<number | "">("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Patents (EPO OPS) state — sin api key: las credenciales son del servidor
   const [epoQuery, setEpoQuery] = useState("");
+  // Fuente de patentes: Google Patents (rápido, sin bloqueos) o EPO OPS.
+  const [patentSource, setPatentSource] = useState<"google" | "epo">("google");
   const [epoYearFrom, setEpoYearFrom] = useState(2000);
-  const [epoYearTo, setEpoYearTo] = useState(new Date().getFullYear());
+  const [epoYearTo, setEpoYearTo] = useState(new Date().getFullYear() - 1); // último año completo
   const [epoStatus, setEpoStatus] = useState<EPOStatus | null>(null);
 
   // Patents (CSV) state
@@ -821,7 +823,7 @@ export default function SCurvePage() {
   const storeResult = useCallback((res: SCurveResult) => {
     setResult(res);
     if (res.source === "scopus") setPapersResult(res);
-    else if (res.source === "epo" || res.source === "patents") setPatentsResult(res);
+    else if (res.source === "epo" || res.source === "patents" || res.source === "google_patents") setPatentsResult(res);
     setComparison(null);
   }, []);
 
@@ -917,10 +919,15 @@ export default function SCurvePage() {
     setComparison(null);
     setRunning(true);
     setProgress(0);
-    setProgressMsg("Conectando con EPO OPS…");
+    setProgressMsg(patentSource === "google" ? "Conectando con Google Patents…" : "Conectando con EPO OPS…");
+
+    // Los ejemplos están en CQL de EPO: para Google basta quitar `txt=`.
+    const query = patentSource === "google"
+      ? epoQuery.trim().replace(/\btxt\s*=\s*/gi, "")
+      : epoQuery.trim();
 
     cancelRef.current = streamPatentsAnalysis(
-      { query: epoQuery.trim(), year_from: epoYearFrom, year_to: epoYearTo },
+      { query, year_from: epoYearFrom, year_to: epoYearTo, source: patentSource },
       (evt: SCurveProgress) => {
         setProgress(evt.progress);
         setProgressMsg(evt.message);
@@ -935,7 +942,7 @@ export default function SCurvePage() {
         setRunning(false);
       }
     );
-  }, [epoQuery, epoYearFrom, epoYearTo, storeResult]);
+  }, [epoQuery, epoYearFrom, epoYearTo, patentSource, storeResult]);
 
   // ── Desfase ciencia → tecnología ────────────────────────────
   const handleCompare = useCallback(async () => {
@@ -1069,7 +1076,7 @@ export default function SCurvePage() {
           <div style={{ display: "flex", gap: 2, marginTop: 14, marginBottom: -1 }}>
             {([
               { key: "scopus", label: "Papers", icon: <Database style={{ width: 13, height: 13 }} /> },
-              { key: "epo", label: "Patentes (EPO)", icon: <Landmark style={{ width: 13, height: 13 }} /> },
+              { key: "epo", label: "Patentes", icon: <Landmark style={{ width: 13, height: 13 }} /> },
               { key: "patents", label: "CSV", icon: <FileText style={{ width: 13, height: 13 }} /> },
             ] as const).map(tab => (
               <button
@@ -1368,11 +1375,31 @@ export default function SCurvePage() {
             }}
           >
             <Landmark style={{ width: 15, height: 15, color: "#10b981", flexShrink: 0, marginTop: 1 }} />
-            <p style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.6 }}>
-              Automatizado vía <strong style={{ color: "var(--text-2)" }}>EPO OPS</strong> —
-              patentes publicadas en la base mundial DOCDB. Las credenciales
-              están en el servidor: no hace falta API key.
-            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                {(["google", "epo"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={f === patentSource ? "btn btn-primary" : "btn btn-ghost"}
+                    style={{ fontSize: 11.5, padding: "4px 10px" }}
+                    disabled={running}
+                    onClick={() => setPatentSource(f)}
+                  >
+                    {f === "google" ? "Google Patents" : "EPO OPS"}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.6 }}>
+                {patentSource === "google" ? (
+                  <>Vía <strong style={{ color: "var(--text-2)" }}>Google Patents</strong> (SerpAPI):
+                  ~1 s por año, texto completo y más oficinas. Un crédito por año consultado.</>
+                ) : (
+                  <>Vía <strong style={{ color: "var(--text-2)" }}>EPO OPS</strong> — base mundial
+                  DOCDB. Admite ~10 búsquedas por minuto: puede tardar y bloquear si se satura.</>
+                )}
+              </p>
+            </div>
           </div>
 
           {/* Estado del servicio */}

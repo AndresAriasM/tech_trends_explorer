@@ -11,13 +11,14 @@ GET  /api/s-curve/history          → list saved analyses (placeholder)
 
 import json
 import os
-from typing import Any, Optional, AsyncGenerator
+from typing import Any, AsyncGenerator, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.epo import check_credentials, credentials_configured
+from core.google_patents import analyze_patents_google
 from core.s_curve import (
     analyze_papers_by_count,
     analyze_from_yearly_data,
@@ -59,6 +60,8 @@ class PatentsEPORequest(BaseModel):
     # para recoger casi sólo ceros. 2000 es un arranque razonable por defecto.
     year_from: int = 2000
     year_to: Optional[int] = None
+    # "epo" (por defecto, compatibilidad) o "google" (Google Patents vía SerpAPI).
+    source: Literal["epo", "google"] = "epo"
 
 
 class FitModelsRequest(BaseModel):
@@ -209,15 +212,39 @@ async def analyze_local(payload: dict):
 @router.post("/analyze-patents")
 async def analyze_patents(payload: PatentsEPORequest):
     """
-    Curva en S de patentes vía EPO OPS.
+    Curva en S de patentes vía EPO OPS o Google Patents (`source`).
 
     Mismo stream de eventos que `/analyze`: `{status, progress, message}` y un
     `completed` final con `result`. El resultado tiene la misma forma que el
     de papers —incluida la tabla multi-modelo— para que la comparación entre
     ambos sea directa.
+
+    Google Patents (vía SerpAPI) tarda ~1 s por año y no bloquea; EPO OPS
+    tolera ~10 búsquedas por minuto y bloquea por "robot" si se excede. Las dos
+    series no son comparables entre sí: Google busca en texto completo y
+    cubre más oficinas (ver core/google_patents.py).
     """
     if not payload.query.strip():
         return {"error": "La consulta de patentes no puede estar vacía"}
+
+    if payload.source == "google":
+        async def _stream_google() -> AsyncGenerator[str, None]:
+            try:
+                async for event in analyze_patents_google(
+                    query=payload.query.strip(),
+                    year_from=payload.year_from,
+                    year_to=payload.year_to,
+                ):
+                    yield _sse_event(event)
+            except Exception as exc:
+                yield _sse_event({"status": "error", "message": str(exc)})
+
+        return StreamingResponse(
+            _stream_google(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     if not credentials_configured():
         return {
             "error": (
