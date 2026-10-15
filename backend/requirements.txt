@@ -1,0 +1,42 @@
+# Backend FastAPI — Tech Trends Explorer
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.0
+pydantic-settings==2.2.1
+python-dotenv==1.0.0
+
+# Task queue
+celery==5.4.0
+redis==5.0.4
+
+# Supabase / Postgres
+supabase==2.31.0
+psycopg[binary]==3.3.6
+
+# Verificación de JWT. Llega de forma transitiva con supabase-auth, pero
+# depender de eso para validar firmas es frágil: se declara explícito.
+PyJWT[crypto]==2.14.0
+
+# AWS — sólo para leer datos antiguos durante la migración a Supabase
+boto3==1.28.85
+botocore==1.31.85
+
+# Analysis (same as master)
+requests==2.31.0
+vaderSentiment>=3.3.2
+nltk==3.8.1
+scipy==1.11.4
+numpy>=1.21.0
+pandas==2.1.4
+serpapi==0.1.5
+google-search-results==2.4.2
+google-api-python-client==2.108.0
+
+# Asistente de IA y votos sintéticos
+openai==1.96.0
+
+# Importador del histórico Delphi (.xlsx)
+openpyxl==3.1.5
+
+# CORS & SSE
+sse-starlette==1.8.2

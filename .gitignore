@@ -142,3 +142,23 @@ sample_*.json
 *.backup
 
 assets/
+# Encuesta cruda LACCEI 2025 — contiene emails y nombres
+docs/LACCEI_2025/*.xlsx
+
+# ──────────────────────────────────────────────────────────────
+# Frontend Next.js
+#
+# Las reglas de arriba vienen del proyecto Streamlit y se tragan
+# archivos del frontend que SÍ deben versionarse: "lib/" (pensada
+# para el lib/ de un virtualenv) oculta frontend/lib/, y "*.json"
+# oculta tsconfig.json y package-lock.json.
+#
+# Por eso frontend/lib/ nunca llegó a commitearse. El directorio
+# debe des-ignorarse ANTES que su contenido: git no puede volver a
+# incluir un archivo si su directorio padre sigue excluido.
+# ──────────────────────────────────────────────────────────────
+!frontend/lib/
+!frontend/lib/**
+!frontend/tsconfig.json
+!frontend/package-lock.json
+!frontend/**/*.json

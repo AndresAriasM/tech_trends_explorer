@@ -47,13 +47,14 @@ class ScopusPublicationsAnalyzer:
         }
         self.publications_by_year = {}
         
-    def search_publications(self, query, max_results=1000):
+    def search_publications(self, query, max_results=None):
         """
-        Busca publicaciones en Scopus utilizando una consulta, sin filtros de año.
+        Busca publicaciones en Scopus utilizando una consulta con estrategia de intervalos temporales optimizada.
+        Calcula el año actual (2025) por diferencia para evitar descargas innecesarias.
         
         Args:
             query: Consulta de búsqueda en formato de sintaxis de Scopus
-            max_results: Número máximo de resultados a recuperar
+            max_results: Número máximo de resultados a recuperar (None = todos)
             
         Returns:
             Resultados de la búsqueda o None si hay error
@@ -114,7 +115,7 @@ class ScopusPublicationsAnalyzer:
                     return None
             
             # Realizar la búsqueda con la ecuación (original o simplificada)
-            status_text.text("🔍 Obteniendo resultados completos...")
+            status_text.text("🔍 Obteniendo total de resultados...")
             
             response = requests.get(
                 base_url,
@@ -125,37 +126,47 @@ class ScopusPublicationsAnalyzer:
             if response.status_code == 200:
                 data = response.json()
                 total_results = int(data["search-results"]["opensearch:totalResults"])
-                st.success(f"✅ Búsqueda exitosa: {total_results} papers encontrados")
+                st.success(f"✅ Búsqueda exitosa: {total_results} papers encontrados en total")
                 
                 if total_results == 0:
                     status_text.text("❌ No se encontraron papers con esta ecuación")
                     return None
                 
-                # Recopilar todos los resultados
-                all_results = []
-                params = {"query": query_papers, "count": 25, "start": 0, "sort": "coverDate"}
-                
-                while params["start"] < min(total_results, max_results):
-                    response = requests.get(base_url, headers=headers, params=params)
+                # Si total_results excede 5000, usar estrategia de intervalos temporales con optimización
+                if total_results > 5000:
+                    st.warning(f"⚠️ Se encontraron {total_results} papers. Usando estrategia de búsqueda por intervalos temporales (optimizada)...")
+                    all_results = self._search_by_time_intervals_optimized(
+                        query_papers, headers, base_url, progress_bar, status_text, total_results, max_results
+                    )
+                else:
+                    # Recopilar todos los resultados (sin límite si max_results es None)
+                    all_results = []
+                    params = {"query": query_papers, "count": 25, "start": 0, "sort": "coverDate"}
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        entries = data["search-results"].get("entry", [])
-                        all_results.extend(entries)
+                    # Si max_results es None, traer todos; si no, usar el valor especificado
+                    limit = total_results if max_results is None else min(total_results, max_results)
+                    
+                    while params["start"] < limit:
+                        response = requests.get(base_url, headers=headers, params=params)
                         
-                        # Actualizar progreso
-                        progress = min(len(all_results) / min(total_results, max_results), 1.0)
-                        progress_bar.progress(progress)
-                        status_text.text(f"⏳ Recuperados {len(all_results)} de {min(total_results, max_results)} papers ({progress*100:.1f}%)...")
-                        
-                        params["start"] += params["count"]
-                        
-                        if params["start"] < min(total_results, max_results):
-                            time.sleep(0.5)  # pequeña pausa entre solicitudes
-                    else:
-                        st.error(f"❌ Error al recuperar página: {response.status_code}")
-                        st.code(response.text)
-                        break
+                        if response.status_code == 200:
+                            data = response.json()
+                            entries = data["search-results"].get("entry", [])
+                            all_results.extend(entries)
+                            
+                            # Actualizar progreso
+                            progress = min(len(all_results) / limit, 1.0)
+                            progress_bar.progress(progress)
+                            status_text.text(f"⏳ Recuperados {len(all_results)} de {limit} papers ({progress*100:.1f}%)...")
+                            
+                            params["start"] += params["count"]
+                            
+                            if params["start"] < limit:
+                                time.sleep(0.5)  # pequeña pausa entre solicitudes
+                        else:
+                            st.error(f"❌ Error al recuperar página: {response.status_code}")
+                            st.code(response.text)
+                            break
                 
                 # Limpieza y mensaje final
                 progress_bar.empty()
@@ -175,10 +186,198 @@ class ScopusPublicationsAnalyzer:
             import traceback
             st.code(traceback.format_exc())
             return None
+
+    def _search_by_time_intervals_optimized(self, query, headers, base_url, progress_bar, status_text, total_results, max_results):
+        """
+        Realiza búsqueda en intervalos temporales con optimización para el año actual.
+        Calcula el número de papers del año actual (2025) por diferencia para evitar descargas innecesarias.
+        
+        Args:
+            query: Query de búsqueda
+            headers: Headers HTTP
+            base_url: URL base de Scopus
+            progress_bar: Barra de progreso Streamlit
+            status_text: Elemento de texto Streamlit
+            total_results: Total de resultados estimado
+            max_results: Límite máximo de resultados
+            
+        Returns:
+            Lista de todos los resultados obtenidos (incluyendo síntesis para año actual)
+        """
+        all_results = []
+        current_year = datetime.now().year
+        papers_by_year_count = {}  # Diccionario para contar papers por año
+        
+        st.info("💡 **Optimización activada**: Se calculará el número de papers de 2025 por diferencia para mayor velocidad")
+        
+        # Definir estrategia de intervalos: más granular en años recientes
+        intervals = [
+            {"start": 1980, "end": 1999, "interval": 5},      # Cada 5 años (1980-1999)
+            {"start": 2000, "end": 2009, "interval": 2},      # Cada 2 años (2000-2009)
+            {"start": 2010, "end": 2014, "interval": 1},      # Cada año (2010-2014)
+            {"start": 2015, "end": current_year - 1, "interval": 1}  # Cada año (2015-2024, excluyendo 2025)
+        ]
+        
+        total_periods = 0
+        for interval_config in intervals:
+            start = interval_config["start"]
+            end = interval_config["end"]
+            interval = interval_config["interval"]
+            
+            current = start
+            while current <= end:
+                next_year = min(current + interval - 1, end)
+                total_periods += 1
+                current = next_year + 1
+        
+        periods_completed = 0
+        accumulated_results = 0
+        
+        # Procesar cada intervalo de tiempo (EXCLUYENDO 2025)
+        for interval_config in intervals:
+            start_year = interval_config["start"]
+            end_year = interval_config["end"]
+            interval = interval_config["interval"]
+            
+            current_year_interval = start_year
+            
+            while current_year_interval <= end_year:
+                if max_results is not None and len(all_results) >= max_results:
+                    st.info(f"✅ Se alcanzó el límite de {max_results} papers")
+                    return all_results
+                
+                next_year_interval = min(current_year_interval + interval - 1, end_year)
+                
+                # Crear query con filtro temporal
+                period_query = f"({query}) AND PUBYEAR > {current_year_interval - 1} AND PUBYEAR < {next_year_interval + 1}"
+                
+                status_text.text(f"🔍 Buscando papers {current_year_interval}-{next_year_interval}...")
+                
+                try:
+                    # Verificar cuántos resultados hay en este período
+                    response = requests.get(
+                        base_url,
+                        headers=headers,
+                        params={"query": period_query, "count": 1}
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        period_total = int(data["search-results"]["opensearch:totalResults"])
+                        
+                        if period_total > 0:
+                            # Recuperar todos los resultados de este período
+                            params = {"query": period_query, "count": 25, "start": 0, "sort": "coverDate"}
+                            
+                            while params["start"] < period_total:
+                                if max_results is not None and len(all_results) >= max_results:
+                                    return all_results
+                                
+                                response = requests.get(base_url, headers=headers, params=params)
+                                
+                                if response.status_code == 200:
+                                    data = response.json()
+                                    entries = data["search-results"].get("entry", [])
+                                    all_results.extend(entries)
+                                    accumulated_results += len(entries)
+                                    
+                                    params["start"] += params["count"]
+                                    
+                                    # Actualizar progreso
+                                    overall_progress = periods_completed / total_periods
+                                    progress_bar.progress(min(overall_progress, 0.99))
+                                    status_text.text(f"⏳ Recuperados {len(all_results)} papers ({overall_progress*100:.1f}%)...")
+                                    
+                                    if params["start"] < period_total:
+                                        time.sleep(0.3)
+                                else:
+                                    break
+                    
+                    time.sleep(0.2)  # Pausa entre períodos
+                    
+                except Exception as e:
+                    st.warning(f"⚠️ Error en período {current_year_interval}-{next_year_interval}: {str(e)}")
+                
+                periods_completed += 1
+                current_year_interval = next_year_interval + 1
+        
+        # OPTIMIZACIÓN: Calcular papers de 2025 por diferencia
+        papers_2024_query = f"({query}) AND PUBYEAR = 2024"
+        
+        status_text.text("📊 Calculando papers del año actual (2025) por diferencia...")
+        
+        try:
+            response = requests.get(
+                base_url,
+                headers=headers,
+                params={"query": papers_2024_query, "count": 1}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                papers_2024 = int(data["search-results"]["opensearch:totalResults"])
+                
+                # Calcular papers de 2025 por diferencia
+                papers_2025 = max(0, total_results - accumulated_results - papers_2024)
+                
+                st.success(f"✅ Papers 2024: {papers_2024}")
+                st.success(f"✅ Papers 2025 (calculados por diferencia): {papers_2025}")
+                st.info(f"📊 Total papers recuperados directamente: {len(all_results)} | Total estimado: {total_results}")
+                
+                # Crear objetos sintéticos para 2024 y 2025
+                # Esto es importante para mantener la estructura de datos consistente
+                synthetic_2024_entry = {
+                    "prism:coverDate": "2024-12-31",
+                    "synthetic": True,
+                    "count": papers_2024
+                }
+                
+                synthetic_2025_entry = {
+                    "prism:coverDate": "2025-12-31",
+                    "synthetic": True,
+                    "count": papers_2025
+                }
+                
+                all_results.append(synthetic_2024_entry)
+                all_results.append(synthetic_2025_entry)
+                
+                status_text.text(f"✅ Recuperados {len(all_results)} papers en total (incluyendo síntesis de 2024-2025)")
+                
+        except Exception as e:
+            st.warning(f"⚠️ Error al calcular papers de 2024-2025: {str(e)}")
+            # Si falla, intentar al menos traer 2024
+            try:
+                response = requests.get(
+                    base_url,
+                    headers=headers,
+                    params={"query": papers_2024_query, "count": 25, "start": 0, "sort": "coverDate"}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    entries = data["search-results"].get("entry", [])
+                    all_results.extend(entries)
+                    
+                    # Calcular 2025 por diferencia
+                    papers_2025 = max(0, total_results - accumulated_results - len(entries))
+                    
+                    synthetic_2025_entry = {
+                        "prism:coverDate": "2025-12-31",
+                        "synthetic": True,
+                        "count": papers_2025
+                    }
+                    all_results.append(synthetic_2025_entry)
+                    
+                    status_text.text(f"✅ Recuperados {len(all_results)} papers (parcialmente optimizado)")
+            except Exception as e2:
+                st.warning(f"⚠️ No se pudo recuperar datos de 2024-2025: {str(e2)}")
+        
+        return all_results
         
     def categorize_by_year(self, results):
         """
         Categoriza los resultados de publicaciones por año y completa los años faltantes con ceros.
+        Maneja tanto entradas reales como sintéticas generadas por optimización.
         
         Args:
             results: Lista de resultados de la búsqueda
@@ -191,7 +390,23 @@ class ScopusPublicationsAnalyzer:
         st.text("📅 Categorizando publicaciones por año...")
         
         for entry in results:
-            # Intentar extraer el año de diferentes campos
+            # Manejar entradas sintéticas (calculadas por diferencia)
+            if isinstance(entry, dict) and entry.get("synthetic"):
+                year = None
+                
+                # Extraer año de la fecha sintética
+                if "prism:coverDate" in entry:
+                    try:
+                        date_str = entry["prism:coverDate"]
+                        year = datetime.strptime(date_str, "%Y-%m-%d").year
+                    except (ValueError, TypeError):
+                        pass
+                
+                if year:
+                    publications_by_year[year] = entry.get("count", 0)
+                    continue
+            
+            # Manejar entradas reales de Scopus
             year = None
             
             # Método 1: Del campo prism:coverDate
@@ -243,7 +458,7 @@ class ScopusPublicationsAnalyzer:
             self.publications_by_year = dict(sorted(complete_publications.items()))
         else:
             self.publications_by_year = {}
-            
+        
         return self.publications_by_year
 
 
@@ -1339,14 +1554,23 @@ def run_s_curve_analysis():
             
             with col1:
                 st.write("**Papers (Scopus):**")
-                max_results = st.slider(
-                    "Número máximo de resultados",
-                    min_value=500,
-                    max_value=10000,
-                    value=2000,
-                    step=100,
-                    help="Mayor número = análisis más completo, pero toma más tiempo"
+                load_all_papers = st.checkbox(
+                    "Cargar todos los papers",
+                    value=True,
+                    help="Si está marcado, descarga todos los resultados. Si no, especifica un número máximo."
                 )
+                
+                if not load_all_papers:
+                    max_results = st.slider(
+                        "Número máximo de resultados",
+                        min_value=500,
+                        max_value=10000,
+                        value=2000,
+                        step=100,
+                        help="Mayor número = análisis más completo, pero toma más tiempo"
+                    )
+                else:
+                    max_results = None
             
             with col2:
                 st.write("**Patentes (Google Patents):**")
@@ -1407,7 +1631,7 @@ def run_s_curve_analysis():
                             # Instanciar el analizador de papers
                             papers_analyzer = ScopusPublicationsAnalyzer(api_key)
                             
-                            # Buscar papers
+                            # Buscar papers (con max_results=None para traer todos)
                             papers_results = papers_analyzer.search_publications(
                                 scopus_query,
                                 max_results=max_results
@@ -1591,7 +1815,7 @@ def run_s_curve_analysis():
                             patents_by_year = None
                             patents_analysis = None
 
-            # 3. AÑADIR FUNCIÓN AUXILIAR PARA ANÁLISIS RÁPIDO DE VIABILIDAD
+            # 3. VERIFICACIÓN RÁPIDA DE VIABILIDAD
             def check_patents_viability(query, serp_api_key):
                 """
                 Función auxiliar para verificar rápidamente si vale la pena analizar patentes.
@@ -1631,9 +1855,6 @@ def run_s_curve_analysis():
                 except Exception as e:
                     return {"viable": False, "error": str(e)}
 
-            # 4. INTEGRAR VERIFICACIÓN PREVIA EN LA INTERFAZ
-            # Añadir esto ANTES del botón principal de análisis:
-
             # Verificación rápida de viabilidad
             if scopus_query and st.session_state.get('serp_api_key') and analyze_patents:
                 with st.expander("🔍 Verificación Rápida de Patentes", expanded=False):
@@ -1650,38 +1871,6 @@ def run_s_curve_analysis():
                                 if "error" in viability:
                                     st.error(f"Error: {viability['error']}")
 
-            # 5. CONFIGURACIÓN MEJORADA EN EL SIDEBAR
-            # Añadir esto en la función sidebar_config():
-
-            # En la sección de SerpAPI, añadir información sobre optimización:
-            with st.expander("📈 SerpAPI (Hype Cycle & Patentes)", expanded=False):
-                st.markdown('<div class="api-config">', unsafe_allow_html=True)
-                serp_api_key = st.text_input(
-                    "SerpAPI Key",
-                    value=st.session_state.serp_api_key,
-                    type="password",
-                    help="Necesaria para análisis de Hype Cycle y búsqueda optimizada de patentes"
-                )
-                st.session_state.serp_api_key = serp_api_key
-                
-                # Información de optimización
-                st.info("""
-                **🎯 Optimización de Patentes:**
-                - Búsqueda inteligente por rangos
-                - Mínimo consumo de tokens
-                - Interpolación de años faltantes
-                - Estrategias adaptativas por época
-                """)
-                
-                if st.button("🔄 Probar conexión SerpAPI", key="test_serp_unique"):
-                    with st.spinner("Probando conexión con SerpAPI..."):
-                        success, message = test_api_connection("serp", serp_api_key)
-                        if success:
-                            st.success(message)
-                        else:
-                            st.error(message)
-                st.markdown('</div>', unsafe_allow_html=True)
-                                
             # =============================================================
             # 3. COMPARACIÓN PAPERS vs PATENTES
             # =============================================================
