@@ -130,6 +130,13 @@ export const saveRun = (
 export const renameRun = (id: string, label: string) =>
   call<{ id: string; label: string }>(`/runs/${id}`, { method: "PATCH", body: JSON.stringify({ label }) });
 
+/** Mueve la tecnología a otra sesión; el cuadrante se recalcula con su año de referencia. */
+export const moveRun = (id: string, session_id: string) =>
+  call<{ id: string; session_id: string; quadrant: Quadrant | null }>(`/runs/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ session_id }),
+  });
+
 export const deleteRun = (id: string) => call<void>(`/runs/${id}`, { method: "DELETE" });
 
 export const analyzeSession = (id: string) =>

@@ -6,7 +6,7 @@ POST   /api/matrix-board/sessions                    → crea una sesión ("Tall
 GET    /api/matrix-board/sessions/{id}               → sesión + tecnologías (para la gráfica)
 DELETE /api/matrix-board/sessions/{id}               → borra la sesión y sus tecnologías
 POST   /api/matrix-board/sessions/{id}/runs          → guarda una tecnología ya analizada
-PATCH  /api/matrix-board/runs/{id}                   → renombra una tecnología
+PATCH  /api/matrix-board/runs/{id}                   → renombra y/o mueve a otra sesión
 DELETE /api/matrix-board/runs/{id}                   → quita una tecnología
 POST   /api/matrix-board/sessions/{id}/analysis      → análisis de IA de la sesión (OpenAI)
 
@@ -27,7 +27,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from api.routes.delphi import _connection
-from core.matrix_board import QUADRANT_LABELS, analyze_session, place, summarize_series
+from core.matrix_board import QUADRANT_LABELS, QUADRANTS, analyze_session, place, summarize_series
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -140,19 +140,52 @@ def add_run(sid: UUID, body: RunCreate, conn=Depends(get_conn)):
 
 
 class RunUpdate(BaseModel):
-    label: str = Field(..., min_length=1, max_length=200)
+    label: Optional[str] = Field(None, min_length=1, max_length=200)
+    # Mover la tecnología a otra sesión del tablero.
+    session_id: Optional[UUID] = None
+
+
+def _quadrant_for(run: dict, ref_year: int) -> tuple[Optional[str], Optional[bool]]:
+    """Cuadrante y robustez con el año de referencia de la sesión destino."""
+    px, ty = run["papers_inflection"], run["patents_inflection"]
+    if px is None or ty is None:
+        return None, None
+    px, ty = float(px), float(ty)
+    quadrant = QUADRANTS[(px <= ref_year, ty <= ref_year)]
+    ranges = [r for r in (run["papers_range"], run["patents_range"]) if r]
+    robust = all((float(r[0]) > ref_year) == (float(r[1]) > ref_year) for r in ranges)
+    return quadrant, robust
 
 
 @router.patch("/runs/{rid}")
-def rename_run(rid: UUID, body: RunUpdate, conn=Depends(get_conn)):
-    """Cambia el nombre con el que la tecnología aparece en el tablero."""
-    row = conn.execute(
-        "update matrix_runs set label = %s where id = %s returning id, label",
-        (body.label.strip(), rid),
-    ).fetchone()
-    if not row:
+def update_run(rid: UUID, body: RunUpdate, conn=Depends(get_conn)):
+    """
+    Renombra la tecnología y/o la mueve a otra sesión. Al moverla, el
+    cuadrante se recalcula con el año de referencia de la sesión destino: las
+    inflexiones no cambian, pero el corte sí puede.
+    """
+    run = conn.execute("select * from matrix_runs where id = %s", (rid,)).fetchone()
+    if not run:
         raise HTTPException(404, "Tecnología no encontrada")
+    if body.label is None and body.session_id is None:
+        raise HTTPException(400, "Nada que actualizar")
+
+    if body.label is not None:
+        conn.execute("update matrix_runs set label = %s where id = %s", (body.label.strip(), rid))
+
+    if body.session_id is not None and body.session_id != run["session_id"]:
+        target = _session(conn, body.session_id)
+        quadrant, robust = _quadrant_for(run, target["reference_year"])
+        conn.execute(
+            "update matrix_runs set session_id = %s, quadrant = %s, robust = %s where id = %s",
+            (body.session_id, quadrant, robust, rid),
+        )
+
     conn.commit()
+    row = conn.execute(
+        "select id, label, session_id, quadrant, robust from matrix_runs where id = %s", (rid,)
+    ).fetchone()
+    row["quadrant_label"] = QUADRANT_LABELS.get(row["quadrant"])
     return row
 
 

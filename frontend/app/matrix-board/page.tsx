@@ -35,6 +35,7 @@ import {
   analyzeSession,
   createSession,
   deleteRun,
+  moveRun,
   renameRun,
   getSession,
   listSessions,
@@ -99,6 +100,16 @@ export default function MatrixBoardPage() {
       setSessionId(s.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo crear la sesión");
+    }
+  };
+
+  const mover = async (runId: string, destino: string) => {
+    if (!destino) return;
+    try {
+      await moveRun(runId, destino);
+      await Promise.all([loadSession(sessionId), loadSessions()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo mover la tecnología");
     }
   };
 
@@ -208,7 +219,7 @@ export default function MatrixBoardPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}>
             <thead>
               <tr style={{ color: "var(--text-3)", textAlign: "left" }}>
-                {["", "Tecnología", "Papers", "Fuente papers", "Patentes", "Fuente patentes", "Infl. papers", "Infl. patentes", "Cuadrante", ""].map((h, i) => (
+                {["", "Tecnología", "Papers", "Fuente papers", "Patentes", "Fuente patentes", "Infl. papers", "Infl. patentes", "Cuadrante", "Sesión", ""].map((h, i) => (
                   <th key={i} style={{ padding: "6px 8px", fontWeight: 600, borderBottom: "1px solid var(--border-2)" }}>{h}</th>
                 ))}
               </tr>
@@ -227,6 +238,23 @@ export default function MatrixBoardPage() {
                   <td style={{ padding: "8px", color: r.quadrant ? QUADRANTS[r.quadrant].color : undefined }}>
                     {r.quadrant ? QUADRANTS[r.quadrant].label : "Sin inflexión estimable"}
                     {r.robust === false && <span style={{ color: "var(--text-4)" }}> · depende del modelo</span>}
+                  </td>
+                  <td style={{ padding: "8px" }}>
+                    <select
+                      className="inp"
+                      value=""
+                      onChange={(e) => void mover(r.id, e.target.value)}
+                      title="Mover a otra sesión"
+                      style={{ fontSize: 12, padding: "3px 6px", maxWidth: 150 }}
+                      disabled={sessions.length < 2}
+                    >
+                      <option value="">Mover a…</option>
+                      {sessions
+                        .filter((s) => s.id !== sessionId)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                    </select>
                   </td>
                   <td style={{ padding: "8px", textAlign: "right" }}>
                     <button className="btn btn-ghost" style={{ padding: "4px 8px" }} onClick={() => void quitar(r.id)} title="Quitar de la sesión">
