@@ -33,6 +33,7 @@ from core.assistant import (
     AssistantError,
     generate_foresight_report,
     generate_search_strategy,
+    translate_query,
 )
 
 logger = logging.getLogger(__name__)
@@ -191,3 +192,24 @@ async def provider_status() -> dict[str, Any]:
         "model": default_model(),
         "configured": bool(os.getenv("OPENAI_API_KEY", "").strip()),
     }
+
+
+class TranslateRequest(BaseModel):
+    query: str = Field(..., min_length=2, max_length=4000)
+    # None = que el modelo detecte el sistema de origen.
+    source: Optional[str] = Field(None, description="scopus | google_patents | epo")
+
+
+@router.post("/translate-query")
+async def translate(payload: TranslateRequest) -> dict[str, Any]:
+    """
+    Traduce una ecuación ya hecha a Scopus, Google Patents y EPO, con variantes
+    (equivalente, amplia, acotada) para elegir cuál pegar. Coste: 1 llamada.
+    """
+    try:
+        return await asyncio.to_thread(translate_query, payload.query, payload.source)
+    except AssistantError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Fallo traduciendo ecuación")
+        raise HTTPException(status_code=502, detail=f"Error del proveedor de IA: {exc}") from exc

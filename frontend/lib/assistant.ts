@@ -93,6 +93,25 @@ export const generateReport = (payload: {
   extra_context?: string;
 }) => call<ForesightReport>("/report", payload);
 
+export type QuerySystem = "scopus" | "google_patents" | "epo";
+
+export interface QueryTranslation extends AiMarker {
+  query: string;
+  origen: QuerySystem;
+  concepto: string;
+  traducciones: Partial<Record<QuerySystem, Array<{ variante: string; query: string; nota: string }>>>;
+  advertencias: string[];
+}
+
+export const translateQuery = (query: string, source?: QuerySystem) =>
+  call<QueryTranslation>("/translate-query", { query, source: source ?? null });
+
+export const SYSTEM_LABELS: Record<QuerySystem, string> = {
+  scopus: "Scopus",
+  google_patents: "Google Patents",
+  epo: "EPO OPS",
+};
+
 export const searchCorpus = (query: string, k = 6) =>
   call<{ count: number; chunks: CorpusChunk[] }>("/corpus/search", { query, k });
 

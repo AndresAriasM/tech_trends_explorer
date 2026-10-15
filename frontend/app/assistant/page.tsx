@@ -14,6 +14,7 @@ import Link from "next/link";
 import { BookOpen, Bot, CheckCircle2, Loader2, Search, XCircle } from "lucide-react";
 
 import { AiEquationHelper } from "@/components/assistant/AiEquationHelper";
+import { AiQueryTranslator } from "@/components/assistant/AiQueryTranslator";
 import {
   friendlyAiError,
   providerStatus,
@@ -85,6 +86,8 @@ export default function AssistantPage() {
           <span style={{ color: "var(--text-3)" }}>{statusError ?? "Comprobando el proveedor…"}</span>
         )}
       </section>
+
+      <AiQueryTranslator />
 
       <AiEquationHelper />
 

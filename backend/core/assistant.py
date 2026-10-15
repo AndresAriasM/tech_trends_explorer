@@ -775,3 +775,115 @@ def report_to_markdown(report: dict[str, Any]) -> str:
             *(f"- `{w}`" for w in warnings),
         ]
     return "\n".join(lines).rstrip() + "\n"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3 · Traductor de ecuaciones entre sistemas
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# En los talleres a veces llega una ecuación ya hecha en Scopus, Google Patents o
+# EPO. El traductor la lleva a los otros sistemas y ofrece varias variantes
+# (equivalente, más amplia, más acotada) para que la persona elija cuál pegar.
+
+QUERY_SYSTEMS = ("scopus", "google_patents", "epo")
+
+TRANSLATE_SYSTEM_PROMPT = """Eres especialista en sintaxis de bases de datos científicas y de patentes.
+Traduces una ecuación de búsqueda entre estos sistemas, conservando su significado:
+
+1. scopus — Scopus Search API. Campos TITLE-ABS-KEY(...), TITLE(...), ABS(...), AUTHKEY(...).
+   Operadores AND, OR, AND NOT; frases entre comillas dobles; comodín *; proximidad W/n y PRE/n.
+   Ej.: TITLE-ABS-KEY("solid state battery" OR "all-solid-state batter*")
+
+2. google_patents — Google Patents. Texto libre en todo el documento (título, resumen,
+   reivindicaciones, descripción). Operadores AND, OR, - (exclusión), paréntesis y comillas.
+   Campos: TI=(...), AB=(...), CL=(...), CPC=G06V40/16 (CPC=.../low incluye subgrupos),
+   assignee:(...). No hay proximidad W/n: se aproxima con AND o con la frase exacta.
+   Ej.: ("solid state battery" OR "all-solid-state battery") -cosmetic
+
+3. epo — EPO OPS, sintaxis CQL. Campos txt (título, resumen, solicitante, inventor),
+   ti, ab, ta (título o resumen), cpc, ipc, pa (solicitante). Operadores and, or, not;
+   paréntesis; frases entre comillas; "cpc=/low G06V40/16" incluye subgrupos.
+   No tiene comodín de truncamiento fiable ni proximidad: se aproxima con frases o and.
+   Ej.: (ta="solid state battery" or ta="all-solid-state battery")
+
+Reglas:
+- Para CADA sistema destino da 2 o 3 opciones: "equivalente" (lo más fiel posible),
+  "amplia" (mayor exhaustividad) y, si tiene sentido, "acotada" (mayor precisión).
+- Cada opción lleva una nota breve en español: qué cambió y qué se pierde o se gana.
+- No incluyas filtros de fecha: la plataforma los añade sola.
+- Truncamiento: Google Patents y EPO no truncan de forma fiable. Si el origen usa un
+  comodín (personaliz*, batter*), en esos sistemas EXPÁNDELO a variantes explícitas
+  ("personalized" OR "personalised" OR "personalization" OR "personalisation"). Nunca
+  dejes una raíz truncada sin comodín, porque no encontraría nada. Esto vale también
+  dentro de frases: "food print*" → "food printing" OR "food printer" OR "printed food".
+- Organizaciones: el solicitante de una patente (EPO pa=, Google assignee:) equivale en
+  Scopus a la afiliación AFFILORG(...), nunca a AUTHKEY.
+- Exclusión en Google Patents: el término excluido va con guion pegado (-pharmaceutical),
+  sin AND delante.
+- Si la ecuación de origen tiene un error de sintaxis, corrígelo y dilo en "advertencias".
+- Incluye también el sistema de origen solo si su ecuación tenía errores (versión corregida).
+
+Responde SOLO con este JSON:
+{
+  "origen_detectado": "scopus" | "google_patents" | "epo",
+  "concepto": "<de qué trata la búsqueda, 3-8 palabras>",
+  "traducciones": {
+    "scopus": [{"variante": "equivalente", "query": "...", "nota": "..."}],
+    "google_patents": [{"variante": "equivalente", "query": "...", "nota": "..."}],
+    "epo": [{"variante": "equivalente", "query": "...", "nota": "..."}]
+  },
+  "advertencias": ["..."]
+}"""
+
+
+def translate_query(
+    query: str,
+    source: Optional[str] = None,
+    model: Optional[str] = None,
+) -> dict[str, Any]:
+    """Una llamada a OpenAI. Traduce la ecuación a los otros sistemas con variantes."""
+    query = (query or "").strip()
+    if not query:
+        raise AssistantError("La ecuación no puede estar vacía")
+    if source is not None and source not in QUERY_SYSTEMS:
+        raise AssistantError(f"Sistema de origen desconocido: {source}")
+    model = model or default_model()
+
+    user = f"ECUACIÓN DE ORIGEN:\n{query}\n\n"
+    user += (
+        f"SISTEMA DE ORIGEN (indicado por el usuario): {source}\n"
+        if source else "SISTEMA DE ORIGEN: detéctalo tú.\n"
+    )
+    data = _call_json(TRANSLATE_SYSTEM_PROMPT, user, model=model, max_tokens=1500, temperature=0.2)
+
+    origen = data.get("origen_detectado") if data.get("origen_detectado") in QUERY_SYSTEMS else (source or "scopus")
+    traducciones: dict[str, list[dict[str, str]]] = {}
+    raw = data.get("traducciones") or {}
+    for system in QUERY_SYSTEMS:
+        options = []
+        for opt in raw.get(system) or []:
+            if not isinstance(opt, dict):
+                continue
+            q = str(opt.get("query") or "").strip()
+            if system == "google_patents":
+                # Google excluye con el guion pegado; "AND -x" es redundante.
+                q = re.sub(r"\s+AND\s+-", " -", q, flags=re.IGNORECASE)
+            if q:
+                options.append({
+                    "variante": str(opt.get("variante") or "").strip() or "opción",
+                    "query": q,
+                    "nota": str(opt.get("nota") or "").strip(),
+                })
+        if options:
+            traducciones[system] = options[:3]
+
+    result = {
+        "query": query,
+        "origen": origen,
+        "origen_indicado": source,
+        "concepto": str(data.get("concepto") or "").strip(),
+        "traducciones": traducciones,
+        "advertencias": [str(w) for w in (data.get("advertencias") or []) if str(w).strip()][:5],
+    }
+    result.update(_ai_marker(model, openai_calls=1))
+    return result

@@ -22,6 +22,7 @@ import { SCurveChart } from "@/components/charts/SCurveChart";
 import { QUADRANTS, createSession, listSessions, saveRun, type MatrixSession } from "@/lib/matrixBoard";
 import { AiEquationHelper } from "@/components/assistant/AiEquationHelper";
 import { AiInterpretation } from "@/components/assistant/AiInterpretation";
+import { AiQueryTranslator } from "@/components/assistant/AiQueryTranslator";
 import { MaturityMatrix } from "@/components/charts/MaturityMatrix";
 import type {
   SCurveComparison,
@@ -280,7 +281,22 @@ export default function PatentsPapersPage() {
 
       {/* ── Consulta ── */}
       <section className="card" style={{ padding: 22, marginBottom: 22 }}>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <AiQueryTranslator
+            compact
+            disabled={corriendo}
+            onUse={(system, q, concepto) => {
+              if (system === "scopus") setScopusQ(q);
+              else if (system === "google_patents") {
+                setFuente("google");
+                setGoogleQ(q);
+              } else {
+                setFuente("epo");
+                setEpoQ(q);
+              }
+              if (concepto && !etiqueta.trim()) setEtiqueta(concepto);
+            }}
+          />
           <AiEquationHelper
             compact
             disabled={corriendo}
