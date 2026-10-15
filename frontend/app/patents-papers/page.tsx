@@ -107,6 +107,14 @@ const FUENTES: Record<Fuente, { nombre: string; etiqueta: string; ayuda: string;
   },
 };
 
+const ESTADO_KEY = "prospecta.patents-papers.v1";
+
+/** Créditos de SerpAPI de una corrida de Google Patents (ver core/google_patents.py). */
+function creditosGoogle(desde: number, hasta: number) {
+  if (hasta < desde) return 0;
+  return desde < 1985 ? 1 + Math.max(0, hasta - 1985 + 1) : hasta - desde + 1;
+}
+
 /** Ecuación de Google Patents a partir de la de Scopus del ejemplo. */
 const aGoogle = (scopus: string) => scopus.replace(/^TITLE-ABS-KEY\((.*)\)$/, "$1");
 
@@ -117,7 +125,10 @@ export default function PatentsPapersPage() {
   const [epoQ, setEpoQ] = useState("");
   const patentQ = fuente === "google" ? googleQ : epoQ;
   const setPatentQ = fuente === "google" ? setGoogleQ : setEpoQ;
-  const [yearFrom, setYearFrom] = useState(2000);
+  // Desde 1950 para capturar la serie completa: Scopus la cuenta con UNA
+  // petición (facetas por año) y Google Patents agrupa 1950–1984 en un solo
+  // crédito, así que arrancar temprano casi no cuesta.
+  const [yearFrom, setYearFrom] = useState(1950);
   // Último año COMPLETO: el año en curso es parcial y dobla la curva hacia abajo.
   const [yearTo, setYearTo] = useState(AHORA - 1);
 
@@ -137,6 +148,48 @@ export default function PatentsPapersPage() {
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState<string | null>(null);
   const [errorGuardar, setErrorGuardar] = useState<string | null>(null);
+
+  // ── Persistencia de la pantalla ──
+  // Los análisis cuestan créditos: al cambiar de pestaña y volver, la última
+  // corrida se restaura desde sessionStorage en vez de perderse. Se restaura
+  // tras montar (no en el render) para no romper la hidratación.
+  const restaurado = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(ESTADO_KEY);
+      if (raw) {
+        const e = JSON.parse(raw);
+        setScopusQ(e.scopusQ ?? "");
+        setGoogleQ(e.googleQ ?? "");
+        setEpoQ(e.epoQ ?? "");
+        if (e.fuente) setFuente(e.fuente);
+        if (e.yearFrom) setYearFrom(e.yearFrom);
+        if (e.yearTo) setYearTo(e.yearTo);
+        setEtiqueta(e.etiqueta ?? "");
+        if (e.papers) setPapers({ ...LADO_INICIAL, progreso: 100, resultado: e.papers });
+        if (e.patents) setPatents({ ...LADO_INICIAL, progreso: 100, resultado: e.patents });
+        if (e.comparacion) setComparacion(e.comparacion);
+      }
+    } catch {
+      /* almacenamiento no disponible o dato corrupto: se empieza en limpio */
+    }
+    restaurado.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!restaurado.current || papers.corriendo || patents.corriendo) return;
+    try {
+      sessionStorage.setItem(
+        ESTADO_KEY,
+        JSON.stringify({
+          scopusQ, googleQ, epoQ, fuente, yearFrom, yearTo, etiqueta,
+          papers: papers.resultado, patents: patents.resultado, comparacion,
+        })
+      );
+    } catch {
+      /* cuota llena o almacenamiento bloqueado: la pantalla sigue funcionando */
+    }
+  }, [scopusQ, googleQ, epoQ, fuente, yearFrom, yearTo, etiqueta, papers, patents, comparacion]);
 
   useEffect(() => {
     listSessions()
@@ -471,12 +524,15 @@ export default function PatentsPapersPage() {
         </div>
 
         <p style={{ fontSize: 11.5, color: "var(--text-4)", marginTop: 12, lineHeight: 1.5 }}>
-          Las credenciales están en el servidor. Las patentes se consultan un año
-          por petición: {Math.max(0, yearTo - yearFrom + 1)} años ≈{" "}
-          {Math.max(0, yearTo - yearFrom + 1)} peticiones.{" "}
-          {fuente === "google"
-            ? "Google Patents tarda ~1 s por año y gasta un crédito de SerpAPI por petición."
-            : "EPO OPS admite ~10 por minuto: puede tardar varios minutos y bloquear si se satura."}
+          Costo estimado: <b>Scopus 1 petición</b> (todos los años de una vez).{" "}
+          {fuente === "google" ? (
+            <>
+              <b>Google Patents {creditosGoogle(yearFrom, yearTo)} créditos de SerpAPI</b>
+              {yearFrom < 1985 ? ` (${yearFrom}–1984 en un solo bloque y luego uno por año)` : " (uno por año)"}, ~1 s cada uno.
+            </>
+          ) : (
+            <>EPO OPS {Math.max(0, yearTo - yearFrom + 1)} peticiones; admite ~10 por minuto y puede bloquear si se satura.</>
+          )}
         </p>
       </section>
 

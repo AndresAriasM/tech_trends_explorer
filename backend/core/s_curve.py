@@ -9,6 +9,7 @@ cada decisión. Lo recuperado del notebook original (G1) va marcado con §.
 """
 
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime
@@ -22,6 +23,8 @@ from core.epo import EPOClient, EPOError
 from core.s_curve_models import durbin_watson, dw_verdict, fit_all_models
 
 # Scopus no pagina más allá de este tope por consulta (§8.3).
+logger = logging.getLogger(__name__)
+
 SCOPUS_MAX_RESULTS = 5000
 
 # Un valor t por encima de 2 ≈ significativo al 95 %.
@@ -499,6 +502,32 @@ async def _probe_total(
         return None
 
 
+async def _pubyear_facets(
+    client: httpx.AsyncClient, headers: dict, query: str
+) -> dict[int, int] | None:
+    """
+    Conteo por año de publicación en UNA petición (`facets=pubyear`).
+    Los años sin publicaciones no aparecen. None si la API no devuelve faceta.
+    """
+    data = await _fetch_page(
+        client, headers, {"query": query, "count": 1, "facets": "pubyear(count=300,sort=na)"}
+    )
+    if data is None:
+        return None
+    facet = data.get("search-results", {}).get("facet")
+    if isinstance(facet, list):  # con una sola faceta puede venir como objeto o lista
+        facet = next((f for f in facet if f.get("name") == "pubyear"), None)
+    if not isinstance(facet, dict):
+        return None
+    cats = facet.get("category") or []
+    if isinstance(cats, dict):
+        cats = [cats]
+    try:
+        return {int(c["value"]): int(c["hitCount"]) for c in cats}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _window_query(base_query: str, y_from: int, y_to: int) -> str:
     """
     Ventana temporal con BEF/AFT, que son exclusivos — de ahí los ±1.
@@ -640,19 +669,47 @@ async def analyze_papers_by_count(
             yield {"status": "error", "message": "No se encontraron publicaciones con esta consulta."}
             return
 
-        yield {
-            "status": "running",
-            "progress": 6,
-            "message": (
-                f"{total_reportado:,} publicaciones. Contando por año "
-                f"({len(anios)} peticiones)…"
-            ),
-        }
-
         pubs: dict[int, int] = {}
         fallidos: list[int] = []
+        counting_mode = "annual_counts"
 
-        for i, anio in enumerate(anios, start=1):
+        # Una sola petición con la faceta `pubyear`: Scopus devuelve el conteo
+        # de TODOS los años de la ventana. Verificado contra el conteo año a año
+        # (biodiésel: 2015 = 3 129, 2024 = 3 762 por ambos métodos; la suma de
+        # facetas = totalResults). Si no cuadra, se cae al método año a año.
+        facetas = await _pubyear_facets(
+            client, headers, _window_query(query, year_from, year_to)
+        )
+        if facetas is not None:
+            en_rango = {y: n for y, n in facetas.items() if year_from <= y <= year_to}
+            if sum(en_rango.values()) == total_reportado:
+                pubs = {y: n for y, n in en_rango.items() if n > 0}
+                counting_mode = "pubyear_facet"
+                yield {
+                    "status": "running",
+                    "progress": 86,
+                    "message": (
+                        f"{total_reportado:,} publicaciones en {len(pubs)} años "
+                        "(1 petición con facetas por año)."
+                    ),
+                }
+            else:
+                logger.warning(
+                    "Facetas pubyear no cuadran (%s vs %s): se cuenta año a año",
+                    sum(en_rango.values()), total_reportado,
+                )
+
+        if counting_mode == "annual_counts":
+            yield {
+                "status": "running",
+                "progress": 6,
+                "message": (
+                    f"{total_reportado:,} publicaciones. Contando por año "
+                    f"({len(anios)} peticiones)…"
+                ),
+            }
+
+        for i, anio in enumerate(anios if counting_mode == "annual_counts" else [], start=1):
             n = await _probe_total(client, headers, _window_query(query, anio, anio))
             if n is None:
                 fallidos.append(anio)
@@ -696,9 +753,9 @@ async def analyze_papers_by_count(
     )
     result["source"] = "papers"
     result["source_label"] = "papers (Scopus)"
-    # El conteo por año no está sujeto al tope de 5000 por consulta: cada año
-    # se pregunta por separado y sólo se lee el total anunciado.
-    result["counting_mode"] = "annual_counts"
+    # Ni las facetas ni el conteo año a año están sujetos al tope de 5000 por
+    # consulta: sólo se leen totales.
+    result["counting_mode"] = counting_mode
 
     if fallidos:
         yield {
